@@ -289,7 +289,7 @@
   "author": "unadlib",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.74.0",
+    "@anthropic-ai/sdk": "^0.78.0",
     "@aws-sdk/client-bedrock-runtime": "^3.995.0",
     "@cfworker/json-schema": "^4.1.1",
     "@google/genai": "^1.40.0",
@@ -350,7 +350,7 @@
     ],
     "overrides": {
       "fast-xml-parser": "5.3.6",
-      "minimatch": "10.2.3",
+      "minimatch": "10.2.4",
       "rollup": "4.59.0"
     }
   }
