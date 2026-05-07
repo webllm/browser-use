@@ -1,6 +1,7 @@
 import { z } from 'zod';
 export declare const lenientInt: (min?: number) => z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>;
 export declare const lenientNumber: () => z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>;
+export declare const lenientBool: (defaultValue?: boolean) => z.ZodPipe<z.ZodTransform<{}, unknown>, z.ZodBoolean>;
 export declare const SearchGoogleActionSchema: z.ZodObject<{
     query: z.ZodString;
 }, z.core.$strip>;

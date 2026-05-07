@@ -10,6 +10,7 @@ import { CONFIG } from '../config.js';
 import { EventBus } from '../event-bus.js';
 import { uuid7str, SignalHandler, get_browser_use_version, check_latest_browser_use_version, sanitize_surrogates, } from '../utils.js';
 import { Controller as DefaultController } from '../controller/service.js';
+import { lenientBool } from '../controller/views.js';
 import { FileSystem as AgentFileSystem, DEFAULT_FILE_SYSTEM_PATH, } from '../filesystem/file-system.js';
 import { SystemPrompt, get_ai_step_system_prompt, get_ai_step_user_prompt, get_rerun_summary_message, get_rerun_summary_prompt, } from './prompts.js';
 import { MessageManager } from './message-manager/service.js';
@@ -206,12 +207,17 @@ const DoneOnlyLLMOutputSchema = AgentLLMOutputSchema.extend({
         .default([]),
 });
 const SimpleJudgeSchema = z.object({
-    is_correct: z.boolean(),
+    // pydantic-parity: bu-2-0 sometimes omits is_correct entirely. python upstream
+    // treats missing as False via pydantic; zod hard-rejects without lenientBool,
+    // crashing the simple-judge pass and skipping the override. Default false:
+    // when the model can't commit, treat the run as not-yet-correct.
+    is_correct: lenientBool(false),
     reason: z.string().optional().default(''),
 });
 const JudgeSchema = z.object({
     reasoning: z.string().optional().nullable().default(''),
-    verdict: z.boolean(),
+    // same parity: missing verdict → false (judge declines to confirm pass)
+    verdict: lenientBool(false),
     failure_reason: z.string().optional().nullable().default(''),
     impossible_task: z.boolean().optional().default(false),
     reached_captcha: z.boolean().optional().default(false),
