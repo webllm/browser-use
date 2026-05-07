@@ -20,6 +20,26 @@ export const lenientNumber = () =>
     z.number(),
   );
 
+// pydantic-parity: coerce missing/null booleans to a default at the LLM-facing
+// boundary. bu-2-0 occasionally omits required boolean fields entirely
+// (e.g. simple-judge `is_correct` returns `undefined`); python upstream
+// silently defaults via pydantic. Without this, the structured-output parse
+// throws and the judge step is skipped (or worse, retried until budget is
+// exhausted). String coercion handles the "true"/"false" shape too.
+export const lenientBool = (defaultValue = false) =>
+  z.preprocess(
+    (v) => {
+      if (v === undefined || v === null) return defaultValue;
+      if (typeof v === 'string') {
+        const lower = v.trim().toLowerCase();
+        if (lower === 'true') return true;
+        if (lower === 'false') return false;
+      }
+      return v;
+    },
+    z.boolean(),
+  );
+
 export const SearchGoogleActionSchema = z.object({
   query: z.string(),
 });
