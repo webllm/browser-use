@@ -3835,7 +3835,13 @@ export class BrowserSession {
 
     const downloadsDir = this.browser_profile.downloads_path;
     if (downloadsDir && page?.waitForEvent) {
+      // most clicks don't trigger a download. attach a no-op catch so that if
+      // performClick() throws (e.g. click timeout on a nested iframe), the
+      // pending waitForEvent rejection doesn't escape as an unhandledRejection
+      // and kill the host process. The real await below still observes the
+      // outcome and the catch block treats timeout as "no download, proceed".
       const downloadPromise = page.waitForEvent('download', { timeout: 5000 });
+      downloadPromise.catch(() => null);
       await performClick();
       try {
         const download = await this._withAbort(downloadPromise, signal);

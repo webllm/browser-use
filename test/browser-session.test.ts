@@ -593,6 +593,56 @@ esac
     }
   });
 
+  it('_click_element_node does not leak an unhandledRejection when click throws and download wait times out', async () => {
+    const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-click-leak-'));
+    try {
+      const session = new BrowserSession({
+        profile: {
+          downloads_path: downloadsDir,
+        },
+      });
+
+      const locator = {
+        click: vi.fn(async () => {
+          throw new Error('element is not clickable');
+        }),
+      };
+      const timeoutError = new Error('page.waitForEvent: Timeout 5000ms exceeded.');
+      timeoutError.name = 'TimeoutError';
+      // resolves async with a rejection so the rejection settles after the
+      // synchronous call site, mimicking the real playwright timer behaviour.
+      const fakePage = {
+        waitForEvent: vi.fn(
+          () =>
+            new Promise((_resolve, reject) => {
+              setTimeout(() => reject(timeoutError), 5);
+            })
+        ),
+        waitForLoadState: vi.fn(async () => {}),
+      };
+
+      vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
+      vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage as any);
+
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        await expect(
+          session._click_element_node({ xpath: '/html/body/a[1]' } as any)
+        ).rejects.toThrow('element is not clickable');
+        // give the dangling waitForEvent rejection time to settle
+        await new Promise(r => setTimeout(r, 30));
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      fs.rmSync(downloadsDir, { recursive: true, force: true });
+    }
+  });
+
   it('perform_click rethrows element click failures', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({}),
