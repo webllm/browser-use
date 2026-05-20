@@ -50,6 +50,7 @@ import {
   DownloadProgressEvent,
   DownloadStartedEvent,
   FileDownloadedEvent,
+  ScreenshotEvent,
   TabClosedEvent,
   TabCreatedEvent,
   type WaitUntilState,
@@ -2481,19 +2482,20 @@ export class BrowserSession {
     }
 
     let screenshot: string | null = null;
-    if (options.include_screenshot && page?.screenshot) {
+    if (options.include_screenshot && page) {
+      // Route through ScreenshotEvent so ScreenshotWatchdog handles
+      // remove_highlights() centrally (highlights occlude trailing characters
+      // of credentials/copy-buttons and have caused hallucinated truncations,
+      // e.g. an `e2b_*cf` key read as `e2b_*c`). The DOM tree + selector_map
+      // were built above, so the visual overlay strip does not affect the
+      // textual state passed to the LLM.
       try {
-        const image = await this._withAbort(
-          page.screenshot({
-            type: 'png',
-            fullPage: true,
-          }),
+        const dispatchResult = await this._withAbort(
+          this.dispatch_browser_event(new ScreenshotEvent({ full_page: true })),
           signal
         );
         screenshot =
-          typeof image === 'string'
-            ? image
-            : Buffer.from(image).toString('base64');
+          (dispatchResult?.event?.event_result as string | null) ?? null;
       } catch (error) {
         if (this._isAbortError(error)) {
           throw error;
@@ -3835,7 +3837,13 @@ export class BrowserSession {
 
     const downloadsDir = this.browser_profile.downloads_path;
     if (downloadsDir && page?.waitForEvent) {
+      // most clicks don't trigger a download. attach a no-op catch so that if
+      // performClick() throws (e.g. click timeout on a nested iframe), the
+      // pending waitForEvent rejection doesn't escape as an unhandledRejection
+      // and kill the host process. The real await below still observes the
+      // outcome and the catch block treats timeout as "no download, proceed".
       const downloadPromise = page.waitForEvent('download', { timeout: 5000 });
+      downloadPromise.catch(() => null);
       await performClick();
       try {
         const download = await this._withAbort(downloadPromise, signal);
