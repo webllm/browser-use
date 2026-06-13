@@ -325,6 +325,22 @@ const validateAndFixJavaScript = (code: string): string => {
     (_match, selector: string) => `.matches(\`${selector}\`)`
   );
 
+  // Auto-wrap bare async function expressions in IIFE so they actually
+  // execute. The LLM commonly emits `async () => { ... }` (or
+  // `async function () { ... }`) without trailing `()`, which evaluates
+  // to a function reference and silently does nothing — this is the
+  // root cause behind credential-extraction failures where
+  // `clipboard.writeText` etc. never runs. Detect that the trimmed code
+  // is exactly one such expression with no trailing call and wrap it.
+  const trimmed = fixedCode.trim();
+  const startsAsyncArrow = /^async\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.test(
+    trimmed
+  );
+  const startsAsyncFn = /^async\s+function\b/.test(trimmed);
+  if ((startsAsyncArrow || startsAsyncFn) && !/\)\s*;?\s*$/.test(trimmed)) {
+    fixedCode = `(${trimmed})()`;
+  }
+
   return fixedCode;
 };
 
@@ -2720,6 +2736,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
     });
 
     type EvaluateAction = z.infer<typeof EvaluateActionSchema>;
+    const evaluateLogger = this.logger;
     this.registry.action(
       'Execute browser JavaScript on the current page and return the result.',
       { param_model: EvaluateActionSchema }
@@ -2735,6 +2752,11 @@ You will be given a query and the markdown of a webpage that has been filtered t
       }
 
       const validatedCode = validateAndFixJavaScript(params.code);
+      if (validatedCode !== params.code) {
+        evaluateLogger.info(
+          `🛠 evaluate: auto-fixed input (len ${params.code.length} → ${validatedCode.length})`
+        );
+      }
 
       let payload: { ok: boolean; result?: unknown; error?: string } | null =
         null;
@@ -2806,6 +2828,18 @@ You will be given a query and the markdown of a webpage that has been filtered t
       if (rendered.length > maxChars) {
         rendered = `${rendered.slice(0, maxChars - 50)}\n... [Truncated after 20000 characters]`;
       }
+
+      // Log the evaluate return value so callers (and trace consumers) can
+      // see whether the executed code actually produced a result. Truncate
+      // aggressively — the agent already has the full value via
+      // extracted_content; this log is for debugging the "code ran but did
+      // nothing" failure mode (e.g. unwrapped async fn expressions).
+      const previewMax = 500;
+      const preview =
+        rendered.length > previewMax
+          ? `${rendered.slice(0, previewMax)}... [+${rendered.length - previewMax} chars]`
+          : rendered;
+      evaluateLogger.info(`🧪 evaluate result (${rendered.length} chars): ${preview}`);
 
       const maxMemoryChars = 10000;
       const includeExtractedContentOnlyOnce = rendered.length >= maxMemoryChars;

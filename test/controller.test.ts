@@ -2721,6 +2721,59 @@ describe('Regression Coverage', () => {
     expect(result.error).toBeNull();
   });
 
+  describe('evaluate auto-wraps bare function expressions in IIFE', () => {
+    const buildPage = () => ({
+      evaluate: vi.fn(async (_handler: unknown, args: { code: string }) => ({
+        ok: true,
+        result: args.code,
+      })),
+      url: vi.fn(() => 'https://example.com'),
+    });
+
+    const runEvaluate = async (code: string) => {
+      const controller = new Controller();
+      const page = buildPage();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+      };
+      const result = await controller.registry.execute_action(
+        'evaluate',
+        { code },
+        { browser_session: browserSession as any }
+      );
+      const evaluatedCode = (page.evaluate.mock.calls[0]?.[1] as {
+        code: string;
+      })?.code;
+      return { result, evaluatedCode };
+    };
+
+    it('wraps a bare async arrow expression in an IIFE', async () => {
+      const { result, evaluatedCode } = await runEvaluate(
+        `async () => {\n  return { username: document.querySelector('input[type=email]')?.value };\n}`
+      );
+      expect(result.error).toBeNull();
+      expect(evaluatedCode?.startsWith('(async () => {')).toBe(true);
+      expect(evaluatedCode?.endsWith('})()')).toBe(true);
+    });
+
+    it('wraps a bare async function expression in an IIFE', async () => {
+      const { evaluatedCode } = await runEvaluate(
+        `async function () { return 1; }`
+      );
+      expect(evaluatedCode).toBe(`(async function () { return 1; })()`);
+    });
+
+    it('leaves a non-function expression untouched', async () => {
+      const { evaluatedCode } = await runEvaluate(`document.title`);
+      expect(evaluatedCode).toBe('document.title');
+    });
+
+    it('does not double-wrap an existing IIFE', async () => {
+      const { evaluatedCode } = await runEvaluate(`(async () => 1)()`);
+      expect(evaluatedCode).toBe(`(async () => 1)()`);
+    });
+  });
+
   it('evaluate returns action error on JavaScript failure', async () => {
     const controller = new Controller();
     const page = {
