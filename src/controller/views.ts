@@ -1,5 +1,25 @@
 import { z } from 'zod';
 
+// pydantic-parity: lax boolean->number coercion at the LLM-facing boundary.
+// bu-2-0 occasionally emits booleans for integer fields (token-level confusion);
+// python upstream accepts this silently via pydantic's default lax mode.
+// Without this, every action that expects a numeric index hard-rejects and the
+// agent loops to max_failures. See: https://docs.pydantic.dev/latest/concepts/strict_mode/
+export const lenientInt = (min?: number) => {
+  let schema = z.number().int();
+  if (min !== undefined) schema = schema.min(min);
+  return z.preprocess(
+    (v) => (typeof v === 'boolean' ? Number(v) : v),
+    schema,
+  );
+};
+
+export const lenientNumber = () =>
+  z.preprocess(
+    (v) => (typeof v === 'boolean' ? Number(v) : v),
+    z.number(),
+  );
+
 export const SearchGoogleActionSchema = z.object({
   query: z.string(),
 });
@@ -23,21 +43,21 @@ export const WaitActionSchema = z.object({
 export type WaitAction = z.infer<typeof WaitActionSchema>;
 
 export const ClickElementActionSchema = z.object({
-  index: z.number().int().min(1).optional(),
+  index: lenientInt(1).optional(),
   coordinate_x: z.number().int().optional(),
   coordinate_y: z.number().int().optional(),
 });
 export type ClickElementAction = z.infer<typeof ClickElementActionSchema>;
 
 export const ClickElementActionIndexOnlySchema = z.object({
-  index: z.number().int().min(1),
+  index: lenientInt(1),
 });
 export type ClickElementActionIndexOnly = z.infer<
   typeof ClickElementActionIndexOnlySchema
 >;
 
 export const InputTextActionSchema = z.object({
-  index: z.number().int().min(0),
+  index: lenientInt(0),
   text: z.string(),
   clear: z.boolean().default(true),
 });
@@ -82,9 +102,9 @@ export type CloseTabAction = z.infer<typeof CloseTabActionSchema>;
 
 export const ScrollActionSchema = z.object({
   down: z.boolean().default(true), // Default to scroll down
-  num_pages: z.number().default(1), // Default to 1 page
-  pages: z.number().optional(), // Alias for num_pages
-  index: z.number().int().optional(),
+  num_pages: lenientNumber().default(1), // Default to 1 page
+  pages: lenientNumber().optional(), // Alias for num_pages
+  index: lenientInt().optional(),
 });
 export type ScrollAction = z.infer<typeof ScrollActionSchema>;
 
@@ -94,7 +114,7 @@ export const SendKeysActionSchema = z.object({
 export type SendKeysAction = z.infer<typeof SendKeysActionSchema>;
 
 export const UploadFileActionSchema = z.object({
-  index: z.number().int(),
+  index: lenientInt(),
   path: z.string(),
 });
 export type UploadFileAction = z.infer<typeof UploadFileActionSchema>;
@@ -181,12 +201,12 @@ export const ScrollToTextActionSchema = z.object({
 export type ScrollToTextAction = z.infer<typeof ScrollToTextActionSchema>;
 
 export const DropdownOptionsActionSchema = z.object({
-  index: z.number().int().min(1),
+  index: lenientInt(1),
 });
 export type DropdownOptionsAction = z.infer<typeof DropdownOptionsActionSchema>;
 
 export const SelectDropdownActionSchema = z.object({
-  index: z.number().int().min(1),
+  index: lenientInt(1),
   text: z.string(),
 });
 export type SelectDropdownAction = z.infer<typeof SelectDropdownActionSchema>;

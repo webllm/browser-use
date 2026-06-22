@@ -140,3 +140,6 @@ vite.config.ts.timestamp-*
 recordings/
 browseruse_agent_data/
 origin/
+
+# Repro script outputs (may contain real screenshot/PII)
+test/fixtures/repro-output-*.json
