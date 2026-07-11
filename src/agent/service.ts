@@ -5214,7 +5214,7 @@ export class Agent<
     try {
       const invokeOptions =
         (this.judge_llm as any)?.provider === 'browser-use'
-          ? ({ request_type: 'judge' } as const)
+          ? ({ request_type: 'judge', session_id: this.session_id } as const)
           : undefined;
       const response = await this.judge_llm.ainvoke(
         messages as any,

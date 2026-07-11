@@ -248,7 +248,10 @@ describe('Agent full judge alignment', () => {
 
       expect(judgeInvoke).toHaveBeenCalledTimes(1);
       const thirdArg = judgeInvoke.mock.calls[0]?.[2] as any;
-      expect(thirdArg).toMatchObject({ request_type: 'judge' });
+      expect(thirdArg).toMatchObject({
+        request_type: 'judge',
+        session_id: agent.session_id,
+      });
     } finally {
       await agent.close();
     }
