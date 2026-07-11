@@ -4,6 +4,7 @@ export const getCliUsage = () => `Usage:
   browser-use install
   browser-use setup [--mode <local|remote|full>]
   browser-use auth codex <login|status|logout|import>
+  browser-use skill <show|install>
   browser-use tunnel <port>
   browser-use task <list|status|stop|logs>
   browser-use session <list|get|stop|create|share>

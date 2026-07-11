@@ -281,6 +281,22 @@ describe('CLI argument parsing', () => {
     });
   });
 
+  it('extracts skill subcommands after leading global flags', () => {
+    expect(
+      extractPrefixedSubcommand([
+        '--debug',
+        'skill',
+        'install',
+        '--target=codex',
+      ])
+    ).toEqual({
+      command: 'skill',
+      argv: ['install', '--target=codex'],
+      debug: true,
+      forwardedArgs: [],
+    });
+  });
+
   it('dispatches api-key-prefixed task subcommands through main', async () => {
     let output = '';
     const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
@@ -363,6 +379,7 @@ describe('CLI argument parsing', () => {
     expect(usage).toContain('browser-use install');
     expect(usage).toContain('browser-use setup');
     expect(usage).toContain('browser-use auth codex');
+    expect(usage).toContain('browser-use skill <show|install>');
     expect(usage).toContain('browser-use tunnel <port>');
     expect(usage).toContain('--provider <name>');
     expect(usage).toContain('--model <model>');

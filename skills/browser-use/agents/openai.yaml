@@ -1,0 +1,4 @@
+interface:
+  display_name: "Browser Use Direct"
+  short_description: "Control a persistent browser from coding agents"
+  default_prompt: "Use $browser-use to inspect and interact with the current website safely."

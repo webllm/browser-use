@@ -2942,7 +2942,7 @@ const hasExplicitRemoteRunFlag = (argv: string[]) => {
 };
 
 type PrefixedSubcommand = {
-  command: 'run' | 'task' | 'session' | 'profile' | 'auth';
+  command: 'run' | 'task' | 'session' | 'profile' | 'auth' | 'skill';
   argv: string[];
   debug: boolean;
   forwardedArgs: string[];
@@ -3013,7 +3013,8 @@ export const extractPrefixedSubcommand = (
     command !== 'task' &&
     command !== 'session' &&
     command !== 'profile' &&
-    command !== 'auth'
+    command !== 'auth' &&
+    command !== 'skill'
   ) {
     return null;
   }
@@ -3538,6 +3539,15 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 
     if (prefixedSubcommand.command === 'auth') {
       const exitCode = await runAuthCommand(subcommandArgv);
+      if (exitCode !== 0) {
+        process.exit(exitCode);
+      }
+      return;
+    }
+
+    if (prefixedSubcommand.command === 'skill') {
+      const { runSkillCommand } = await import('./skills/install.js');
+      const exitCode = await runSkillCommand(subcommandArgv);
       if (exitCode !== 0) {
         process.exit(exitCode);
       }

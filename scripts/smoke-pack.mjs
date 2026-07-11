@@ -95,6 +95,19 @@ function assertPackagedAssets(repoRoot, installedPackageDir) {
       path.join('dist/agent', templateName)
     );
   }
+
+  assertPackagedFileMatches(
+    repoRoot,
+    installedPackageDir,
+    'skills/browser-use/SKILL.md',
+    'skills/browser-use/SKILL.md'
+  );
+  assertPackagedFileMatches(
+    repoRoot,
+    installedPackageDir,
+    'skills/browser-use/agents/openai.yaml',
+    'skills/browser-use/agents/openai.yaml'
+  );
 }
 
 function runPackagedBin(tempDir, binName, args) {
@@ -129,6 +142,28 @@ function assertPackagedBins(tempDir) {
     throw new Error(
       'Packaged browser-use-direct binary did not print its help output.'
     );
+  }
+
+  const skillContents = runPackagedBin(tempDir, 'browser-use', [
+    'skill',
+    'show',
+  ]);
+  if (
+    !skillContents.includes('name: browser-use') ||
+    !skillContents.includes('browser_exec')
+  ) {
+    throw new Error('Packaged browser-use binary could not read its skill.');
+  }
+
+  const installedSkillDir = path.join(tempDir, 'installed-skill');
+  runPackagedBin(tempDir, 'browser-use', [
+    'skill',
+    'install',
+    '--path',
+    installedSkillDir,
+  ]);
+  if (!fs.existsSync(path.join(installedSkillDir, 'SKILL.md'))) {
+    throw new Error('Packaged browser-use binary could not install its skill.');
   }
 }
 

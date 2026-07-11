@@ -89,7 +89,19 @@ npx browser-use --headless -p "Check the weather"
 
 # MCP server mode
 npx browser-use --mcp
+
+# Minimal direct-browser MCP server for coding agents
+npx browser-use --cli-mcp
+
+# Install the bundled coding-agent skill (codex, claude, cursor, etc.)
+npx browser-use skill install --target codex
 ```
+
+The [bundled browser-use skill](./skills/browser-use/SKILL.md) teaches coding
+agents to drive the persistent browser through the two-tool CLI MCP server or
+the `browser-use-direct` fallback. Run `npx browser-use skill install` without
+a target to install it for every supported coding agent, or use
+`npx browser-use skill show` to inspect it first.
 
 ## 🏗️ Architecture
 
