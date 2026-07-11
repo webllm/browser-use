@@ -23,6 +23,7 @@ export interface ModelPricing {
   output_cost_per_token: number | null;
   cache_read_input_token_cost: number | null;
   cache_creation_input_token_cost: number | null;
+  cache_creation_1h_input_token_cost?: number | null;
   max_tokens: number | null;
   max_input_tokens: number | null;
   max_output_tokens: number | null;
@@ -56,6 +57,8 @@ export interface UsageSummary {
   total_prompt_cost: number;
   total_prompt_cached_tokens: number;
   total_prompt_cached_cost: number;
+  total_prompt_cache_creation_tokens: number;
+  total_prompt_cache_creation_cost: number;
   total_completion_tokens: number;
   total_completion_cost: number;
   total_tokens: number;

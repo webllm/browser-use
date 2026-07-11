@@ -52,6 +52,49 @@ describe('TokenCost alignment', () => {
     );
   });
 
+  it('prices Anthropic cache TTLs and US-only inference independently', async () => {
+    const tokenCost = new TokenCost(true);
+    const usage = {
+      prompt_tokens: 100,
+      prompt_cached_tokens: 20,
+      prompt_cache_creation_tokens: 7,
+      prompt_cache_creation_5m_tokens: 3,
+      prompt_cache_creation_1h_tokens: 4,
+      prompt_image_tokens: null,
+      completion_tokens: 10,
+      total_tokens: 110,
+      pricing_multiplier: 1.1,
+    };
+
+    const cost = await tokenCost.calculateCost('claude-fable-5', usage);
+
+    expect(mockedAxiosGet).not.toHaveBeenCalled();
+    expect(cost?.new_prompt_cost).toBeCloseTo(0.00088);
+    expect(cost?.prompt_read_cached_cost).toBeCloseTo(0.000022);
+    expect(cost?.prompt_cache_creation_cost).toBeCloseTo(0.00012925);
+    expect(cost?.completion_cost).toBeCloseTo(0.00055);
+
+    tokenCost.addUsage('claude-fable-5', usage);
+    const summary = await tokenCost.get_usage_summary();
+    expect(summary.total_prompt_cache_creation_tokens).toBe(7);
+    expect(summary.total_prompt_cache_creation_cost).toBeCloseTo(0.00012925);
+    expect(summary.total_prompt_cost).toBeCloseTo(0.00103125);
+  });
+
+  it('keeps aggregate cache-write pricing for providers without TTL buckets', async () => {
+    const tokenCost = new TokenCost(true);
+    const cost = await tokenCost.calculateCost('claude-sonnet-4-6', {
+      prompt_tokens: 10,
+      prompt_cached_tokens: null,
+      prompt_cache_creation_tokens: 8,
+      prompt_image_tokens: null,
+      completion_tokens: 2,
+      total_tokens: 12,
+    });
+
+    expect(cost?.prompt_cache_creation_cost).toBeCloseTo(0.00003);
+  });
+
   it('maps gemini-flash-latest to the LiteLLM namespaced key', async () => {
     const tokenCost = new TokenCost(false);
     (tokenCost as any).pricingData = {
@@ -108,6 +151,7 @@ describe('TokenCost alignment', () => {
     expect(pricing?.output_cost_per_token).toBeCloseTo(0.000004);
     expect(pricing?.cache_read_input_token_cost).toBeCloseTo(0.00000008);
     expect(pricing?.cache_creation_input_token_cost).toBeCloseTo(0.000001);
+    expect(pricing?.cache_creation_1h_input_token_cost).toBeNull();
     expect(pricing?.max_input_tokens).toBe(200000);
     expect(pricing?.max_output_tokens).toBe(8192);
   });

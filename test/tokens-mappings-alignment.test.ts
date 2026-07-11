@@ -15,4 +15,18 @@ describe('tokens mappings alignment', () => {
       'gemini/gemini-flash-latest'
     );
   });
+
+  it('includes current Claude pricing and one-hour cache writes', () => {
+    const fable = CUSTOM_MODEL_PRICING['claude-fable-5'];
+    const anthropicFable = CUSTOM_MODEL_PRICING['anthropic/claude-fable-5'];
+
+    expect(fable.input_cost_per_token).toBeCloseTo(10 / 1_000_000);
+    expect(fable.cache_creation_input_token_cost).toBeCloseTo(12.5 / 1_000_000);
+    expect(fable.cache_creation_1h_input_token_cost).toBeCloseTo(
+      20 / 1_000_000
+    );
+    expect(anthropicFable.cache_creation_1h_input_token_cost).toBe(
+      fable.cache_creation_1h_input_token_cost
+    );
+  });
 });

@@ -22,6 +22,7 @@ const anthropicMock = vi.hoisted(() => {
   return {
     anthropicCtorMock: vi.fn(),
     anthropicCreateMock: vi.fn(),
+    anthropicBetaCreateMock: vi.fn(),
     APIError,
     APIConnectionError,
     RateLimitError,
@@ -32,6 +33,12 @@ vi.mock('@anthropic-ai/sdk', () => {
   class Anthropic {
     messages = {
       create: anthropicMock.anthropicCreateMock,
+    };
+
+    beta = {
+      messages: {
+        create: anthropicMock.anthropicBetaCreateMock,
+      },
     };
 
     constructor(options?: unknown) {
@@ -70,8 +77,12 @@ describe('ChatAnthropic alignment', () => {
   beforeEach(() => {
     anthropicMock.anthropicCtorMock.mockReset();
     anthropicMock.anthropicCreateMock.mockReset();
+    anthropicMock.anthropicBetaCreateMock.mockReset();
     anthropicMock.anthropicCreateMock.mockResolvedValue(
       buildResponse([{ type: 'text', text: 'plain response' }])
+    );
+    anthropicMock.anthropicBetaCreateMock.mockResolvedValue(
+      buildResponse([{ type: 'text', text: 'beta response' }])
     );
   });
 
@@ -236,5 +247,153 @@ describe('ChatAnthropic alignment', () => {
       model: 'claude-sonnet-4-20250514',
       message: expect.stringContaining('max_tokens=128'),
     } satisfies Partial<ModelOutputTruncatedError>);
+  });
+
+  it('uses beta messages and server-side fallback options when configured', async () => {
+    const llm = new ChatAnthropic({
+      model: 'claude-fable-5',
+      outputConfig: { effort: 'high' },
+      thinking: { type: 'adaptive', display: 'summarized' },
+      betas: ['context-1m-2025-08-07'],
+      fallbacks: [{ model: 'claude-sonnet-4-6' }],
+      inferenceGeo: 'us',
+    });
+
+    const result = await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(result.completion).toBe('beta response');
+    expect(anthropicMock.anthropicCreateMock).not.toHaveBeenCalled();
+    const request =
+      anthropicMock.anthropicBetaCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(request).toMatchObject({
+      model: 'claude-fable-5',
+      output_config: { effort: 'high' },
+      thinking: { type: 'adaptive', display: 'summarized' },
+      fallbacks: [{ model: 'claude-sonnet-4-6' }],
+      inference_geo: 'us',
+    });
+    expect(request.betas).toEqual([
+      'context-1m-2025-08-07',
+      'server-side-fallback-2026-06-01',
+    ]);
+  });
+
+  it.each([
+    { type: 'enabled', budget_tokens: 2048 },
+    { type: 'disabled' },
+    { type: 'adaptive', budget_tokens: 2048 },
+  ])('rejects non-adaptive Fable thinking config %j', async (thinking) => {
+    const llm = new ChatAnthropic({
+      model: 'claude-fable-5',
+      thinking,
+    });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      {
+        name: 'ModelProviderError',
+        statusCode: 400,
+        model: 'claude-fable-5',
+        message: expect.stringMatching(/only supports adaptive thinking/),
+      }
+    );
+    expect(anthropicMock.anthropicCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('uses auto tool choice and parses structured text with thinking metadata', async () => {
+    anthropicMock.anthropicCreateMock.mockResolvedValue({
+      content: [
+        { type: 'thinking', thinking: 'considered the schema' },
+        { type: 'redacted_thinking', data: 'encrypted-thought' },
+        { type: 'text', text: '```json\n{"value":"ok"}\n```' },
+      ],
+      stop_reason: 'end_turn',
+      stop_details: {
+        type: 'refusal',
+        category: 'none',
+        explanation: 'completed normally',
+      },
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 2,
+        cache_creation_input_tokens: 7,
+        cache_creation: {
+          ephemeral_5m_input_tokens: 3,
+          ephemeral_1h_input_tokens: 4,
+        },
+      },
+    });
+    const llm = new ChatAnthropic({
+      model: 'claude-fable-5',
+      thinking: { type: 'adaptive' },
+      inferenceGeo: 'us',
+    });
+
+    const result = await llm.ainvoke(
+      [new UserMessage('extract')],
+      z.object({ value: z.string() }) as any
+    );
+
+    const request = anthropicMock.anthropicCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(request.tool_choice).toEqual({ type: 'auto' });
+    expect(request.inference_geo).toBe('us');
+    expect((result.completion as any).value).toBe('ok');
+    expect(result.thinking).toBe('considered the schema');
+    expect(result.redacted_thinking).toBe('encrypted-thought');
+    expect(result.stop_details).toEqual({
+      type: 'refusal',
+      category: 'none',
+      explanation: 'completed normally',
+    });
+    expect(result.usage).toMatchObject({
+      prompt_cache_creation_5m_tokens: 3,
+      prompt_cache_creation_1h_tokens: 4,
+      pricing_multiplier: 1.1,
+    });
+  });
+
+  it('keeps forced tool choice when thinking is disabled', async () => {
+    anthropicMock.anthropicCreateMock.mockResolvedValue(
+      buildResponse([
+        {
+          type: 'tool_use',
+          id: 'tool_1',
+          name: 'response',
+          input: { value: 'ok' },
+        },
+      ])
+    );
+    const llm = new ChatAnthropic({
+      thinking: { type: 'disabled' },
+    });
+
+    await llm.ainvoke(
+      [new UserMessage('extract')],
+      z.object({ value: z.string() }) as any
+    );
+
+    const request = anthropicMock.anthropicCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(request.tool_choice).toEqual({ type: 'tool', name: 'response' });
+  });
+
+  it('repairs double-serialized tool fields containing control characters', async () => {
+    anthropicMock.anthropicCreateMock.mockResolvedValue(
+      buildResponse([
+        {
+          type: 'tool_use',
+          id: 'tool_1',
+          name: 'response',
+          input: { metadata: '{"note":"line 1\nline 2"}' },
+        },
+      ])
+    );
+    const llm = new ChatAnthropic();
+
+    const result = await llm.ainvoke(
+      [new UserMessage('extract')],
+      z.object({ metadata: z.object({ note: z.string() }) }) as any
+    );
+
+    expect((result.completion as any).metadata.note).toBe('line 1\nline 2');
   });
 });

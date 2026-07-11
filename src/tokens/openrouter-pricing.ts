@@ -120,6 +120,7 @@ export function modelPricingFromOpenRouterMetadata(
     output_cost_per_token: outputCost,
     cache_read_input_token_cost: floatOrNull(pricing.input_cache_read),
     cache_creation_input_token_cost: floatOrNull(pricing.input_cache_write),
+    cache_creation_1h_input_token_cost: null,
     max_tokens: contextLength,
     max_input_tokens: contextLength,
     max_output_tokens: maxOutputTokens,

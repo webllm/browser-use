@@ -187,6 +187,21 @@ export class ChatAnthropicBedrock implements BaseChatModel {
       .join('\n');
   }
 
+  private getUsage(response: any) {
+    const usage = response?.usage ?? {};
+    const cacheReadTokens = usage.cacheReadInputTokens ?? 0;
+    return {
+      prompt_tokens: (usage.inputTokens ?? 0) + cacheReadTokens,
+      completion_tokens: usage.outputTokens ?? 0,
+      total_tokens: usage.totalTokens ?? 0,
+      prompt_cached_tokens: cacheReadTokens || null,
+      prompt_cache_creation_tokens: usage.cacheWriteInputTokens ?? null,
+      prompt_cache_creation_5m_tokens: null,
+      prompt_cache_creation_1h_tokens: null,
+      prompt_image_tokens: null,
+    };
+  }
+
   async ainvoke(
     messages: Message[],
     output_format?: undefined,
@@ -342,11 +357,7 @@ export class ChatAnthropicBedrock implements BaseChatModel {
       const stopReason = response?.stopReason ?? null;
       return new ChatInvokeCompletion(
         completion,
-        {
-          prompt_tokens: response.usage?.inputTokens ?? 0,
-          completion_tokens: response.usage?.outputTokens ?? 0,
-          total_tokens: response.usage?.totalTokens ?? 0,
-        },
+        this.getUsage(response),
         null,
         null,
         stopReason

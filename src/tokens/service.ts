@@ -290,31 +290,53 @@ export class TokenCost {
     if (!this.includeCost) {
       return null;
     }
-    await this.ensurePricingLoaded();
     const pricing = await this.getModelPricing(model);
     if (!pricing) {
       return null;
     }
     const cached = usage.prompt_cached_tokens ?? 0;
     const uncachedPrompt = usage.prompt_tokens - cached;
-    return {
-      new_prompt_tokens: usage.prompt_tokens,
-      new_prompt_cost: uncachedPrompt * (pricing.input_cost_per_token ?? 0),
-      prompt_read_cached_tokens: usage.prompt_cached_tokens ?? null,
-      prompt_read_cached_cost:
-        cached && pricing.cache_read_input_token_cost
-          ? cached * pricing.cache_read_input_token_cost
-          : null,
-      prompt_cached_creation_tokens: usage.prompt_cache_creation_tokens ?? null,
-      prompt_cache_creation_cost:
+    const pricingMultiplier = usage.pricing_multiplier ?? 1;
+    const cacheCreation5m = usage.prompt_cache_creation_5m_tokens;
+    const cacheCreation1h = usage.prompt_cache_creation_1h_tokens;
+    let promptCacheCreationCost: number | null;
+    if (cacheCreation5m != null || cacheCreation1h != null) {
+      promptCacheCreationCost =
+        (cacheCreation5m ?? 0) *
+          (pricing.cache_creation_input_token_cost ?? 0) +
+        (cacheCreation1h ?? 0) *
+          (pricing.cache_creation_1h_input_token_cost ??
+            pricing.cache_creation_input_token_cost ??
+            0);
+    } else {
+      promptCacheCreationCost =
         usage.prompt_cache_creation_tokens &&
         pricing.cache_creation_input_token_cost
           ? usage.prompt_cache_creation_tokens *
             pricing.cache_creation_input_token_cost
+          : null;
+    }
+    return {
+      new_prompt_tokens: usage.prompt_tokens,
+      new_prompt_cost:
+        uncachedPrompt *
+        (pricing.input_cost_per_token ?? 0) *
+        pricingMultiplier,
+      prompt_read_cached_tokens: usage.prompt_cached_tokens ?? null,
+      prompt_read_cached_cost:
+        cached && pricing.cache_read_input_token_cost
+          ? cached * pricing.cache_read_input_token_cost * pricingMultiplier
           : null,
+      prompt_cached_creation_tokens: usage.prompt_cache_creation_tokens ?? null,
+      prompt_cache_creation_cost:
+        promptCacheCreationCost == null
+          ? null
+          : promptCacheCreationCost * pricingMultiplier,
       completion_tokens: usage.completion_tokens,
       completion_cost:
-        usage.completion_tokens * (pricing.output_cost_per_token ?? 0),
+        usage.completion_tokens *
+        (pricing.output_cost_per_token ?? 0) *
+        pricingMultiplier,
     };
   }
 
@@ -331,6 +353,8 @@ export class TokenCost {
           customPricing.cache_read_input_token_cost ?? null,
         cache_creation_input_token_cost:
           customPricing.cache_creation_input_token_cost ?? null,
+        cache_creation_1h_input_token_cost:
+          customPricing.cache_creation_1h_input_token_cost ?? null,
         max_tokens: customPricing.max_tokens ?? null,
         max_input_tokens: customPricing.max_input_tokens ?? null,
         max_output_tokens: customPricing.max_output_tokens ?? null,
@@ -356,6 +380,8 @@ export class TokenCost {
           pricing.cache_read_input_token_cost ?? null,
         cache_creation_input_token_cost:
           pricing.cache_creation_input_token_cost ?? null,
+        cache_creation_1h_input_token_cost:
+          pricing.cache_creation_1h_input_token_cost ?? null,
         max_tokens: pricing.max_tokens ?? null,
         max_input_tokens: pricing.max_input_tokens ?? null,
         max_output_tokens: pricing.max_output_tokens ?? null,
@@ -406,6 +432,8 @@ export class TokenCost {
         total_prompt_cost: 0,
         total_prompt_cached_tokens: 0,
         total_prompt_cached_cost: 0,
+        total_prompt_cache_creation_tokens: 0,
+        total_prompt_cache_creation_cost: 0,
         total_completion_tokens: 0,
         total_completion_cost: 0,
         total_tokens: 0,
@@ -420,6 +448,8 @@ export class TokenCost {
     let totalCompletion = 0;
     let totalPromptCached = 0;
     let totalPromptCachedCost = 0;
+    let totalPromptCacheCreation = 0;
+    let totalPromptCacheCreationCost = 0;
     let totalPromptCost = 0;
     let totalCompletionCost = 0;
 
@@ -443,16 +473,19 @@ export class TokenCost {
       totalPrompt += entry.usage.prompt_tokens;
       totalCompletion += entry.usage.completion_tokens;
       totalPromptCached += entry.usage.prompt_cached_tokens ?? 0;
+      totalPromptCacheCreation += entry.usage.prompt_cache_creation_tokens ?? 0;
 
       if (this.includeCost) {
         const cost = await this.calculateCost(entry.model, entry.usage);
         const promptCost = usagePromptCost(cost);
         const completionCost = cost?.completion_cost ?? 0;
         const cachedCost = cost?.prompt_read_cached_cost ?? 0;
+        const cacheCreationCost = cost?.prompt_cache_creation_cost ?? 0;
         stats.cost += promptCost + completionCost;
         totalPromptCost += promptCost;
         totalCompletionCost += completionCost;
         totalPromptCachedCost += cachedCost;
+        totalPromptCacheCreationCost += cacheCreationCost;
       }
     }
 
@@ -467,6 +500,8 @@ export class TokenCost {
       total_prompt_cost: totalPromptCost,
       total_prompt_cached_tokens: totalPromptCached,
       total_prompt_cached_cost: totalPromptCachedCost,
+      total_prompt_cache_creation_tokens: totalPromptCacheCreation,
+      total_prompt_cache_creation_cost: totalPromptCacheCreationCost,
       total_completion_tokens: totalCompletion,
       total_completion_cost: totalCompletionCost,
       total_tokens: totalPrompt + totalCompletion,

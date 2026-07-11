@@ -164,6 +164,31 @@ describe('AWS Bedrock alignment', () => {
     expect(request.system[0].text).toContain('system context');
   });
 
+  it('preserves Anthropic Bedrock cache usage', async () => {
+    bedrockSendMock.mockResolvedValue({
+      ...buildResponse([{ text: 'ok' }]),
+      usage: {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        cacheReadInputTokens: 4,
+        cacheWriteInputTokens: 3,
+      },
+    });
+
+    const result = await new ChatAnthropicBedrock().ainvoke([
+      new UserMessage('hello'),
+    ]);
+
+    expect(result.usage).toMatchObject({
+      prompt_tokens: 14,
+      prompt_cached_tokens: 4,
+      prompt_cache_creation_tokens: 3,
+      completion_tokens: 5,
+      total_tokens: 15,
+    });
+  });
+
   it('maps throttling errors to ModelRateLimitError', async () => {
     bedrockSendMock.mockRejectedValueOnce({
       name: 'ThrottlingException',

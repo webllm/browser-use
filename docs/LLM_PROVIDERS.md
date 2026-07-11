@@ -8,7 +8,7 @@ Browser-Use supports multiple LLM providers through a unified interface. This gu
 | ------------- | -------------- | ---------------- | ------- | ------------------------------------ |
 | OpenAI        | ✅             | ✅ (o1, o3, o4)  | ❌      | Default provider                     |
 | Codex         | ✅             | ✅               | ❌      | Experimental ChatGPT/Codex OAuth     |
-| Anthropic     | ✅             | ❌               | ✅      | Best for complex tasks               |
+| Anthropic     | ✅             | ✅               | ✅      | Adaptive thinking and tool output    |
 | Google Gemini | ✅             | ✅               | ❌      | Extended thinking support            |
 | Azure OpenAI  | ✅             | ✅               | ❌      | Enterprise deployment                |
 | AWS Bedrock   | ✅             | ❌               | ❌      | Claude via AWS                       |
@@ -205,14 +205,11 @@ const llm = new ChatAnthropic({
 });
 ```
 
-### Available Models
+### Example Models
 
-| Model                        | Vision | Best For            |
-| ---------------------------- | ------ | ------------------- |
-| `claude-sonnet-4-20250514`   | ✅     | Default, balanced   |
-| `claude-opus-4-20250514`     | ✅     | Complex tasks       |
-| `claude-3-5-sonnet-20241022` | ✅     | Previous generation |
-| `claude-3-opus-20240229`     | ✅     | Previous generation |
+Model identifiers are passed through to Anthropic. Current examples mirrored
+by the compatibility layer include `claude-sonnet-4-6`, `claude-opus-4-6`, and
+`claude-fable-5`; consult Anthropic's model catalog before choosing one.
 
 ### Cache Control
 
@@ -230,12 +227,31 @@ systemMsg.cache = true; // Enable caching
 
 ```typescript
 const llm = new ChatAnthropic({
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-fable-5',
   apiKey: process.env.ANTHROPIC_API_KEY,
-  temperature: 0.7,
-  maxTokens: 4096,
-  baseURL: 'https://api.anthropic.com',
+  thinking: { type: 'adaptive', display: 'summarized' },
+  outputConfig: { effort: 'high' },
+  fallbacks: [{ model: 'claude-sonnet-4-6' }],
+  inferenceGeo: 'us',
 });
+```
+
+Anthropic integrations MUST use adaptive thinking for models that only support
+that mode, including Claude Fable 5 and Claude Mythos 5. When thinking is
+active, structured output uses automatic tool selection and accepts valid JSON
+text if the model does not emit a tool call. Server-side fallbacks automatically
+enable the required Anthropic beta; explicitly supplied `betas` are preserved.
+
+Usage results retain thinking blocks, redacted thinking, stop details, and the
+separate 5-minute and 1-hour cache-write token counts. Setting
+`inferenceGeo: 'us'` also applies Anthropic's US-only pricing multiplier in cost
+summaries.
+
+The option contract is defined by
+[`ChatAnthropicOptions`](../src/llm/anthropic/chat.ts). Verify the behavior with:
+
+```bash
+pnpm vitest run test/llm-anthropic-alignment.test.ts test/token-cost-alignment.test.ts
 ```
 
 ---
