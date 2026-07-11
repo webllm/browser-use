@@ -154,6 +154,17 @@ describe('CLI argument parsing', () => {
     expect(parsed.positional).toEqual([]);
   });
 
+  it('parses the minimal CLI MCP mode separately from the full MCP mode', () => {
+    const cliMcp = parseCliArgs(['--cli-mcp']);
+    const fullMcp = parseCliArgs(['--mcp']);
+
+    expect(cliMcp.cli_mcp).toBe(true);
+    expect(cliMcp.mcp).toBe(false);
+    expect(fullMcp.mcp).toBe(true);
+    expect(fullMcp.cli_mcp).toBe(false);
+    expect(getCliUsage()).toContain('browser-use --cli-mcp');
+  });
+
   it('builds proxy settings into BrowserProfile from CLI args', async () => {
     const configDir = await makeTempDir();
     process.env.BROWSER_USE_CONFIG_DIR = configDir;

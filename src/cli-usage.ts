@@ -13,11 +13,13 @@ export const getCliUsage = () => `Usage:
   browser-use -p "<task>"
   browser-use [options] <task>
   browser-use --mcp
+  browser-use --cli-mcp
 
 Options:
   -h, --help                  Show this help message
   --version                   Print version and exit
   --mcp                       Run as MCP server
+  --cli-mcp                   Run the minimal coding-agent CLI MCP server
   --json                      Output command results as JSON when supported
   -y, --yes                   Skip optional setup prompts where supported
   --provider <name>           Force provider (openai|anthropic|google|deepseek|groq|openrouter|azure|codex|mistral|cerebras|vercel|oci|ollama|browser-use|aws|aws-anthropic)

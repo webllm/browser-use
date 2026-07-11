@@ -395,7 +395,7 @@ Commands:
   click <x> <y>           Click viewport coordinates
   type <text>             Type into focused element
   input <index> <text>    Click element and type text
-  screenshot [path]       Take screenshot
+  screenshot [path] [--full]  Take viewport or full-page screenshot
   scroll [up|down]        Scroll page
   back                    Go back in history
   forward                 Go forward in history
@@ -1005,8 +1005,15 @@ export const run_direct_command = async (
       await session._input_text_element_node?.(node, text, { clear: true });
       writeLine(environment.stdout, `Typed "${text}" into element [${index}]`);
     } else if (command === 'screenshot') {
-      const outputPath = args[1] ? path.resolve(args[1]) : null;
-      const screenshot = await session.take_screenshot?.(false);
+      const screenshotArgs = args.slice(1);
+      const fullPage = screenshotArgs.some(
+        (value) => value === '--full' || value === '--full-page'
+      );
+      const outputPathValue = screenshotArgs.find(
+        (value) => value !== '--full' && value !== '--full-page'
+      );
+      const outputPath = outputPathValue ? path.resolve(outputPathValue) : null;
+      const screenshot = await session.take_screenshot?.(fullPage);
       if (!screenshot) {
         throw new Error('Failed to capture screenshot');
       }

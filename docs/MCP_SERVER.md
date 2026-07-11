@@ -15,6 +15,48 @@ The Model Context Protocol (MCP) is Anthropic's open standard for connecting AI 
 npx browser-use --mcp
 ```
 
+### Minimal Coding-Agent Server
+
+Use the smaller CLI-oriented server when a coding agent needs direct,
+persistent browser control without the autonomous Agent and full Controller
+tool catalog:
+
+```bash
+npx browser-use --cli-mcp
+```
+
+This mode exposes exactly two tools:
+
+| Tool                 | Purpose                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `browser_exec`       | Run one `browser-use-direct` command with an argument array     |
+| `browser_screenshot` | Return a viewport or full-page PNG, optionally using `max_dim`  |
+
+`browser_exec` MUST NOT invoke a shell; `command` and `args` are passed to the
+in-process direct-command runner. Calls are serialized so they cannot race the
+persistent browser state. Text output is capped at 100,000 characters by
+default; set `BROWSER_USE_CLI_MCP_MAX_OUTPUT_CHARS` to a positive integer to
+change the cap.
+
+Example MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "browser-use-cli": {
+      "command": "npx",
+      "args": ["browser-use", "--cli-mcp"]
+    }
+  }
+}
+```
+
+The protocol and validation behavior are verified by:
+
+```bash
+pnpm vitest run test/mcp-cli-server.test.ts test/skill-cli-direct-alignment.test.ts
+```
+
 ### Configuring Claude Desktop
 
 Add to your Claude Desktop configuration file:

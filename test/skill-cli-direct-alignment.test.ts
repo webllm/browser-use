@@ -892,6 +892,40 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('forwards full-page screenshot mode', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-full-shot-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const takeScreenshot = vi.fn(async () =>
+      Buffer.from('image').toString('base64')
+    );
+    const session = {
+      start: vi.fn(async () => {}),
+      take_screenshot: takeScreenshot,
+      get_current_page: vi.fn(async () => ({
+        url: () => 'https://example.com',
+      })),
+      event_bus: { stop: vi.fn(async () => {}) },
+      detach_all_watchdogs: vi.fn(),
+    };
+
+    try {
+      const exitCode = await run_direct_command(['screenshot', '--full'], {
+        state_file: stateFile,
+        session_factory: () => session,
+        local_launcher: async () => ({ cdp_url: 'http://localhost:9222' }),
+        stdout: { write: vi.fn() },
+        stderr: { write: vi.fn() },
+      });
+
+      expect(exitCode).toBe(0);
+      expect(takeScreenshot).toHaveBeenCalledWith(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('supports direct-mode cookie commands', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

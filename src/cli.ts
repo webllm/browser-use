@@ -117,6 +117,7 @@ export interface ParsedCliArgs {
   provider: CliModelProvider | null;
   prompt: string | null;
   mcp: boolean;
+  cli_mcp: boolean;
   json: boolean;
   yes: boolean;
   setup_mode: string | null;
@@ -220,6 +221,7 @@ export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
     provider: null,
     prompt: null,
     mcp: false,
+    cli_mcp: false,
     json: false,
     yes: false,
     setup_mode: null,
@@ -253,6 +255,10 @@ export const parseCliArgs = (argv: string[]): ParsedCliArgs => {
     }
     if (arg === '--mcp') {
       parsed.mcp = true;
+      continue;
+    }
+    if (arg === '--cli-mcp') {
+      parsed.cli_mcp = true;
       continue;
     }
     if (arg === '--json') {
@@ -3469,6 +3475,22 @@ async function runMcpServer() {
   await new Promise(() => {});
 }
 
+async function runCliMcpServer() {
+  const { CliMCPServer } = await import('./mcp/cli-server.js');
+  const server = new CliMCPServer('browser-use-cli', get_browser_use_version());
+  await server.start();
+
+  const shutdown = async () => {
+    await server.stop();
+    process.exit(0);
+  };
+
+  process.once('SIGINT', () => void shutdown());
+  process.once('SIGTERM', () => void shutdown());
+
+  await new Promise(() => {});
+}
+
 export async function main(argv: string[] = process.argv.slice(2)) {
   const prefixedSubcommand = extractPrefixedSubcommand(argv);
   if (prefixedSubcommand) {
@@ -3551,6 +3573,11 @@ export async function main(argv: string[] = process.argv.slice(2)) {
 
   if (args.debug) {
     enableDebugLogging();
+  }
+
+  if (args.cli_mcp) {
+    await runCliMcpServer();
+    return;
   }
 
   if (args.mcp) {
