@@ -255,7 +255,7 @@
     "./dist/*": "./dist/*"
   },
   "bin": {
-    "browser-use": "./dist/cli.js",
+    "browser-use": "./dist/cli-entry.js",
     "browser-use-direct": "./dist/skill-cli/direct.js"
   },
   "type": "module",

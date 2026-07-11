@@ -117,6 +117,13 @@ function runPackagedBin(tempDir, binName, args) {
 }
 
 function assertPackagedBins(tempDir) {
+  const help = runPackagedBin(tempDir, 'browser-use', ['--help']);
+  if (!help.includes('Usage:') || !help.includes('browser-use --mcp')) {
+    throw new Error(
+      'Packaged browser-use binary did not print its help output.'
+    );
+  }
+
   const directHelp = runPackagedBin(tempDir, 'browser-use-direct', ['--help']);
   if (!directHelp.includes('Usage: browser-use-direct <command> [args]')) {
     throw new Error(
