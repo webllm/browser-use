@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { check_latest_browser_use_version } from '../src/utils.js';
+import {
+  check_latest_browser_use_version,
+  is_newer_browser_use_version,
+} from '../src/utils.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -44,5 +47,28 @@ describe('check_latest_browser_use_version alignment', () => {
 
     const latest = await check_latest_browser_use_version();
     expect(latest).toBeNull();
+  });
+
+  it.each([
+    ['0.12.9', '0.13.0-rc.3', false],
+    ['0.13.0', '0.13.0-rc.3', true],
+    ['0.13.0-rc.4', '0.13.0-rc.3', true],
+    ['0.13.0-rc.2', '0.13.0-rc.3', false],
+    ['0.13.0+registry', '0.13.0+local', false],
+    ['0.13.1', '0.13.2', false],
+    ['v0.13.1', '0.13.0', true],
+    ['0.13.1', 'workspace-dev', false],
+    ['not-a-version', '0.13.0', false],
+  ])('compares latest=%s against current=%s', (latest, current, expected) => {
+    expect(is_newer_browser_use_version(latest, current)).toBe(expected);
+  });
+
+  it('does not suggest the registry version when it is not newer', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '0.1.0' }),
+    })) as any;
+
+    await expect(check_latest_browser_use_version()).resolves.toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { config as loadEnv } from 'dotenv';
 import * as minimatchModule from 'minimatch';
+import semver from 'semver';
 import { createLogger } from './logging-config.js';
 
 loadEnv({ quiet: true });
@@ -345,7 +346,13 @@ export const check_latest_browser_use_version = async (): Promise<
     }
     const payload = (await response.json()) as { version?: unknown };
     if (typeof payload.version === 'string' && payload.version.trim()) {
-      return payload.version.trim();
+      const latestVersion = payload.version.trim();
+      return is_newer_browser_use_version(
+        latestVersion,
+        get_browser_use_version()
+      )
+        ? latestVersion
+        : null;
     }
     return null;
   } catch {
@@ -353,6 +360,18 @@ export const check_latest_browser_use_version = async (): Promise<
   } finally {
     clearTimeout(timeout);
   }
+};
+
+export const is_newer_browser_use_version = (
+  latest_version: string,
+  current_version: string
+): boolean => {
+  const latest = semver.valid(latest_version.trim());
+  const current = semver.valid(current_version.trim());
+  if (!latest || !current) {
+    return false;
+  }
+  return semver.gt(latest, current);
 };
 
 export interface CreateTaskWithErrorHandlingOptions {
