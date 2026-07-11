@@ -8,7 +8,11 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import { ChatInvokeCompletion, ChatInvokeUsage } from '../views.js';
 import { type Message } from '../messages.js';
 import { AnthropicMessageSerializer } from './serializer.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 
 export interface ChatAnthropicOptions {
@@ -248,6 +252,11 @@ export class ChatAnthropic implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated((response as any).stop_reason, {
+        model: this.model,
+        tokenLimit: this.maxTokens,
+      });
+
       let completion: T | string = this.getTextCompletion(response);
 
       if (output_format) {
@@ -292,6 +301,9 @@ export class ChatAnthropic implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       if (error instanceof RateLimitError || error?.status === 429) {
         throw new ModelRateLimitError(
           error?.message ?? 'Rate limit exceeded',

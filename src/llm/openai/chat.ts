@@ -4,7 +4,11 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import { ChatInvokeCompletion, ChatInvokeUsage } from '../views.js';
 import type { Message } from '../messages.js';
 import { OpenAIMessageSerializer } from './serializer.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 
 // Reasoning models that support reasoning_effort parameter
@@ -294,6 +298,11 @@ export class ChatOpenAI implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated(response.choices[0].finish_reason, {
+        model: this.model,
+        tokenLimit: this.maxCompletionTokens,
+        tokenLimitName: 'max_completion_tokens',
+      });
       const content = response.choices[0].message.content || '';
       const usage = this.getUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;
@@ -326,6 +335,9 @@ export class ChatOpenAI implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       // Handle OpenAI-specific errors
       if (error?.status === 429) {
         throw new ModelRateLimitError(

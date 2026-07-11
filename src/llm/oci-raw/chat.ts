@@ -7,7 +7,11 @@ import {
 } from 'oci-common';
 import { GenerativeAiInferenceClient } from 'oci-generativeaiinference';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
@@ -486,6 +490,9 @@ export class ChatOCIRaw implements BaseChatModel {
   }
 
   private mapError(error: unknown): never {
+    if (error instanceof ModelProviderError) {
+      throw error;
+    }
     const statusCode =
       typeof (error as any)?.statusCode === 'number'
         ? (error as any).statusCode
@@ -533,6 +540,10 @@ export class ChatOCIRaw implements BaseChatModel {
       const payload = response.chatResult?.chatResponse;
       const usage = this.getUsage(payload);
       const { text, thinking, stopReason } = this.extractText(payload);
+      raiseIfOutputTruncated(stopReason, {
+        model: this.model,
+        tokenLimit: this.maxTokens,
+      });
 
       if (!outputFormat) {
         return new ChatInvokeCompletion(

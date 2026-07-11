@@ -25,7 +25,11 @@ import {
   type Tool as BedrockTool,
 } from '@aws-sdk/client-bedrock-runtime';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import { ChatInvokeCompletion } from '../views.js';
 import { type Message } from '../messages.js';
 import { AnthropicMessageSerializer } from '../anthropic/serializer.js';
@@ -306,6 +310,11 @@ export class ChatAnthropicBedrock implements BaseChatModel {
         options.signal ? { abortSignal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated(response?.stopReason, {
+        model: this.model,
+        tokenLimit: this.max_tokens,
+      });
+
       let completion: T | string = this.getTextCompletion(response);
       const contentBlocks = response?.output?.message?.content;
       const toolUseBlock = Array.isArray(contentBlocks)
@@ -343,6 +352,9 @@ export class ChatAnthropicBedrock implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       const errorName = String(error?.name ?? '');
       const statusCode = error?.$metadata?.httpStatusCode ?? 502;
       if (

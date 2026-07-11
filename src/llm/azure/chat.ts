@@ -1,7 +1,11 @@
 import { AzureOpenAI } from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { OpenAIMessageSerializer } from '../openai/serializer.js';
 import { ResponsesAPIMessageSerializer } from '../openai/responses-serializer.js';
@@ -430,6 +434,11 @@ export class ChatAzure implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated(response.choices[0].finish_reason, {
+        model: this.model,
+        tokenLimit: this.maxCompletionTokens,
+        tokenLimitName: 'max_completion_tokens',
+      });
       const content = response.choices[0].message.content || '';
       const usage = this.getChatUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;
@@ -462,6 +471,9 @@ export class ChatAzure implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       if (error?.status === 429) {
         throw new ModelRateLimitError(
           error?.message ?? 'Rate limit exceeded',
@@ -551,6 +563,12 @@ export class ChatAzure implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated(response?.incomplete_details?.reason, {
+        model: this.model,
+        tokenLimit: this.maxCompletionTokens,
+        tokenLimitName: 'max_output_tokens',
+      });
+
       const content = this.getResponseOutputText(response);
       const usage = this.getResponsesUsage(response);
       const stopReason = response?.status ?? null;
@@ -583,6 +601,9 @@ export class ChatAzure implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       if (error?.status === 429) {
         throw new ModelRateLimitError(
           error?.message ?? 'Rate limit exceeded',

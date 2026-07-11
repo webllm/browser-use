@@ -10,6 +10,7 @@ import {
   AgentStepInfo,
 } from '../src/agent/views.js';
 import {
+  ModelOutputTruncatedError,
   ModelProviderError,
   ModelRateLimitError,
 } from '../src/llm/exceptions.js';
@@ -667,6 +668,26 @@ describe('Agent constructor browser session alignment', () => {
     expect(agent.llm).toBe(primary);
     expect(agent.is_using_fallback_llm).toBe(false);
     expect(agent.current_llm_model).toBe('primary-model');
+
+    await agent.close();
+  });
+
+  it('switches to fallback llm after output truncation', async () => {
+    const primary = createLlm('primary-model');
+    const fallback = createLlm('fallback-model');
+    const agent = new Agent({
+      task: 'fallback after truncation',
+      llm: primary,
+      fallback_llm: fallback,
+    });
+
+    const switched = (agent as any)._try_switch_to_fallback_llm(
+      new ModelOutputTruncatedError('Output truncated', 'primary-model')
+    );
+
+    expect(switched).toBe(true);
+    expect(agent.llm).toBe(fallback);
+    expect(agent.is_using_fallback_llm).toBe(true);
 
     await agent.close();
   });

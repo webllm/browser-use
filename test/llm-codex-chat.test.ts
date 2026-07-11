@@ -24,6 +24,7 @@ import { ChatCodex } from '../src/llm/codex/chat.js';
 import { saveCodexTokens } from '../src/llm/codex/auth.js';
 import { SystemMessage, UserMessage } from '../src/llm/messages.js';
 import {
+  ModelOutputTruncatedError,
   ModelProviderError,
   ModelRateLimitError,
 } from '../src/llm/exceptions.js';
@@ -309,5 +310,21 @@ describe('ChatCodex', () => {
     const response = await llm.ainvoke([new UserMessage('hello')]);
 
     expect(response.completion).toBe('fallback text');
+  });
+
+  it('reports max_output_tokens incomplete responses as truncation', async () => {
+    responsesCreateMock.mockResolvedValue({
+      ...buildResponse('partial'),
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+    });
+    const llm = new ChatCodex({
+      apiKey: 'opaque-token',
+      maxCompletionTokens: 128,
+    });
+
+    await expect(
+      llm.ainvoke([new UserMessage('produce a long answer')])
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import {
   ResponsesAPIMessageSerializer,
@@ -523,6 +527,12 @@ export class ChatCodex implements BaseChatModel {
       );
       const response = await this.collectResponse(responseOrStream);
 
+      raiseIfOutputTruncated(response?.incomplete_details?.reason, {
+        model: this.model,
+        tokenLimit: this.maxCompletionTokens,
+        tokenLimitName: 'max_output_tokens',
+      });
+
       const content = this.getResponseOutputText(response);
       const usage = this.getResponsesUsage(response);
       const stopReason = response?.status ?? null;
@@ -555,6 +565,9 @@ export class ChatCodex implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       if (!this.apiKey && !forceRefresh && error?.status === 401) {
         return this.invokeResponses(messages, output_format, options, true);
       }

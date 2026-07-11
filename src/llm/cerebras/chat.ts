@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
@@ -234,6 +238,10 @@ export class ChatCerebras implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
+      raiseIfOutputTruncated(response.choices[0].finish_reason, {
+        model: this.model,
+        tokenLimit: this.maxTokens,
+      });
       const content = response.choices[0].message.content || '';
       const usage = this.getUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;
@@ -265,6 +273,9 @@ export class ChatCerebras implements BaseChatModel {
         stopReason
       );
     } catch (error: any) {
+      if (error instanceof ModelProviderError) {
+        throw error;
+      }
       if (error?.status === 429) {
         throw new ModelRateLimitError(
           error?.message ?? 'Rate limit exceeded',

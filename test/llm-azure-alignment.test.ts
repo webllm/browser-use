@@ -33,6 +33,7 @@ import {
   UserMessage,
 } from '../src/llm/messages.js';
 import { ChatAzure } from '../src/llm/azure/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 
 const buildChatResponse = (content: string) => ({
   choices: [{ message: { content } }],
@@ -250,5 +251,38 @@ describe('ChatAzure alignment', () => {
       image_url: 'https://example.com/image.png',
       detail: 'low',
     });
+  });
+
+  it.each([
+    [
+      'chat completions',
+      false,
+      () =>
+        chatCreateMock.mockResolvedValue({
+          ...buildChatResponse('partial'),
+          choices: [{ message: { content: null }, finish_reason: 'length' }],
+        }),
+    ],
+    [
+      'responses api',
+      true,
+      () =>
+        responsesCreateMock.mockResolvedValue({
+          ...buildResponsesResponse('partial'),
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+        }),
+    ],
+  ])('reports truncation from %s', async (_label, useResponsesApi, arrange) => {
+    arrange();
+    const llm = new ChatAzure({
+      model: useResponsesApi ? 'gpt-5.1-codex' : 'gpt-4o',
+      useResponsesApi,
+      maxCompletionTokens: 128,
+    });
+
+    await expect(
+      llm.ainvoke([new UserMessage('produce a long answer')])
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

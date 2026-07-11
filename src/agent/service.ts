@@ -52,7 +52,11 @@ import {
 import { extractCleanMarkdownFromHtml } from '../dom/markdown-extractor.js';
 import type { BaseChatModel } from '../llm/base.js';
 import { ChatBrowserUse } from '../llm/browser-use/chat.js';
-import { ModelProviderError, ModelRateLimitError } from '../llm/exceptions.js';
+import {
+  ModelOutputTruncatedError,
+  ModelProviderError,
+  ModelRateLimitError,
+} from '../llm/exceptions.js';
 import {
   AssistantMessage,
   ContentPartImageParam,
@@ -5687,6 +5691,7 @@ export class Agent<
       typeof error.statusCode === 'number' ? error.statusCode : null;
     const isRetryable =
       error instanceof ModelRateLimitError ||
+      error instanceof ModelOutputTruncatedError ||
       (statusCode != null && retryableStatusCodes.has(statusCode));
     if (!isRetryable) {
       return false;

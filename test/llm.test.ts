@@ -51,8 +51,11 @@ import {
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../src/llm/schema.js';
 import {
   ModelError,
+  ModelOutputTruncatedError,
   ModelProviderError,
   ModelRateLimitError,
+  isOutputTruncationReason,
+  raiseIfOutputTruncated,
 } from '../src/llm/exceptions.js';
 import {
   ChatInvokeCompletion,
@@ -451,6 +454,44 @@ describe('LLM Exceptions', () => {
       const error = new ModelRateLimitError('Rate limited');
 
       expect(error.statusCode).toBe(429);
+    });
+  });
+
+  describe('ModelOutputTruncatedError', () => {
+    it('uses status 400 and recognizes provider stop-reason variants', () => {
+      expect(isOutputTruncationReason('length')).toBe(true);
+      expect(isOutputTruncationReason('MAX_TOKENS')).toBe(true);
+      expect(isOutputTruncationReason('max-output-tokens')).toBe(true);
+      expect(isOutputTruncationReason('stop')).toBe(false);
+
+      expect(() =>
+        raiseIfOutputTruncated('length', {
+          model: 'gpt-test',
+          tokenLimit: 128,
+          tokenLimitName: 'max_completion_tokens',
+        })
+      ).toThrowError(ModelOutputTruncatedError);
+
+      try {
+        raiseIfOutputTruncated('length', {
+          model: 'gpt-test',
+          tokenLimit: 128,
+          tokenLimitName: 'max_completion_tokens',
+        });
+      } catch (error) {
+        expect(error).toMatchObject({
+          name: 'ModelOutputTruncatedError',
+          statusCode: 400,
+          model: 'gpt-test',
+          message: expect.stringContaining('max_completion_tokens=128'),
+        });
+      }
+    });
+
+    it('does not print null when the configured cap is absent', () => {
+      expect(() =>
+        raiseIfOutputTruncated('MAX_TOKENS', { model: 'model-test' })
+      ).toThrow("the model's output token limit");
     });
   });
 });

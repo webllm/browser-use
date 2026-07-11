@@ -74,6 +74,7 @@ vi.mock('oci-generativeaiinference', () => {
 });
 
 import { ChatOCIRaw, type ChatOCIRawOptions } from '../src/llm/oci-raw/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 import {
   ContentPartImageParam,
   ContentPartTextParam,
@@ -293,5 +294,28 @@ describe('ChatOCIRaw alignment', () => {
 
     await llm.ainvoke([new UserMessage('hello')]);
     expect(instanceProviderBuildMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports max token finish reasons as output truncation', async () => {
+    chatMock.mockResolvedValue({
+      chatResult: {
+        chatResponse: {
+          apiFormat: 'GENERIC',
+          choices: [
+            {
+              finishReason: 'MAX_TOKENS',
+              message: {
+                content: [{ type: 'TEXT', text: 'partial' }],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    const llm = new ChatOCIRaw(buildOptions({ maxTokens: 128 }));
+    await expect(
+      llm.ainvoke([new UserMessage('produce a long answer')])
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

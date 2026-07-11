@@ -28,9 +28,10 @@ import { ChatOpenRouter } from '../src/llm/openrouter/chat.js';
 import { ChatMistral } from '../src/llm/mistral/chat.js';
 import { ChatCerebras } from '../src/llm/cerebras/chat.js';
 import { ChatVercel } from '../src/llm/vercel/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 
-const buildResponse = (content: string) => ({
-  choices: [{ message: { content } }],
+const buildResponse = (content: string | null, finishReason?: string) => ({
+  choices: [{ message: { content }, finish_reason: finishReason }],
   usage: {
     prompt_tokens: 12,
     completion_tokens: 4,
@@ -338,4 +339,22 @@ describe('OpenAI-compatible providers alignment', () => {
     expect(contentText).toContain('valid JSON only');
     expect((response.completion as any).value).toBe('ok');
   });
+
+  it.each([
+    ['OpenAI', () => new ChatOpenAI({ model: 'gpt-4o' })],
+    ['OpenRouter', () => new ChatOpenRouter({ model: 'openai/gpt-4o' })],
+    ['DeepSeek', () => new ChatDeepSeek({ model: 'deepseek-chat' })],
+    ['Mistral', () => new ChatMistral({ model: 'mistral-medium-latest' })],
+    ['Cerebras', () => new ChatCerebras({ model: 'llama3.1-8b' })],
+    ['Vercel', () => new ChatVercel({ model: 'openai/gpt-4o' })],
+  ])(
+    'reports %s length finishes as output truncation before parsing',
+    async (_provider, createLlm) => {
+      openaiCreateMock.mockResolvedValue(buildResponse(null, 'length'));
+
+      await expect(
+        createLlm().ainvoke([new UserMessage('produce a long answer')])
+      ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
+    }
+  );
 });

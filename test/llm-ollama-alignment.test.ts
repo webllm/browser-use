@@ -17,6 +17,7 @@ vi.mock('ollama', () => {
 });
 
 import { ChatOllama } from '../src/llm/ollama/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 import { OllamaMessageSerializer } from '../src/llm/ollama/serializer.js';
 import {
   AssistantMessage,
@@ -79,6 +80,18 @@ describe('ChatOllama alignment', () => {
     expect(typeof request.format).toBe('object');
     expect((response.completion as any).value).toBe('ok');
     expect(response.usage?.total_tokens).toBe(15);
+  });
+
+  it('reports length done reasons as output truncation', async () => {
+    ollamaChatMock.mockResolvedValue({
+      ...buildResponse('partial'),
+      done_reason: 'length',
+    });
+
+    const llm = new ChatOllama('qwen2.5:latest');
+    await expect(
+      llm.ainvoke([new UserMessage('produce a long answer')])
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 
   it('serializes refusal text and invalid tool-call arguments safely', () => {

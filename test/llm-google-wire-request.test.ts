@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { ChatGoogle } from '../src/llm/google/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 import { SystemMessage, UserMessage } from '../src/llm/messages.js';
 
 describe('Google LLM wire request', () => {
@@ -93,5 +94,40 @@ describe('Google LLM wire request', () => {
     expect(body).not.toHaveProperty('config');
     expect(body).not.toHaveProperty('generation_config');
     expect((response.completion as any).value).toBe('ok');
+  });
+
+  it('reports MAX_TOKENS before parsing incomplete content', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              candidates: [
+                {
+                  content: { parts: [{ text: '{"value":"partial' }] },
+                  finishReason: 'MAX_TOKENS',
+                },
+              ],
+            }),
+            {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            }
+          )
+      )
+    );
+
+    const llm = new ChatGoogle({
+      apiKey: 'test-key',
+      maxOutputTokens: 128,
+      maxRetries: 1,
+    });
+    await expect(
+      llm.ainvoke(
+        [new UserMessage('extract')],
+        z.object({ value: z.string() }) as any
+      )
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

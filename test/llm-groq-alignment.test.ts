@@ -22,6 +22,7 @@ vi.mock('groq-sdk', () => {
 
 import { UserMessage } from '../src/llm/messages.js';
 import { ChatGroq } from '../src/llm/groq/chat.js';
+import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
 
 const buildResponse = (content: string) => ({
   choices: [{ message: { content } }],
@@ -107,5 +108,17 @@ describe('ChatGroq alignment', () => {
 
     expect(request.response_format?.type).toBe('json_object');
     expect((response.completion as any).value).toBe('ok');
+  });
+
+  it('reports length finishes as output truncation', async () => {
+    groqCreateMock.mockResolvedValue({
+      ...buildResponse('partial'),
+      choices: [{ message: { content: 'partial' }, finish_reason: 'length' }],
+    });
+
+    const llm = new ChatGroq();
+    await expect(
+      llm.ainvoke([new UserMessage('produce a long answer')])
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

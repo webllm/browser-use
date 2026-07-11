@@ -32,7 +32,10 @@ vi.mock('@aws-sdk/client-bedrock-runtime', () => {
 import { ChatBedrockConverse } from '../src/llm/aws/chat-bedrock.js';
 import { ChatAnthropicBedrock } from '../src/llm/aws/chat-anthropic.js';
 import { AWSBedrockMessageSerializer } from '../src/llm/aws/serializer.js';
-import { ModelRateLimitError } from '../src/llm/exceptions.js';
+import {
+  ModelOutputTruncatedError,
+  ModelRateLimitError,
+} from '../src/llm/exceptions.js';
 import {
   AssistantMessage,
   ContentPartRefusalParam,
@@ -174,6 +177,23 @@ describe('AWS Bedrock alignment', () => {
       ModelRateLimitError
     );
   });
+
+  it.each([
+    ['Bedrock Converse', () => new ChatBedrockConverse({ maxTokens: 128 })],
+    ['Anthropic Bedrock', () => new ChatAnthropicBedrock({ max_tokens: 128 })],
+  ])(
+    'reports %s max_tokens stops as output truncation',
+    async (_, createLlm) => {
+      bedrockSendMock.mockResolvedValue({
+        ...buildResponse([{ text: 'partial' }]),
+        stopReason: 'max_tokens',
+      });
+
+      await expect(
+        createLlm().ainvoke([new UserMessage('produce a long answer')])
+      ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
+    }
+  );
 
   it('serializes system message, refusal content, and invalid tool args', () => {
     const serializer = new AWSBedrockMessageSerializer();

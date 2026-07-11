@@ -1,7 +1,11 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CONFIG } from '../../config.js';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, ModelRateLimitError } from '../exceptions.js';
+import {
+  ModelProviderError,
+  ModelRateLimitError,
+  raiseIfOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
@@ -422,13 +426,22 @@ export class ChatBrowserUse implements BaseChatModel {
 
     const usage = this.getUsage(result);
     const completionPayload = (result as any).completion;
+    const stopReason =
+      (result as any).stop_reason ?? (result as any).finish_reason ?? null;
+    raiseIfOutputTruncated(stopReason, { model: this.model });
 
     if (!output_format) {
       const textCompletion =
         typeof completionPayload === 'string'
           ? completionPayload
           : JSON.stringify(completionPayload ?? '');
-      return new ChatInvokeCompletion(textCompletion, usage);
+      return new ChatInvokeCompletion(
+        textCompletion,
+        usage,
+        null,
+        null,
+        stopReason
+      );
     }
 
     const parsedPayload =
@@ -443,6 +456,6 @@ export class ChatBrowserUse implements BaseChatModel {
         : completionPayload;
 
     const completion = this.parseOutput(output_format, parsedPayload);
-    return new ChatInvokeCompletion(completion, usage);
+    return new ChatInvokeCompletion(completion, usage, null, null, stopReason);
   }
 }

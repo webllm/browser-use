@@ -49,13 +49,15 @@ vi.mock('@anthropic-ai/sdk', () => {
 
 import { ChatAnthropic } from '../src/llm/anthropic/chat.js';
 import {
+  ModelOutputTruncatedError,
   ModelProviderError,
   ModelRateLimitError,
 } from '../src/llm/exceptions.js';
 import { SystemMessage, UserMessage } from '../src/llm/messages.js';
 
-const buildResponse = (content: any[]) => ({
+const buildResponse = (content: any[], stopReason = 'end_turn') => ({
   content,
+  stop_reason: stopReason,
   usage: {
     input_tokens: 10,
     output_tokens: 5,
@@ -215,5 +217,24 @@ describe('ChatAnthropic alignment', () => {
     await expect(
       llm.ainvoke([new UserMessage('hello')])
     ).rejects.toBeInstanceOf(ModelProviderError);
+  });
+
+  it('reports max_tokens before checking structured tool output', async () => {
+    anthropicMock.anthropicCreateMock.mockResolvedValue(
+      buildResponse([{ type: 'text', text: '{"value":"partial' }], 'max_tokens')
+    );
+
+    const llm = new ChatAnthropic({ maxTokens: 128 });
+    await expect(
+      llm.ainvoke(
+        [new UserMessage('extract')],
+        z.object({ value: z.string() }) as any
+      )
+    ).rejects.toMatchObject({
+      name: 'ModelOutputTruncatedError',
+      statusCode: 400,
+      model: 'claude-sonnet-4-20250514',
+      message: expect.stringContaining('max_tokens=128'),
+    } satisfies Partial<ModelOutputTruncatedError>);
   });
 });
