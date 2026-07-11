@@ -86,7 +86,13 @@ export const preprocessMarkdownContent = (
       (stripped.startsWith('{') || stripped.startsWith('[')) &&
       stripped.length > 100
     ) {
-      continue;
+      try {
+        JSON.parse(stripped);
+        continue;
+      } catch {
+        // Markdown links and images can also start with "[". Keep any line
+        // that merely resembles JSON but does not actually parse as JSON.
+      }
     }
     filteredLines.push(line);
   }
@@ -123,7 +129,6 @@ export const extractCleanMarkdownFromHtml = (
   let content = turndown.turndown(pageHtml);
   const initialMarkdownLength = content.length;
 
-  content = content.replace(/%[0-9A-Fa-f]{2}/g, '');
   const preprocessed = preprocessMarkdownContent(content);
   content = preprocessed.content;
 

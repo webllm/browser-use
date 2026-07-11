@@ -96,4 +96,50 @@ describe('markdown extractor alignment', () => {
     expect(processed.content).not.toContain('"$type"');
     expect(processed.chars_filtered).toBeGreaterThan(0);
   });
+
+  it('preserves long markdown link lines', () => {
+    const link =
+      '[Read the full quarterly earnings report for fiscal year 2025](https://example.com/investor-relations/reports/q4-2025-earnings-full.pdf)';
+    expect(link.length).toBeGreaterThan(100);
+
+    const processed = preprocessMarkdownContent(`Header\n${link}\nFooter`);
+
+    expect(processed.content).toContain(link);
+  });
+
+  it('preserves long clickable image lines', () => {
+    const image =
+      '[![Product photo of the deluxe widget](https://cdn.example.com/images/products/deluxe-widget-hero.jpg)](https://example.com/products/deluxe-widget)';
+    expect(image.length).toBeGreaterThan(100);
+
+    const processed = preprocessMarkdownContent(`Intro\n${image}\nOutro`);
+
+    expect(processed.content).toContain(image);
+  });
+
+  it('removes long lines that are valid JSON arrays', () => {
+    const jsonArray = JSON.stringify(
+      Array.from({ length: 10 }, (_, id) => ({ id, name: `item-${id}` }))
+    );
+    expect(jsonArray.length).toBeGreaterThan(100);
+
+    const processed = preprocessMarkdownContent(`Header\n${jsonArray}\nFooter`);
+
+    expect(processed.content).not.toContain(jsonArray);
+    expect(processed.content).toContain('Header');
+    expect(processed.content).toContain('Footer');
+  });
+
+  it('preserves percent-encoded URLs during HTML conversion', () => {
+    const html =
+      '<p>See <a href="https://example.com/my%20file%2Fv2?q=a%26b">the doc</a> here</p>';
+
+    const result = extractCleanMarkdownFromHtml(html, {
+      extract_links: true,
+    });
+
+    expect(result.content).toContain('%20');
+    expect(result.content).toContain('%2F');
+    expect(result.content).toContain('%26');
+  });
 });
