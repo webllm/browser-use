@@ -94,6 +94,7 @@ import { Controller } from '../src/controller/service.js';
 import {
   DoneActionSchema,
   ExtractStructuredDataActionSchema,
+  SaveAsPdfActionSchema,
   StructuredOutputActionSchema,
 } from '../src/controller/views.js';
 import { SchemaOptimizer } from '../src/llm/schema.js';
@@ -2919,20 +2920,23 @@ describe('Regression Coverage', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-use-pdf-'));
     fs.writeFileSync(path.join(tempDir, 'Quarterly-Report.pdf'), 'existing');
 
+    const cdpSend = vi.fn(
+      async (method: string, _params?: Record<string, unknown>) => {
+        if (method !== 'Page.printToPDF') {
+          throw new Error(`Unexpected method: ${method}`);
+        }
+        return {
+          data: Buffer.from('%PDF-1.4 generated').toString('base64'),
+        };
+      }
+    );
     const browserSession = {
       get_current_page: vi.fn(async () => ({
         title: vi.fn(async () => 'Quarterly Report'),
         url: vi.fn(() => 'https://example.com/quarterly-report'),
       })),
       get_or_create_cdp_session: vi.fn(async () => ({
-        send: vi.fn(async (method: string) => {
-          if (method !== 'Page.printToPDF') {
-            throw new Error(`Unexpected method: ${method}`);
-          }
-          return {
-            data: Buffer.from('%PDF-1.4 generated').toString('base64'),
-          };
-        }),
+        send: cdpSend,
       })),
     };
     const fileSystem = {
@@ -2962,9 +2966,92 @@ describe('Regression Coverage', () => {
       expect(result.extracted_content).toContain(
         'Saved page as PDF: Quarterly-Report (1).pdf'
       );
+      const pdfParams = cdpSend.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(pdfParams).toMatchObject({
+        displayHeaderFooter: true,
+        marginTop: 0.5,
+        marginBottom: 0.5,
+        marginLeft: 0.4,
+        marginRight: 0.4,
+      });
+      expect(String(pdfParams.headerTemplate)).toContain('class="date"');
+      expect(String(pdfParams.footerTemplate)).toContain('class="url"');
+      expect(String(pdfParams.footerTemplate)).toContain('min-width:0');
+      expect(String(pdfParams.footerTemplate)).toContain('flex-shrink:0');
+      expect(String(pdfParams.footerTemplate)).toContain('class="pageNumber"');
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    [
+      'disables metadata',
+      { display_header_footer: false },
+      {
+        displayHeaderFooter: undefined,
+        headerTemplate: undefined,
+        footerTemplate: undefined,
+      },
+    ],
+    [
+      'uses custom metadata templates',
+      {
+        display_header_footer: true,
+        header_template: '<div style="font-size:12px">CONFIDENTIAL</div>',
+        footer_template:
+          '<div style="font-size:12px"><span class="title"></span></div>',
+      },
+      {
+        displayHeaderFooter: true,
+        headerTemplate: '<div style="font-size:12px">CONFIDENTIAL</div>',
+        footerTemplate:
+          '<div style="font-size:12px"><span class="title"></span></div>',
+      },
+    ],
+  ])('%s when saving a PDF', async (_label, actionParams, expected) => {
+    const controller = new Controller();
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-pdf-metadata-')
+    );
+    const cdpSend = vi.fn(
+      async (_method?: string, _params?: Record<string, unknown>) => ({
+        data: Buffer.from('%PDF-1.4 generated').toString('base64'),
+      })
+    );
+    const browserSession = {
+      get_current_page: vi.fn(async () => ({
+        title: vi.fn(async () => 'Metadata Report'),
+        url: vi.fn(() => 'https://example.com/report'),
+      })),
+      get_or_create_cdp_session: vi.fn(async () => ({ send: cdpSend })),
+    };
+
+    try {
+      await controller.registry.execute_action(
+        'save_as_pdf',
+        { file_name: 'metadata-report', ...actionParams },
+        {
+          browser_session: browserSession as any,
+          file_system: { get_dir: () => tempDir } as any,
+        }
+      );
+
+      const pdfParams = cdpSend.mock.calls[0]?.[1] as Record<string, unknown>;
+      for (const [key, value] of Object.entries(expected)) {
+        expect(pdfParams[key]).toBe(value);
+      }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes PDF metadata controls with browser-like defaults', () => {
+    const parsed = SaveAsPdfActionSchema.parse({});
+
+    expect(parsed.display_header_footer).toBe(true);
+    expect(parsed.header_template).toBeUndefined();
+    expect(parsed.footer_template).toBeUndefined();
   });
 
   it('save_as_pdf blocks disallowed current pages before PDF generation', async () => {

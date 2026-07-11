@@ -85,6 +85,16 @@ type BaseChatModel = {
 
 const DEFAULT_WAIT_OFFSET = 1;
 const MAX_WAIT_SECONDS = 30;
+const DEFAULT_PDF_HEADER_TEMPLATE =
+  '<div style="font-size:9px; color:#666; width:100%; padding:0 0.4in; ' +
+  'box-sizing:border-box; text-align:right;"><span class="date"></span></div>';
+const DEFAULT_PDF_FOOTER_TEMPLATE =
+  '<div style="font-size:9px; color:#666; width:100%; padding:0 0.4in; ' +
+  'box-sizing:border-box; display:flex; justify-content:space-between;">' +
+  '<span class="url" style="min-width:0; overflow:hidden; text-overflow:ellipsis; ' +
+  'white-space:nowrap;"></span>' +
+  '<span style="flex-shrink:0; padding-left:8px;"><span class="pageNumber"></span> / ' +
+  '<span class="totalPages"></span></span></div>';
 
 const chmodPrivateFile = async (filePath: string) => {
   if (process.platform !== 'win32') {
@@ -2650,15 +2660,27 @@ You will be given a query and the markdown of a webpage that has been filtered t
       await validateBrowserPageAfterAction(browser_session, page, signal);
 
       let result: { data?: unknown } | null = null;
-      try {
-        result = await cdpSession.send('Page.printToPDF', {
-          printBackground: params.print_background,
-          landscape: params.landscape,
-          scale: params.scale,
-          paperWidth: paperSize.width,
-          paperHeight: paperSize.height,
-          preferCSSPageSize: true,
+      const pdfParams: Record<string, unknown> = {
+        printBackground: params.print_background,
+        landscape: params.landscape,
+        scale: params.scale,
+        paperWidth: paperSize.width,
+        paperHeight: paperSize.height,
+        preferCSSPageSize: true,
+      };
+      if (params.display_header_footer) {
+        Object.assign(pdfParams, {
+          displayHeaderFooter: true,
+          headerTemplate: params.header_template ?? DEFAULT_PDF_HEADER_TEMPLATE,
+          footerTemplate: params.footer_template ?? DEFAULT_PDF_FOOTER_TEMPLATE,
+          marginTop: 0.5,
+          marginBottom: 0.5,
+          marginLeft: 0.4,
+          marginRight: 0.4,
         });
+      }
+      try {
+        result = await cdpSession.send('Page.printToPDF', pdfParams);
       } finally {
         await validateBrowserPageAfterAction(browser_session, page, signal);
       }

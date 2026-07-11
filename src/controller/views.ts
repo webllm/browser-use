@@ -110,6 +110,26 @@ export const SaveAsPdfActionSchema = z.object({
   landscape: z.boolean().default(false),
   scale: z.number().min(0.1).max(2.0).default(1.0),
   paper_format: z.string().default('Letter'),
+  display_header_footer: z
+    .boolean()
+    .default(true)
+    .describe(
+      'Print the date in the header and the page URL plus page numbers in the footer. Set false for a clean PDF.'
+    ),
+  header_template: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Custom header HTML. Chrome fills elements with date, title, url, pageNumber, and totalPages classes.'
+    ),
+  footer_template: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'Custom footer HTML. Chrome fills elements with date, title, url, pageNumber, and totalPages classes.'
+    ),
 });
 export type SaveAsPdfAction = z.infer<typeof SaveAsPdfActionSchema>;
 
