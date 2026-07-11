@@ -18,18 +18,19 @@ Browser-Use enables AI agents to autonomously control web browsers, making decis
 
 ## Documentation Index
 
-| Document                            | Description                                         |
-| ----------------------------------- | --------------------------------------------------- |
-| [Quick Start](./QUICKSTART.md)      | Get started in 5 minutes                            |
-| [Architecture](./ARCHITECTURE.md)   | System design and component overview                |
-| [API Reference](./API_REFERENCE.md) | Complete API documentation                          |
-| [Configuration](./CONFIGURATION.md) | Configuration options and environment variables     |
-| [LLM Providers](./LLM_PROVIDERS.md) | Setting up different LLM providers                  |
-| [Actions](./ACTIONS.md)             | Built-in actions and custom action development      |
-| [MCP Server](./MCP_SERVER.md)       | Model Context Protocol integration                  |
-| [Security](./SECURITY.md)           | Sensitive data handling and security best practices |
-| [Examples](./EXAMPLES.md)           | Code examples and use cases                         |
-| [Contributing](./CONTRIBUTING.md)   | Contribution guidelines                             |
+| Document                                 | Description                                         |
+| ---------------------------------------- | --------------------------------------------------- |
+| [Quick Start](./QUICKSTART.md)           | Get started in 5 minutes                            |
+| [Architecture](./ARCHITECTURE.md)        | System design and component overview                |
+| [Architecture decisions](./adr/index.md) | Long-lived technical decisions and their rationale  |
+| [API Reference](./API_REFERENCE.md)      | Complete API documentation                          |
+| [Configuration](./CONFIGURATION.md)      | Configuration options and environment variables     |
+| [LLM Providers](./LLM_PROVIDERS.md)      | Setting up different LLM providers                  |
+| [Actions](./ACTIONS.md)                  | Built-in actions and custom action development      |
+| [MCP Server](./MCP_SERVER.md)            | Model Context Protocol integration                  |
+| [Security](./SECURITY.md)                | Sensitive data handling and security best practices |
+| [Examples](./EXAMPLES.md)                | Code examples and use cases                         |
+| [Contributing](./CONTRIBUTING.md)        | Contribution guidelines                             |
 
 ## Installation
 
