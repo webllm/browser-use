@@ -64,6 +64,48 @@ describe('browser cloud alignment', () => {
     expect(client.current_session_id).toBe('browser-session-1');
   });
 
+  it.each([
+    ['omits an unset proxy', {}, {}],
+    [
+      'preserves an explicitly disabled cloud proxy',
+      { cloud_proxy_country_code: null },
+      { proxy_country_code: null },
+    ],
+    [
+      'preserves an explicitly disabled legacy proxy',
+      { proxy_country_code: null },
+      { proxy_country_code: null },
+    ],
+    [
+      'serializes a configured proxy country',
+      { cloud_proxy_country_code: 'de' },
+      { proxy_country_code: 'de' },
+    ],
+    [
+      'prefers the cloud proxy alias even when it is null',
+      { cloud_proxy_country_code: null, proxy_country_code: 'us' },
+      { proxy_country_code: null },
+    ],
+  ])('%s', async (_label, request, expectedBody) => {
+    const fetchImpl = vi.fn(
+      async (_url?: string, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({ id: 'browser-proxy', status: 'running' }),
+          { status: 200 }
+        )
+    );
+    const client = new CloudBrowserClient({
+      api_base_url: 'https://api.browser-use.test',
+      api_key: 'test-api-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await client.create_browser(request);
+
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual(expectedBody);
+  });
+
   it('stops browser session and clears current session id', async () => {
     const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
       if (init?.method === 'PATCH') {

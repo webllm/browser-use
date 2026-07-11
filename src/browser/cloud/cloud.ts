@@ -81,17 +81,30 @@ export class CloudBrowserClient {
   }
 
   private _create_request_body(request: CreateBrowserRequest) {
-    const profile_id = request.profile_id ?? request.cloud_profile_id ?? null;
-    const proxy_country_code =
-      request.proxy_country_code ?? request.cloud_proxy_country_code ?? null;
+    const profile_id = request.cloud_profile_id ?? request.profile_id ?? null;
+    const has_cloud_proxy =
+      Object.prototype.hasOwnProperty.call(
+        request,
+        'cloud_proxy_country_code'
+      ) && request.cloud_proxy_country_code !== undefined;
+    const has_legacy_proxy =
+      Object.prototype.hasOwnProperty.call(request, 'proxy_country_code') &&
+      request.proxy_country_code !== undefined;
+    const has_proxy_country_code = has_cloud_proxy || has_legacy_proxy;
+    const proxy_country_code = has_cloud_proxy
+      ? request.cloud_proxy_country_code
+      : request.proxy_country_code;
     const timeout = normalizeTimeout(
-      request.timeout ?? request.cloud_timeout ?? null
+      request.cloud_timeout ?? request.timeout ?? null
     );
 
     return {
       ...(profile_id ? { profile_id: String(profile_id) } : {}),
-      ...(proxy_country_code
-        ? { proxy_country_code: String(proxy_country_code) }
+      ...(has_proxy_country_code
+        ? {
+            proxy_country_code:
+              proxy_country_code === null ? null : String(proxy_country_code),
+          }
         : {}),
       ...(timeout ? { timeout } : {}),
     };
