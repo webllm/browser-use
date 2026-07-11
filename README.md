@@ -125,24 +125,24 @@ npx browser-use --mcp
 
 ## 🔌 LLM Providers
 
-| Provider          | Import                        | Vision | Notes                                           |
-| ----------------- | ----------------------------- | ------ | ----------------------------------------------- |
-| **OpenAI**        | `browser-use/llm/openai`      | ✅     | Default provider, reasoning models (o1/o3/o4)   |
-| **Codex**         | `browser-use/llm/codex`       | ✅     | Experimental ChatGPT/Codex OAuth provider       |
-| **Anthropic**     | `browser-use/llm/anthropic`   | ✅     | Prompt caching support                          |
-| **Google Gemini** | `browser-use/llm/google`      | ✅     | Extended thinking support                       |
-| **Azure OpenAI**  | `browser-use/llm/azure`       | ✅     | Enterprise deployment                           |
-| **AWS Bedrock**   | `browser-use/llm/aws`         | ✅     | Claude via AWS                                  |
-| **Groq**          | `browser-use/llm/groq`        | ❌     | Fastest inference                               |
-| **Ollama**        | `browser-use/llm/ollama`      | ❌     | Local/self-hosted models                        |
-| **DeepSeek**      | `browser-use/llm/deepseek`    | ❌     | Cost-effective                                  |
-| **OpenRouter**    | `browser-use/llm/openrouter`  | Varies | Multi-model routing                             |
-| **Mistral**       | `browser-use/llm/mistral`     | Varies | Mistral models                                  |
-| **Cerebras**      | `browser-use/llm/cerebras`    | ❌     | Fast inference                                  |
-| **Browser Use**   | `browser-use/llm/browser-use` | Varies | Hosted Browser Use LLM                          |
-| **LiteLLM**       | `browser-use/llm/litellm`     | Varies | OpenAI-compatible LiteLLM gateway               |
-| **OCI Raw**       | `browser-use/llm/oci-raw`     | Varies | Oracle Cloud Generative AI                      |
-| **Vercel**        | `browser-use/llm/vercel`      | Varies | Vercel AI Gateway / routed models               |
+| Provider          | Import                        | Vision | Notes                                         |
+| ----------------- | ----------------------------- | ------ | --------------------------------------------- |
+| **OpenAI**        | `browser-use/llm/openai`      | ✅     | Default provider, reasoning models (o1/o3/o4) |
+| **Codex**         | `browser-use/llm/codex`       | ✅     | Experimental ChatGPT/Codex OAuth provider     |
+| **Anthropic**     | `browser-use/llm/anthropic`   | ✅     | Prompt caching support                        |
+| **Google Gemini** | `browser-use/llm/google`      | ✅     | Extended thinking support                     |
+| **Azure OpenAI**  | `browser-use/llm/azure`       | ✅     | Enterprise deployment                         |
+| **AWS Bedrock**   | `browser-use/llm/aws`         | ✅     | Claude via AWS                                |
+| **Groq**          | `browser-use/llm/groq`        | ❌     | Fastest inference                             |
+| **Ollama**        | `browser-use/llm/ollama`      | ❌     | Local/self-hosted models                      |
+| **DeepSeek**      | `browser-use/llm/deepseek`    | ❌     | Cost-effective                                |
+| **OpenRouter**    | `browser-use/llm/openrouter`  | Varies | Multi-model routing                           |
+| **Mistral**       | `browser-use/llm/mistral`     | Varies | Mistral models                                |
+| **Cerebras**      | `browser-use/llm/cerebras`    | ❌     | Fast inference                                |
+| **Browser Use**   | `browser-use/llm/browser-use` | Varies | Hosted Browser Use LLM                        |
+| **LiteLLM**       | `browser-use/llm/litellm`     | Varies | OpenAI-compatible LiteLLM gateway             |
+| **OCI Raw**       | `browser-use/llm/oci-raw`     | Varies | Oracle Cloud Generative AI                    |
+| **Vercel**        | `browser-use/llm/vercel`      | Varies | Vercel AI Gateway / routed models             |
 
 <details>
 <summary>Provider examples</summary>
@@ -177,6 +177,12 @@ const llm = new ChatOpenAI({ model: 'o3-mini', reasoningEffort: 'medium' });
 // First run: npx browser-use auth codex login
 import { ChatCodex } from 'browser-use/llm/codex';
 const codexLlm = new ChatCodex({ model: 'gpt-5.5' });
+
+// Browser Use gateway: one BROWSER_USE_API_KEY can route provider/model ids
+import { ChatBrowserUse } from 'browser-use/llm/browser-use';
+const gatewayLlm = new ChatBrowserUse({
+  model: 'anthropic/claude-sonnet-4-6',
+});
 ```
 
 </details>

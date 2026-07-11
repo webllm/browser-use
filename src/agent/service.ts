@@ -661,7 +661,9 @@ export class Agent<
       logger.info(`LLM screenshot resizing enabled: ${width}x${height}`);
     }
     if (resolvedLlmScreenshotSize == null) {
-      const modelName = String((resolvedLlm as any)?.model ?? '');
+      const modelName = String((resolvedLlm as any)?.model ?? '')
+        .split('/')
+        .at(-1)!;
       if (modelName.startsWith('claude-sonnet')) {
         resolvedLlmScreenshotSize = [1400, 850];
         logger.info(

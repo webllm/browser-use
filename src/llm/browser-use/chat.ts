@@ -12,6 +12,7 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const VALID_MODELS = new Set(['bu-latest', 'bu-1-0', 'bu-2-0']);
+const PROVIDER_PREFIXED_MODEL = /^[^/\s]+\/\S+$/;
 
 class HttpStatusError extends Error {
   constructor(
@@ -81,10 +82,12 @@ export class ChatBrowserUse implements BaseChatModel {
     } = options;
 
     const isValidModel =
-      VALID_MODELS.has(model) || model.startsWith('browser-use/');
+      VALID_MODELS.has(model) || PROVIDER_PREFIXED_MODEL.test(model);
     if (!isValidModel) {
       throw new Error(
-        `Invalid model: '${model}'. Must be one of bu-latest, bu-1-0, bu-2-0 or start with 'browser-use/'`
+        `Invalid model: '${model}'. Use a Browser Use alias (bu-latest, bu-1-0, bu-2-0) ` +
+          `or a provider-prefixed model such as 'anthropic/claude-sonnet-4-6', ` +
+          `'openai/gpt-5.5', or 'google/gemini-3-pro'.`
       );
     }
 

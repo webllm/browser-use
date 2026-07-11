@@ -608,6 +608,17 @@ describe('Agent constructor browser session alignment', () => {
     await supportedAgent.close();
   });
 
+  it('auto-configures Claude screenshot size through provider-prefixed ids', async () => {
+    const agent = new Agent({
+      task: 'gateway Claude screenshot size',
+      llm: createLlm('anthropic/claude-sonnet-4-6', 'browser-use'),
+    });
+
+    expect(agent.browser_session?.llm_screenshot_size).toEqual([1400, 850]);
+
+    await agent.close();
+  });
+
   it('initializes fallback llm state and exposes model tracking getters', async () => {
     const primary = createLlm('primary-model', 'openai');
     const fallback = createLlm('fallback-model', 'anthropic');

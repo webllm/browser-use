@@ -61,6 +61,41 @@ describe('ChatBrowserUse alignment', () => {
     expect(payload.messages).toEqual([{ role: 'user', content: 'hello' }]);
   });
 
+  it.each([
+    'anthropic/claude-sonnet-4-6',
+    'openai/gpt-5.5',
+    'google/gemini-3-pro',
+    'browser-use/bu-30b-a3b-preview',
+  ])('accepts and forwards provider-prefixed model %s', async (model) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createFetchResponse(200, {
+        completion: 'gateway response',
+      })
+    );
+    const llm = new ChatBrowserUse({
+      model,
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(llm.model).toBe(model);
+    expect(result.completion).toBe('gateway response');
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(request.body)).model).toBe(model);
+  });
+
+  it.each([
+    'gpt-5',
+    'claude-sonnet-4-6',
+    'bu-9-9',
+    '/gpt-5',
+    'openai/',
+    'openai/gpt 5',
+  ])('rejects unsupported or malformed model %s', (model) => {
+    expect(() => new ChatBrowserUse({ model })).toThrow(/Invalid model/);
+  });
+
   it('sends structured output schema and parses structured completion', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createFetchResponse(200, {
