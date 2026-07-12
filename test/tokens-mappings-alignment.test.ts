@@ -29,4 +29,13 @@ describe('tokens mappings alignment', () => {
       fable.cache_creation_1h_input_token_cost
     );
   });
+
+  it('maps gateway Claude model ids to their canonical custom pricing', () => {
+    expect(CUSTOM_MODEL_PRICING['anthropic/claude-sonnet-4-6']).toBe(
+      CUSTOM_MODEL_PRICING['claude-sonnet-4-6']
+    );
+    expect(CUSTOM_MODEL_PRICING['anthropic/claude-opus-4-6']).toBe(
+      CUSTOM_MODEL_PRICING['claude-opus-4-6']
+    );
+  });
 });

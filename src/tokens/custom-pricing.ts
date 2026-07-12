@@ -86,3 +86,7 @@ export const CUSTOM_MODEL_PRICING: Record<
 
 CUSTOM_MODEL_PRICING['bu-latest'] = CUSTOM_MODEL_PRICING['bu-2-0'];
 CUSTOM_MODEL_PRICING.smart = CUSTOM_MODEL_PRICING['bu-2-0'];
+CUSTOM_MODEL_PRICING['anthropic/claude-sonnet-4-6'] =
+  CUSTOM_MODEL_PRICING['claude-sonnet-4-6'];
+CUSTOM_MODEL_PRICING['anthropic/claude-opus-4-6'] =
+  CUSTOM_MODEL_PRICING['claude-opus-4-6'];

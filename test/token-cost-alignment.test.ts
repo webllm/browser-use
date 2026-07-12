@@ -95,6 +95,20 @@ describe('TokenCost alignment', () => {
     expect(cost?.prompt_cache_creation_cost).toBeCloseTo(0.00003);
   });
 
+  it('prices provider-prefixed gateway Claude ids without a metadata fetch', async () => {
+    const tokenCost = new TokenCost(true);
+    const pricing = await tokenCost.getModelPricing(
+      'anthropic/claude-sonnet-4-6'
+    );
+
+    expect(mockedAxiosGet).not.toHaveBeenCalled();
+    expect(pricing?.input_cost_per_token).toBeCloseTo(3 / 1_000_000);
+    expect(pricing?.output_cost_per_token).toBeCloseTo(15 / 1_000_000);
+    expect(pricing?.cache_creation_1h_input_token_cost).toBeCloseTo(
+      6 / 1_000_000
+    );
+  });
+
   it('maps gemini-flash-latest to the LiteLLM namespaced key', async () => {
     const tokenCost = new TokenCost(false);
     (tokenCost as any).pricingData = {
