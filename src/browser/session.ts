@@ -2817,7 +2817,7 @@ export class BrowserSession {
         const image = await this._withAbort(
           page.screenshot({
             type: 'png',
-            fullPage: true,
+            fullPage: false,
           }),
           signal
         );

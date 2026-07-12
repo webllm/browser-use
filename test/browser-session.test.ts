@@ -2302,6 +2302,58 @@ esac
     expect(session.active_tab?.url).toBe('about:blank');
   });
 
+  it('captures viewport-sized screenshots for routine browser state', async () => {
+    const element = new DOMElementNode(
+      true,
+      null,
+      'button',
+      '/html/body/button[1]',
+      {},
+      [new DOMTextNode(true, null, 'Continue')]
+    );
+    element.highlight_index = 1;
+    const domState = new DOMState(
+      new DOMElementNode(true, null, 'body', '/html/body', {}, [element]),
+      { 1: element }
+    );
+    const clickableSpy = vi
+      .spyOn(DomService.prototype, 'get_clickable_elements')
+      .mockResolvedValue(domState);
+    const screenshot = vi.fn(async () => Buffer.from('viewport screenshot'));
+    const page = {
+      url: vi.fn(() => 'https://example.com'),
+      title: vi.fn(async () => 'Allowed'),
+      waitForLoadState: vi.fn(async () => {}),
+      screenshot,
+      evaluate: vi.fn(async () => ({
+        viewportWidth: 1280,
+        viewportHeight: 720,
+        scrollX: 0,
+        scrollY: 0,
+        pageWidth: 1280,
+        pageHeight: 1_000_000,
+      })),
+    } as any;
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    session.update_current_page(page, 'Allowed', 'https://example.com');
+    (session as any).initialized = true;
+
+    try {
+      await session.get_browser_state_with_recovery({
+        include_screenshot: true,
+      });
+
+      expect(screenshot).toHaveBeenCalledWith({
+        type: 'png',
+        fullPage: false,
+      });
+    } finally {
+      clickableSpy.mockRestore();
+    }
+  });
+
   it('rolls back disallowed current pages before legacy state summary reads', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({
