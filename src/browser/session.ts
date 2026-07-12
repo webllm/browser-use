@@ -1803,11 +1803,7 @@ export class BrowserSession {
         .filter(([key]) => key.length > 0)
     );
 
-    if (
-      !this.browser_context ||
-      Object.keys(normalizedHeaders).length === 0 ||
-      typeof (this.browser_context as any).setExtraHTTPHeaders !== 'function'
-    ) {
+    if (!this.browser_context) {
       return;
     }
 
@@ -1817,7 +1813,13 @@ export class BrowserSession {
     }
 
     await this._removeScopedExtraHeadersRoute();
-    await (this.browser_context as any).setExtraHTTPHeaders(normalizedHeaders);
+    if (
+      typeof (this.browser_context as any).setExtraHTTPHeaders === 'function'
+    ) {
+      await (this.browser_context as any).setExtraHTTPHeaders(
+        normalizedHeaders
+      );
+    }
   }
 
   private async _removeScopedExtraHeadersRoute(): Promise<void> {
@@ -1861,7 +1863,7 @@ export class BrowserSession {
       | null;
     if (!context || typeof context.route !== 'function') {
       throw new BrowserError(
-        'Cannot safely apply extra_http_headers with domain restrictions because BrowserContext.route is unavailable.'
+        'Cannot safely enforce domain restrictions because BrowserContext.route is unavailable.'
       );
     }
 
@@ -1882,7 +1884,7 @@ export class BrowserSession {
           return await route.continue(overrides);
         }
         throw new BrowserError(
-          'Cannot continue routed request while applying scoped extra_http_headers.'
+          'Cannot continue routed request while enforcing domain restrictions.'
         );
       };
 
@@ -1905,6 +1907,20 @@ export class BrowserSession {
       }
 
       if (denialReason) {
+        const isNavigationRequest =
+          (typeof request?.isNavigationRequest === 'function' &&
+            request.isNavigationRequest()) ||
+          (typeof request?.resourceType === 'function' &&
+            request.resourceType() === 'document');
+        if (isNavigationRequest) {
+          if (typeof route?.abort !== 'function') {
+            throw new BrowserError(
+              'Cannot block a disallowed navigation because Route.abort is unavailable.'
+            );
+          }
+          await route.abort('blockedbyclient');
+          return;
+        }
         await continueRoute();
         return;
       }
@@ -1925,12 +1941,16 @@ export class BrowserSession {
   }
 
   private async _applyConfiguredExtraHttpHeaders(): Promise<void> {
-    const configuredHeaders = this.browser_profile.config.extra_http_headers;
-    if (!configuredHeaders || Object.keys(configuredHeaders).length === 0) {
+    const configuredHeaders =
+      this.browser_profile.config.extra_http_headers ?? {};
+    if (this._has_url_access_restrictions()) {
+      await this._installScopedExtraHeaders(configuredHeaders);
       return;
     }
 
-    await this.set_extra_headers(configuredHeaders);
+    if (Object.keys(configuredHeaders).length > 0) {
+      await this.set_extra_headers(configuredHeaders);
+    }
   }
 
   private _usesRemoteBrowserConnection() {

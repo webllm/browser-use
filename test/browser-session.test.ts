@@ -693,11 +693,72 @@ esac
       request: () => ({
         url: () => 'https://evil.test/api',
         headers: () => ({ Accept: 'application/json' }),
+        isNavigationRequest: () => false,
       }),
       fallback: blockedFallback,
     });
 
     expect(blockedFallback).toHaveBeenCalledWith(undefined);
+
+    const blockedNavigationFallback = vi.fn(async () => {});
+    const blockedNavigationAbort = vi.fn(async () => {});
+    await routeHandler!({
+      request: () => ({
+        url: () => 'https://evil.test/redirect-target',
+        headers: () => ({ Accept: 'text/html' }),
+        isNavigationRequest: () => true,
+        resourceType: () => 'document',
+      }),
+      fallback: blockedNavigationFallback,
+      abort: blockedNavigationAbort,
+    });
+
+    expect(blockedNavigationAbort).toHaveBeenCalledWith('blockedbyclient');
+    expect(blockedNavigationFallback).not.toHaveBeenCalled();
+  });
+
+  it('installs a pre-request navigation guard without extra headers', async () => {
+    let routeHandler: ((route: any) => Promise<void>) | null = null;
+    const context = {
+      pages: () => [
+        {
+          isClosed: () => false,
+          on: vi.fn(),
+          url: () => 'https://example.com',
+          title: vi.fn(async () => 'Example'),
+        },
+      ],
+      setExtraHTTPHeaders: vi.fn(async () => {}),
+      route: vi.fn(
+        async (_pattern: string, handler: (route: any) => Promise<void>) => {
+          routeHandler = handler;
+        }
+      ),
+      unroute: vi.fn(async () => {}),
+    };
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['https://example.com'],
+      }),
+      browser: {
+        contexts: () => [context],
+      } as any,
+    });
+
+    await session.start();
+
+    expect(context.route).toHaveBeenCalledWith('**/*', expect.any(Function));
+    const abort = vi.fn(async () => {});
+    await routeHandler!({
+      request: () => ({
+        url: () => 'https://evil.test/redirect-target',
+        headers: () => ({}),
+        isNavigationRequest: () => true,
+      }),
+      abort,
+      fallback: vi.fn(async () => {}),
+    });
+    expect(abort).toHaveBeenCalledWith('blockedbyclient');
   });
 
   it('rolls back disallowed existing pages during start', async () => {
@@ -719,6 +780,9 @@ esac
         contexts: () => [
           {
             pages: () => [page],
+            route: vi.fn(async () => {}),
+            unroute: vi.fn(async () => {}),
+            setExtraHTTPHeaders: vi.fn(async () => {}),
           },
         ],
       } as any,
