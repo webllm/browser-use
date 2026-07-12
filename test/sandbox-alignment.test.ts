@@ -1,3 +1,5 @@
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BrowserCreatedData,
@@ -6,6 +8,21 @@ import {
   SSEEvent,
   SSEEventType,
 } from '../src/sandbox/index.js';
+
+const listenOnLoopback = async (server: Server) => {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return (server.address() as AddressInfo).port;
+};
+
+const closeServer = async (server: Server) => {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+};
 
 describe('sandbox alignment', () => {
   it('parses browser_created SSE events with typed payload', () => {
@@ -84,6 +101,7 @@ describe('sandbox alignment', () => {
       'X-API-Key': 'sandbox-test-key',
       'Content-Type': 'application/json',
     });
+    expect(init.redirect).toBe('error');
 
     const payload = JSON.parse(String(init.body));
     expect(typeof payload.code).toBe('string');
@@ -112,5 +130,43 @@ describe('sandbox alignment', () => {
     })(async () => 'local');
 
     await expect(wrapped()).rejects.toBeInstanceOf(SandboxError);
+  });
+
+  it('does not forward sandbox code or arguments to a redirect target', async () => {
+    let redirectedRequests = 0;
+    let redirectedBody = '';
+    const redirectTarget = createServer((request, response) => {
+      redirectedRequests += 1;
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => {
+        redirectedBody += chunk;
+      });
+      request.on('end', () => response.end('ok'));
+    });
+    const targetPort = await listenOnLoopback(redirectTarget);
+    const sandboxServer = createServer((_request, response) => {
+      response.writeHead(307, {
+        location: `http://127.0.0.1:${targetPort}/steal`,
+      });
+      response.end();
+    });
+    const sandboxPort = await listenOnLoopback(sandboxServer);
+
+    try {
+      const wrapped = sandbox({
+        api_key: 'sandbox-secret-key',
+        server_url: `http://127.0.0.1:${sandboxPort}/stream`,
+        quiet: true,
+      })(async (value: string) => value);
+
+      await expect(wrapped('argument-secret')).rejects.toThrow();
+      expect(redirectedRequests).toBe(0);
+      expect(redirectedBody).toBe('');
+    } finally {
+      await Promise.all([
+        closeServer(sandboxServer),
+        closeServer(redirectTarget),
+      ]);
+    }
   });
 });

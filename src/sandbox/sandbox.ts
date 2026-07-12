@@ -137,6 +137,7 @@ export const sandbox =
 
     const response = await fetch_impl(server_url, {
       method: 'POST',
+      redirect: 'error',
       headers: {
         'X-API-Key': apiKey,
         'Content-Type': 'application/json',
