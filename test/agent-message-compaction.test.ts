@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BaseChatModel } from '../src/llm/base.js';
 import { Agent } from '../src/agent/service.js';
 import { AgentStepInfo } from '../src/agent/views.js';
-import { HistoryItem } from '../src/agent/message-manager/views.js';
+import {
+  HistoryItem,
+  MessageManagerState,
+} from '../src/agent/message-manager/views.js';
+import { MessageManager } from '../src/agent/message-manager/service.js';
+import { SystemMessage } from '../src/llm/messages.js';
+import type { FileSystem } from '../src/filesystem/file-system.js';
 
 const createLlm = (completion = 'ok', model = 'gpt-test'): BaseChatModel =>
   ({
@@ -18,6 +24,33 @@ const createLlm = (completion = 'ok', model = 'gpt-test'): BaseChatModel =>
     },
     ainvoke: vi.fn(async () => ({ completion, usage: null })),
   }) as unknown as BaseChatModel;
+
+const createBoundedHistoryManager = (maxHistoryItems = 10) => {
+  const state = new MessageManagerState();
+  const manager = new MessageManager(
+    'test task',
+    new SystemMessage('system'),
+    {} as FileSystem,
+    state,
+    true,
+    null,
+    undefined,
+    maxHistoryItems
+  );
+  return { manager, state };
+};
+
+const appendHistoryItems = (
+  state: MessageManagerState,
+  firstStep: number,
+  lastStep: number
+) => {
+  for (let step = firstStep; step <= lastStep; step += 1) {
+    state.agent_history_items.push(
+      new HistoryItem(step, null, `history-${step}`, null, null, null, null)
+    );
+  }
+};
 
 describe('Agent message compaction', () => {
   it('compacts history into compacted_memory when thresholds are met', async () => {
@@ -106,5 +139,69 @@ describe('Agent message compaction', () => {
     } finally {
       await agent.close();
     }
+  });
+});
+
+describe('MessageManager bounded history window', () => {
+  it('keeps the rendered prompt prefix stable between archive boundaries', () => {
+    const { manager, state } = createBoundedHistoryManager(10);
+    appendHistoryItems(state, 1, 10);
+
+    const firstWindow = manager.agent_history_description;
+    expect(firstWindow).toContain(
+      '<sys>[... 4 archived history items omitted...]</sys>'
+    );
+    expect(firstWindow).not.toContain('\nhistory-4\n');
+    expect(firstWindow).toContain('\nhistory-5\n');
+
+    appendHistoryItems(state, 11, 11);
+    const appendedWindow = manager.agent_history_description;
+
+    expect(appendedWindow).toBe(`${firstWindow}\n<step>\nhistory-11`);
+  });
+
+  it('uses mergeable binary archive segments at window boundaries', () => {
+    const { manager, state } = createBoundedHistoryManager(10);
+    appendHistoryItems(state, 1, 17);
+
+    const twoBatchWindow = manager.agent_history_description;
+    expect(twoBatchWindow).toContain(
+      '<sys>[... 8 archived history items omitted...]</sys>'
+    );
+    expect(twoBatchWindow).not.toContain('4 archived history items');
+
+    appendHistoryItems(state, 18, 18);
+    const threeBatchWindow = manager.agent_history_description;
+    const stableArchivePrefix =
+      'Agent initialized\n' +
+      '<sys>[... 8 archived history items omitted...]</sys>';
+
+    expect(threeBatchWindow.startsWith(stableArchivePrefix)).toBe(true);
+    expect(threeBatchWindow).toContain(
+      '<sys>[... 4 archived history items omitted...]</sys>'
+    );
+    expect(threeBatchWindow).toContain('\nhistory-13\n');
+    expect(threeBatchWindow).not.toContain('\nhistory-12\n');
+  });
+
+  it('keeps archive metadata logarithmically bounded for long runs', () => {
+    const { manager, state } = createBoundedHistoryManager(10);
+    appendHistoryItems(state, 1, 10_000);
+
+    const description = manager.agent_history_description;
+    const segmentSizes = Array.from(
+      description.matchAll(/\[\.\.\. (\d+) archived history items omitted/g),
+      (match) => Number(match[1])
+    );
+    const visibleHistoryItems = Array.from(
+      description.matchAll(/<step>/g)
+    ).length;
+
+    expect(segmentSizes.length).toBeLessThanOrEqual(12);
+    expect(segmentSizes.reduce((sum, size) => sum + size, 0)).toBe(
+      10_000 - visibleHistoryItems
+    );
+    expect(visibleHistoryItems).toBeLessThanOrEqual(9);
+    expect(description.length).toBeLessThan(5_000);
   });
 });

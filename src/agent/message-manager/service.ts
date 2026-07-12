@@ -87,17 +87,51 @@ export class MessageManager {
       );
     }
 
-    const omitted = totalItems - this.maxHistoryItems;
-    const keepRecent = this.maxHistoryItems - 1;
+    const recentItemLimit = this.maxHistoryItems - 1;
+    const archiveBatchSize = Math.max(1, Math.floor(recentItemLimit / 2));
+    const nonInitialItemCount = totalItems - 1;
+    const archiveBatchCount = Math.ceil(
+      (nonInitialItemCount - recentItemLimit) / archiveBatchSize
+    );
+    const omittedItemCount = archiveBatchCount * archiveBatchSize;
+    const omissionSegments = this.getHistoryOmissionSegments(
+      archiveBatchCount,
+      archiveBatchSize
+    );
     const parts: string[] = [];
     parts.push(this.state.agent_history_items[0].to_string());
-    parts.push(`<sys>[... ${omitted} previous steps omitted...]</sys>`);
+    parts.push(
+      ...omissionSegments.map(
+        (segmentSize) =>
+          `<sys>[... ${segmentSize} archived history items omitted...]</sys>`
+      )
+    );
     parts.push(
       ...this.state.agent_history_items
-        .slice(-keepRecent)
+        .slice(1 + omittedItemCount)
         .map((item) => item.to_string())
     );
     return compactedPrefix + parts.join('\n');
+  }
+
+  private getHistoryOmissionSegments(
+    archiveBatchCount: number,
+    archiveBatchSize: number
+  ): number[] {
+    const segments: number[] = [];
+    let remainingBatches = archiveBatchCount;
+    let segmentBatches = 1;
+    while (segmentBatches * 2 <= remainingBatches) {
+      segmentBatches *= 2;
+    }
+    while (segmentBatches >= 1) {
+      if (remainingBatches >= segmentBatches) {
+        segments.push(segmentBatches * archiveBatchSize);
+        remainingBatches -= segmentBatches;
+      }
+      segmentBatches /= 2;
+    }
+    return segments;
   }
 
   add_new_task(new_task: string) {
