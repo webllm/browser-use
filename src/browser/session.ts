@@ -2340,13 +2340,17 @@ export class BrowserSession {
   }
 
   private _connectionDescriptor() {
-    const source =
-      this.cdp_url ||
-      this.wss_url ||
-      (this.browser_pid ? String(this.browser_pid) : 'playwright');
-    const tail = source.split('/').pop() ?? source;
-    const port = tail.includes(':') ? tail.split(':').pop() : tail;
-    return `${this.id.slice(-4)}:${port}`;
+    const remoteEndpoint = this.cdp_url || this.wss_url;
+    if (remoteEndpoint) {
+      try {
+        const parsed = new URL(remoteEndpoint);
+        return `${this.id.slice(-4)}:${parsed.port || 'remote'}`;
+      } catch {
+        return `${this.id.slice(-4)}:remote`;
+      }
+    }
+
+    return `${this.id.slice(-4)}:${this.browser_pid ?? 'playwright'}`;
   }
 
   toString() {

@@ -144,6 +144,23 @@ describe('BrowserSession Basic Operations', () => {
     expect(session).toBeDefined();
   });
 
+  it('does not expose remote endpoint credentials in its description', () => {
+    const session = new BrowserSession({
+      cdp_url:
+        'wss://user:password@example.com:9443/devtools/browser/instance-id?token=top-secret#fragment',
+    });
+
+    const description = session.toString();
+
+    expect(description).toContain(':9443');
+    expect(description).not.toContain('user');
+    expect(description).not.toContain('password');
+    expect(description).not.toContain('example.com');
+    expect(description).not.toContain('instance-id');
+    expect(description).not.toContain('top-secret');
+    expect(description).not.toContain('fragment');
+  });
+
   it('lists Chrome profiles from Local State metadata', () => {
     const userDataDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-chrome-profiles-')
