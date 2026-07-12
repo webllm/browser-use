@@ -294,6 +294,11 @@ describe('downloads watchdog alignment', () => {
         new BrowserConnectedEvent({ cdp_url: 'ws://example' })
       );
 
+      expect(cdpSend).toHaveBeenCalledWith('Network.enable', {
+        maxResourceBufferSize: DEFAULT_MAX_AUTO_DOWNLOAD_BYTES,
+        maxTotalBufferSize: DEFAULT_MAX_AUTO_DOWNLOAD_BYTES * 2,
+      });
+
       listeners.get('Network.responseReceived')?.({
         requestId: 'req-pdf-1',
         response: {

@@ -394,7 +394,11 @@ export class DownloadsWatchdog extends BaseWatchdog {
       const session = (await this.browser_session.get_or_create_cdp_session(
         null
       )) as CDPSessionLike;
-      await session.send?.('Network.enable');
+      const maxBytes = getMaxAutoDownloadBytes();
+      await session.send?.('Network.enable', {
+        maxResourceBufferSize: maxBytes,
+        maxTotalBufferSize: Math.min(Number.MAX_SAFE_INTEGER, maxBytes * 2),
+      });
       this._cdpSession = session;
 
       const onResponseReceived = (payload: any) => {
