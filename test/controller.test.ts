@@ -2591,6 +2591,44 @@ describe('Regression Coverage', () => {
     );
   });
 
+  it('find_elements bounds page-controlled text and attributes', async () => {
+    const controller = new Controller();
+    const page = {
+      evaluate: vi.fn(async () => ({
+        total: 1,
+        elements: [
+          {
+            index: 1,
+            tag: 'a'.repeat(100),
+            text: 'x'.repeat(20_000),
+            attributes: Object.fromEntries(
+              Array.from({ length: 40 }, (_, index) => [
+                `attr-${index}`,
+                'y'.repeat(10_000),
+              ])
+            ),
+          },
+        ],
+      })),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+    };
+
+    const result = await controller.registry.execute_action(
+      'find_elements',
+      { selector: 'a' },
+      { browser_session: browserSession as any }
+    );
+
+    expect(result.extracted_content?.length).toBeLessThan(80_000);
+    expect(result.extracted_content).toContain(
+      'element text or attributes were truncated for safety'
+    );
+    expect(result.extracted_content).not.toContain('attr-32=');
+  });
+
   it('evaluate executes JavaScript and returns serialized output', async () => {
     const controller = new Controller();
     const page = {

@@ -167,9 +167,9 @@ export const SearchPageActionSchema = z.object({
 export type SearchPageAction = z.infer<typeof SearchPageActionSchema>;
 
 export const FindElementsActionSchema = z.object({
-  selector: z.string(),
-  attributes: z.array(z.string()).optional(),
-  max_results: z.number().int().default(50),
+  selector: z.string().min(1).max(2048),
+  attributes: z.array(z.string().min(1).max(256)).max(32).optional(),
+  max_results: z.number().int().min(1).max(100).default(50),
   include_text: z.boolean().default(true),
 });
 export type FindElementsAction = z.infer<typeof FindElementsActionSchema>;

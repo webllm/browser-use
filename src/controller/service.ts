@@ -88,6 +88,11 @@ const MAX_WAIT_SECONDS = 30;
 const MAX_EVALUATE_RESULT_CHARS = 20_000;
 const MAX_EVALUATE_IMAGE_CHARS = 5 * 1024 * 1024;
 const MAX_EVALUATE_IMAGES = 4;
+const MAX_FIND_ELEMENTS_RESULTS = 100;
+const MAX_FIND_ATTRIBUTES = 32;
+const MAX_FIND_ELEMENT_TEXT_CHARS = 4_096;
+const MAX_FIND_ATTRIBUTE_CHARS = 2_048;
+const MAX_FIND_ELEMENTS_OUTPUT_CHARS = 256 * 1024;
 const DEFAULT_PDF_HEADER_TEMPLATE =
   '<div style="font-size:9px; color:#666; width:100%; padding:0 0.4in; ' +
   'box-sizing:border-box; text-align:right;"><span class="date"></span></div>';
@@ -1977,6 +1982,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
         }>;
         total?: number;
         truncated?: boolean;
+        contentTruncated?: boolean;
       };
       let result: FindElementsResult | null = null;
       await validateBrowserPageAfterAction(browser_session, page, signal);
@@ -1987,55 +1993,129 @@ You will be given a query and the markdown of a webpage that has been filtered t
             attributes,
             maxResults,
             includeText,
+            maxTextChars,
+            maxAttributeChars,
+            maxPayloadChars,
           }: {
             selector: string;
             attributes: string[] | null;
             maxResults: number;
             includeText: boolean;
+            maxTextChars: number;
+            maxAttributeChars: number;
+            maxPayloadChars: number;
           }) => {
-            let elements: Element[];
+            let elements: NodeListOf<Element>;
             try {
-              elements = Array.from(document.querySelectorAll(selector));
+              elements = document.querySelectorAll(selector);
             } catch (error: unknown) {
               return {
-                error: `Invalid selector: ${String(error)}`,
+                error: `Invalid selector: ${String(error).slice(0, 500)}`,
                 elements: [],
                 total: 0,
               };
             }
 
-            const selected = elements.slice(0, Math.max(1, maxResults));
-            const payload = selected.map((el, idx) => {
+            let remainingPayloadChars = Math.max(0, maxPayloadChars);
+            let contentTruncated = false;
+            const takeText = (value: string, limit: number) => {
+              const allowed = Math.max(
+                0,
+                Math.min(limit, remainingPayloadChars)
+              );
+              const result = value.slice(0, allowed);
+              remainingPayloadChars -= result.length;
+              if (result.length < value.length) contentTruncated = true;
+              return result;
+            };
+            const boundedElementText = (element: Element) => {
+              const chunks: string[] = [];
+              let remaining = Math.min(maxTextChars, remainingPayloadChars);
+              const walker = document.createTreeWalker(
+                element,
+                NodeFilter.SHOW_TEXT
+              );
+              let node = walker.nextNode();
+              while (node && remaining > 0) {
+                const raw = node.nodeValue ?? '';
+                const compact = raw
+                  .slice(0, Math.max(remaining * 2, remaining))
+                  .replace(/\s+/g, ' ');
+                const piece = compact.slice(0, remaining);
+                if (piece) chunks.push(piece);
+                remaining -= piece.length;
+                if (
+                  piece.length < compact.length ||
+                  raw.length > compact.length
+                ) {
+                  contentTruncated = true;
+                }
+                node = walker.nextNode();
+              }
+              if (node) contentTruncated = true;
+              return takeText(
+                chunks.join(' ').replace(/\s+/g, ' ').trim(),
+                maxTextChars
+              );
+            };
+
+            const requestedCount = Math.min(
+              Math.max(1, maxResults),
+              elements.length
+            );
+            const payload = [] as Array<{
+              index: number;
+              tag: string;
+              text: string;
+              attributes: Record<string, string>;
+            }>;
+            for (let idx = 0; idx < requestedCount; idx += 1) {
+              if (remainingPayloadChars <= 0) {
+                contentTruncated = true;
+                break;
+              }
+              const el = elements.item(idx);
+              if (!el) continue;
               const attrs: Record<string, string> = {};
               if (attributes?.length) {
                 for (const attr of attributes) {
+                  if (remainingPayloadChars <= 0) {
+                    contentTruncated = true;
+                    break;
+                  }
                   const value = el.getAttribute(attr);
                   if (value != null) {
-                    attrs[attr] = value;
+                    attrs[takeText(attr, 256)] = takeText(
+                      value,
+                      maxAttributeChars
+                    );
                   }
                 }
               }
-              return {
+              payload.push({
                 index: idx + 1,
                 tag: el.tagName.toLowerCase(),
-                text: includeText
-                  ? (el.textContent || '').replace(/\s+/g, ' ').trim()
-                  : '',
+                text: includeText ? boundedElementText(el) : '',
                 attributes: attrs,
-              };
-            });
+              });
+            }
 
             return {
               elements: payload,
               total: elements.length,
-              truncated: elements.length > selected.length,
+              truncated: elements.length > payload.length,
+              contentTruncated,
             };
           },
           {
             selector: params.selector,
-            attributes: params.attributes ?? null,
-            maxResults: params.max_results,
+            attributes:
+              params.attributes?.slice(0, MAX_FIND_ATTRIBUTES) ?? null,
+            maxResults: Math.min(params.max_results, MAX_FIND_ELEMENTS_RESULTS),
             includeText: params.include_text,
+            maxTextChars: MAX_FIND_ELEMENT_TEXT_CHARS,
+            maxAttributeChars: MAX_FIND_ATTRIBUTE_CHARS,
+            maxPayloadChars: MAX_FIND_ELEMENTS_OUTPUT_CHARS,
           }
         )) as FindElementsResult | null;
       } finally {
@@ -2049,8 +2129,48 @@ You will be given a query and the markdown of a webpage that has been filtered t
         return new ActionResult({ error: `find_elements: ${result.error}` });
       }
 
-      const elements = result.elements ?? [];
-      const total = result.total ?? 0;
+      let remainingOutputChars = MAX_FIND_ELEMENTS_OUTPUT_CHARS;
+      let contentTruncated = result.contentTruncated === true;
+      const takeOutputText = (value: unknown, limit: number) => {
+        const text = typeof value === 'string' ? value : '';
+        const allowed = Math.max(0, Math.min(limit, remainingOutputChars));
+        const bounded = text.slice(0, allowed);
+        remainingOutputChars -= bounded.length;
+        if (bounded.length < text.length) contentTruncated = true;
+        return bounded;
+      };
+      const elements = (Array.isArray(result.elements) ? result.elements : [])
+        .slice(0, MAX_FIND_ELEMENTS_RESULTS)
+        .map((element, index) => {
+          const attributes: Record<string, string> = {};
+          const entries =
+            element?.attributes && typeof element.attributes === 'object'
+              ? Object.entries(element.attributes).slice(0, MAX_FIND_ATTRIBUTES)
+              : [];
+          for (const [key, value] of entries) {
+            const boundedKey = takeOutputText(key, 256);
+            if (!boundedKey || remainingOutputChars <= 0) break;
+            attributes[boundedKey] = takeOutputText(
+              value,
+              MAX_FIND_ATTRIBUTE_CHARS
+            );
+          }
+          return {
+            index:
+              Number.isSafeInteger(element?.index) && element.index > 0
+                ? element.index
+                : index + 1,
+            tag: takeOutputText(element?.tag, 64) || 'unknown',
+            text: takeOutputText(element?.text, MAX_FIND_ELEMENT_TEXT_CHARS),
+            attributes,
+          };
+        });
+      if ((result.elements?.length ?? 0) > elements.length) {
+        contentTruncated = true;
+      }
+      const total = Number.isSafeInteger(result.total)
+        ? Math.max(0, result.total as number)
+        : elements.length;
       if (!elements.length) {
         const msg = `No elements found for selector "${params.selector}".`;
         return new ActionResult({
@@ -2078,6 +2198,9 @@ You will be given a query and the markdown of a webpage that has been filtered t
         lines.push(
           `... showing first ${elements.length} elements (increase max_results to see more).`
         );
+      }
+      if (contentTruncated) {
+        lines.push('... element text or attributes were truncated for safety.');
       }
 
       return new ActionResult({
