@@ -1,4 +1,6 @@
 import { promises as fs } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -38,6 +40,21 @@ const jsonResponse = (status: number, payload: unknown) =>
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+
+const listenOnLoopback = async (server: Server) => {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return (server.address() as AddressInfo).port;
+};
+
+const closeServer = async (server: Server) => {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+};
 
 describe('Codex auth store', () => {
   afterEach(async () => {
@@ -161,6 +178,7 @@ describe('Codex auth store', () => {
     expect(String((request?.[1] as RequestInit).body)).toContain(
       'refresh_token=old-refresh'
     );
+    expect((request?.[1] as RequestInit).redirect).toBe('error');
     const stored = await readCodexTokens({ configDir });
     expect(stored.tokens.refresh_token).toBe('new-refresh');
   });
@@ -260,5 +278,38 @@ describe('Codex auth store', () => {
     await expect(refreshCodexOAuth('access', '')).rejects.toBeInstanceOf(
       CodexAuthError
     );
+  });
+
+  it('does not forward refresh tokens to a redirect target', async () => {
+    let redirectedRequests = 0;
+    let redirectedBody = '';
+    const redirectTarget = createServer((request, response) => {
+      redirectedRequests += 1;
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => {
+        redirectedBody += chunk;
+      });
+      request.on('end', () => response.end('{}'));
+    });
+    const targetPort = await listenOnLoopback(redirectTarget);
+    const authServer = createServer((_request, response) => {
+      response.writeHead(307, {
+        location: `http://127.0.0.1:${targetPort}/steal`,
+      });
+      response.end();
+    });
+    const authPort = await listenOnLoopback(authServer);
+
+    try {
+      await expect(
+        refreshCodexOAuth('access-token', 'refresh-token-secret', {
+          tokenUrl: `http://127.0.0.1:${authPort}/oauth/token`,
+        })
+      ).rejects.toThrow();
+      expect(redirectedRequests).toBe(0);
+      expect(redirectedBody).toBe('');
+    } finally {
+      await Promise.all([closeServer(authServer), closeServer(redirectTarget)]);
+    }
   });
 });

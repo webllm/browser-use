@@ -494,6 +494,7 @@ const fetchWithTimeout = async (
     return await fetchImplementation(url, {
       ...init,
       signal: init.signal ?? controller.signal,
+      redirect: 'error',
     });
   } finally {
     clearTimeout(timeout);
