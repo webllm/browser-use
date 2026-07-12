@@ -105,11 +105,11 @@ export const ScreenshotActionSchema = z.object({
 export type ScreenshotAction = z.infer<typeof ScreenshotActionSchema>;
 
 export const SaveAsPdfActionSchema = z.object({
-  file_name: z.string().optional(),
+  file_name: z.string().max(255).optional(),
   print_background: z.boolean().default(true),
   landscape: z.boolean().default(false),
   scale: z.number().min(0.1).max(2.0).default(1.0),
-  paper_format: z.string().default('Letter'),
+  paper_format: z.string().max(32).default('Letter'),
   display_header_footer: z
     .boolean()
     .default(true)
@@ -118,6 +118,7 @@ export const SaveAsPdfActionSchema = z.object({
     ),
   header_template: z
     .string()
+    .max(256 * 1024)
     .nullable()
     .optional()
     .describe(
@@ -125,6 +126,7 @@ export const SaveAsPdfActionSchema = z.object({
     ),
   footer_template: z
     .string()
+    .max(256 * 1024)
     .nullable()
     .optional()
     .describe(

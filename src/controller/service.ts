@@ -22,6 +22,7 @@ import {
   WaitEvent,
 } from '../browser/events.js';
 import { BrowserError } from '../browser/views.js';
+import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
   buildScrollToTextExpression,
   type ScrollToTextPageResult,
@@ -93,6 +94,7 @@ import {
   MAX_IFRAME_HTML_CHARS,
   MAX_MAIN_PAGE_HTML_CHARS,
 } from './page-content.js';
+import { readBoundedCdpPdf } from './pdf-output.js';
 
 type BrowserSession = any;
 type Page = any;
@@ -3096,7 +3098,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
       }
       await validateBrowserPageAfterAction(browser_session, page, signal);
 
-      let result: { data?: unknown } | null = null;
+      let result: Record<string, unknown> | null = null;
       const pdfParams: Record<string, unknown> = {
         printBackground: params.print_background,
         landscape: params.landscape,
@@ -3104,6 +3106,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
         paperWidth: paperSize.width,
         paperHeight: paperSize.height,
         preferCSSPageSize: true,
+        transferMode: 'ReturnAsStream',
       };
       if (params.display_header_footer) {
         Object.assign(pdfParams, {
@@ -3116,16 +3119,12 @@ You will be given a query and the markdown of a webpage that has been filtered t
           marginRight: 0.4,
         });
       }
+      let pdfBuffer: Buffer;
       try {
         result = await cdpSession.send('Page.printToPDF', pdfParams);
+        pdfBuffer = await readBoundedCdpPdf(cdpSession, result ?? {});
       } finally {
         await validateBrowserPageAfterAction(browser_session, page, signal);
-      }
-
-      const pdfData =
-        result && typeof result.data === 'string' ? result.data : null;
-      if (!pdfData) {
-        throw new BrowserError('CDP Page.printToPDF returned no data.');
       }
 
       const fsInstance = file_system ?? new FileSystem(process.cwd(), false);
@@ -3134,16 +3133,12 @@ You will be given a query and the markdown of a webpage that has been filtered t
       if (!fileName) {
         await validateBrowserPageAfterAction(browser_session, page, signal);
         try {
-          const titlePromise =
-            typeof page.title === 'function'
-              ? page.title()
-              : Promise.resolve('');
-          const pageTitle = await Promise.race([
-            titlePromise,
-            new Promise<string>((_, reject) => {
-              setTimeout(() => reject(new Error('timeout')), 2000);
-            }),
-          ]);
+          const pageTitle = await runWithTimeoutAndSignal(
+            () => readBoundedPageTitle(page),
+            2000,
+            signal,
+            'Page title read timed out'
+          );
           const safeTitle = String(pageTitle)
             .replace(/[^\w\s-]+/g, '')
             .trim()
@@ -3166,7 +3161,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
         fileName
       );
       await validateBrowserPageAfterAction(browser_session, page, signal);
-      await writePrivateBinaryFile(filePath, Buffer.from(pdfData, 'base64'));
+      await writePrivateBinaryFile(filePath, pdfBuffer);
       const fileSize = (await fsp.stat(filePath)).size;
       const baseName = path.basename(filePath);
       const msg = `Saved page as PDF: ${baseName} (${fileSize.toLocaleString()} bytes)`;

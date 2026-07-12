@@ -3141,6 +3141,7 @@ describe('Regression Coverage', () => {
       );
       const pdfParams = cdpSend.mock.calls[0]?.[1] as Record<string, unknown>;
       expect(pdfParams).toMatchObject({
+        transferMode: 'ReturnAsStream',
         displayHeaderFooter: true,
         marginTop: 0.5,
         marginBottom: 0.5,
