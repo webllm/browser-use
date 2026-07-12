@@ -6181,6 +6181,9 @@ export class BrowserSession {
 
       this.logger.info(`📄 Auto-downloading PDF from: ${logUrl}`);
       await this.validate_page_after_action(page);
+      const redirectMode: RequestRedirect = this._has_url_access_restrictions()
+        ? 'error'
+        : 'follow';
       let downloadResult: {
         data: number[];
         fromCache: boolean;
@@ -6188,38 +6191,44 @@ export class BrowserSession {
         error?: string;
       } | null = null;
       try {
-        downloadResult = await page.evaluate(async (pdfUrl: string) => {
-          try {
-            const response = await fetch(pdfUrl, {
-              cache: 'force-cache',
-            });
-            if (!response.ok) {
-              throw new Error(`HTTP error! status: ${response.status}`);
+        downloadResult = await page.evaluate(
+          async ({ pdfUrl, redirectMode }) => {
+            try {
+              const response = await fetch(pdfUrl, {
+                cache: 'force-cache',
+                redirect: redirectMode,
+              });
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              const blob = await response.blob();
+              const arrayBuffer = await blob.arrayBuffer();
+              const uint8Array = new Uint8Array(arrayBuffer);
+              const cacheHeader = response.headers.get('x-cache') || '';
+              const fromCache =
+                response.headers.has('age') ||
+                cacheHeader.toLowerCase().includes('hit');
+
+              return {
+                data: Array.from(uint8Array),
+                fromCache,
+                responseSize: uint8Array.length,
+              };
+            } catch (error) {
+              return {
+                data: [],
+                fromCache: false,
+                responseSize: 0,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : 'Unknown fetch error',
+              };
             }
-
-            const blob = await response.blob();
-            const arrayBuffer = await blob.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            const cacheHeader = response.headers.get('x-cache') || '';
-            const fromCache =
-              response.headers.has('age') ||
-              cacheHeader.toLowerCase().includes('hit');
-
-            return {
-              data: Array.from(uint8Array),
-              fromCache,
-              responseSize: uint8Array.length,
-            };
-          } catch (error) {
-            return {
-              data: [],
-              fromCache: false,
-              responseSize: 0,
-              error:
-                error instanceof Error ? error.message : 'Unknown fetch error',
-            };
-          }
-        }, url);
+          },
+          { pdfUrl: url, redirectMode }
+        );
       } finally {
         await this.validate_page_after_action(page);
       }

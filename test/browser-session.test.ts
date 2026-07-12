@@ -4033,7 +4033,10 @@ describe('BrowserSession PDF Auto Download', () => {
       try {
         await (session as any)._auto_download_pdf_if_needed(fakePage);
 
-        expect(evaluate.mock.calls[0]?.[1]).toBe(rawUrl);
+        expect(evaluate.mock.calls[0]?.[1]).toEqual({
+          pdfUrl: rawUrl,
+          redirectMode: 'follow',
+        });
         const logs = infoSpy.mock.calls.flat().join('\n');
         expect(logs).toContain(
           'https://example.com/report.pdf?<redacted>#<redacted>'
@@ -4084,6 +4087,43 @@ describe('BrowserSession PDF Auto Download', () => {
       );
       expect(session.get_downloaded_files()).toEqual([]);
     } finally {
+      fs.rmSync(downloadsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects PDF redirects while URL access restrictions are active', async () => {
+    const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pdf-'));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(new Uint8Array([37, 80, 68, 70]), { status: 200 })
+      );
+    try {
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({
+          allowed_domains: ['https://example.com'],
+          downloads_path: downloadsDir,
+        }),
+      });
+      const pdfUrl = 'https://example.com/restricted.pdf';
+      const fakePage = {
+        url: () => pdfUrl,
+        evaluate: vi.fn(async (callback: any, argument: unknown) =>
+          callback(argument)
+        ),
+      } as any;
+
+      const downloadedPath = await (
+        session as any
+      )._auto_download_pdf_if_needed(fakePage);
+
+      expect(downloadedPath).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledWith(pdfUrl, {
+        cache: 'force-cache',
+        redirect: 'error',
+      });
+    } finally {
+      fetchSpy.mockRestore();
       fs.rmSync(downloadsDir, { recursive: true, force: true });
     }
   });
