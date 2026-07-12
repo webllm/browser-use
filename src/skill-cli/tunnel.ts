@@ -304,9 +304,20 @@ export class TunnelManager {
         }
       );
       child.unref?.();
+      const spawnFailure: { error: Error | null } = { error: null };
+      child.once?.('error', (error) => {
+        spawnFailure.error =
+          error instanceof Error ? error : new Error(String(error));
+      });
 
       const deadline = Date.now() + 15_000;
       while (Date.now() < deadline) {
+        const spawnError = spawnFailure.error;
+        if (spawnError) {
+          return {
+            error: `Failed to start cloudflared: ${spawnError.message}`,
+          };
+        }
         const pid = child.pid;
         if (typeof pid === 'number' && !this.is_process_alive_impl(pid)) {
           const content = fs.existsSync(logPath)

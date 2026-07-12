@@ -549,9 +549,15 @@ export const defaultLocalLauncher = async (options: {
     }
   );
   child.unref();
+  const spawnError = new Promise<never>((_resolve, reject) => {
+    child.once('error', reject);
+  });
 
   try {
-    const cdp_url = await waitForLocalCdpEndpoint(port, options.timeout_ms);
+    const cdp_url = await Promise.race([
+      waitForLocalCdpEndpoint(port, options.timeout_ms),
+      spawnError,
+    ]);
     return {
       cdp_url,
       browser_pid: child.pid ?? null,

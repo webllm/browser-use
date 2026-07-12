@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { runTunnelCommand } from '../src/cli.js';
 import { TunnelManager } from '../src/skill-cli/tunnel.js';
@@ -188,6 +189,39 @@ describe('skill-cli tunnel alignment', () => {
         expect(fs.statSync(infoPath).mode & 0o777).toBe(0o600);
         expect(fs.statSync(logPath).mode & 0o777).toBe(0o600);
       }
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns cloudflared spawn errors instead of crashing the process', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const child = new EventEmitter() as EventEmitter & {
+      pid?: number;
+      unref: ReturnType<typeof vi.fn>;
+    };
+    child.unref = vi.fn();
+    const spawnImpl = vi.fn(() => {
+      queueMicrotask(() => child.emit('error', new Error('spawn EACCES')));
+      return child as any;
+    });
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: () => '/usr/bin/cloudflared',
+        spawn_impl: spawnImpl as any,
+        sleep_impl: async () => {
+          await Promise.resolve();
+        },
+      });
+
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error: 'Failed to start cloudflared: spawn EACCES',
+      });
+      expect(child.unref).toHaveBeenCalledTimes(1);
     } finally {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }

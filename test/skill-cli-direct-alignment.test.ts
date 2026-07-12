@@ -288,6 +288,40 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'returns local browser spawn errors instead of crashing the process',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const fakeChrome = path.join(tempDir, 'not-executable-chrome');
+      const ownedProfileDir = path.join(tempDir, 'owned-profile');
+      fs.writeFileSync(fakeChrome, '#!/bin/sh\nexit 0\n', { mode: 0o600 });
+
+      const findExecutableSpy = vi
+        .spyOn(systemChrome, 'findExecutable')
+        .mockReturnValue(fakeChrome);
+      const mkdtempSpy = vi.spyOn(fs, 'mkdtempSync').mockImplementation(((
+        prefix: string
+      ) => {
+        expect(prefix).toContain('browser-use-direct-');
+        fs.mkdirSync(ownedProfileDir, { recursive: true });
+        return ownedProfileDir;
+      }) as any);
+
+      try {
+        await expect(
+          defaultLocalLauncher({ state: {}, timeout_ms: 5_000 })
+        ).rejects.toMatchObject({ code: 'EACCES' });
+        expect(fs.existsSync(ownedProfileDir)).toBe(false);
+      } finally {
+        findExecutableSpy.mockRestore();
+        mkdtempSpy.mockRestore();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('reuses saved direct-mode state for click-by-index commands', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
