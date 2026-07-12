@@ -82,6 +82,13 @@ import {
   isActionTimeoutError,
   runActionWithTimeout,
 } from './action-timeout.js';
+import {
+  extractBoundedPageHtml,
+  MAX_COMBINED_PAGE_HTML_CHARS,
+  MAX_EXTRACTED_IFRAMES,
+  MAX_IFRAME_HTML_CHARS,
+  MAX_MAIN_PAGE_HTML_CHARS,
+} from './page-content.js';
 
 type BrowserSession = any;
 type Page = any;
@@ -1624,11 +1631,10 @@ export class Controller<Context = unknown> {
       }
       const fsInstance = file_system ?? new FileSystem(process.cwd(), false);
       await validateBrowserPageAfterAction(browser_session, page, signal);
-      const pageHtml = await runWithTimeoutAndSignal(
+      const pageHtmlResult = await runWithTimeoutAndSignal(
         async () => {
           try {
-            const value = await page.content?.();
-            return typeof value === 'string' ? value : '';
+            return await extractBoundedPageHtml(page, MAX_MAIN_PAGE_HTML_CHARS);
           } finally {
             await validateBrowserPageAfterAction(browser_session, page, signal);
           }
@@ -1637,11 +1643,13 @@ export class Controller<Context = unknown> {
         signal,
         'Page content extraction timed out'
       );
+      const pageHtml = pageHtmlResult.html;
       if (!pageHtml) {
         throw new BrowserError('Unable to extract page content.');
       }
 
       let combinedHtml = pageHtml;
+      let sourceHtmlTruncated = pageHtmlResult.truncated;
       const frames: any[] =
         typeof page.frames === 'function'
           ? page.frames()
@@ -1656,7 +1664,12 @@ export class Controller<Context = unknown> {
         return typeof pageUrlValue === 'string' ? pageUrlValue : '';
       })();
 
-      for (const iframe of frames) {
+      const iframeCandidates = frames.slice(0, MAX_EXTRACTED_IFRAMES + 1);
+      if (frames.length > MAX_EXTRACTED_IFRAMES) {
+        sourceHtmlTruncated = true;
+      }
+      let extractedIframeCount = 0;
+      for (const iframe of iframeCandidates) {
         throwIfAborted(signal);
         try {
           await runWithTimeoutAndSignal(
@@ -1687,21 +1700,42 @@ export class Controller<Context = unknown> {
         ) {
           continue;
         }
+        if (extractedIframeCount >= MAX_EXTRACTED_IFRAMES) {
+          sourceHtmlTruncated = true;
+          break;
+        }
+
+        const safeIframeUrl = iframeUrl.slice(0, 16 * 1024);
+        const sectionPrefix = `\n<section><h2>IFRAME ${safeIframeUrl}</h2>`;
+        const sectionSuffix = '</section>';
+        const remainingHtmlChars =
+          MAX_COMBINED_PAGE_HTML_CHARS -
+          combinedHtml.length -
+          sectionPrefix.length -
+          sectionSuffix.length;
+        if (remainingHtmlChars <= 0) {
+          sourceHtmlTruncated = true;
+          break;
+        }
 
         try {
-          const iframeHtml = await runWithTimeoutAndSignal(
-            async () => {
-              const value = await iframe.content?.();
-              return typeof value === 'string' ? value : '';
-            },
+          const iframeHtmlResult = await runWithTimeoutAndSignal(
+            () =>
+              extractBoundedPageHtml(
+                iframe,
+                Math.min(MAX_IFRAME_HTML_CHARS, remainingHtmlChars)
+              ),
             2000,
             signal,
             'Iframe content extraction timeout'
           );
+          const iframeHtml = iframeHtmlResult.html;
           if (!iframeHtml) {
             continue;
           }
-          combinedHtml += `\n<section><h2>IFRAME ${iframeUrl}</h2>${iframeHtml}</section>`;
+          combinedHtml += `${sectionPrefix}${iframeHtml}${sectionSuffix}`;
+          extractedIframeCount += 1;
+          if (iframeHtmlResult.truncated) sourceHtmlTruncated = true;
         } catch (error) {
           if (isAbortError(error)) {
             throw error;
@@ -1716,6 +1750,11 @@ export class Controller<Context = unknown> {
       });
       let content = extracted.content;
       const contentStats = extracted.stats;
+      if (sourceHtmlTruncated) {
+        (contentStats as any).source_html_truncated = true;
+        (contentStats as any).source_html_limit_chars =
+          MAX_COMBINED_PAGE_HTML_CHARS;
+      }
       const finalFilteredLength = contentStats.final_filtered_chars;
 
       const startFromChar = Math.max(0, params.start_from_char ?? 0);
@@ -1734,7 +1773,8 @@ export class Controller<Context = unknown> {
 
       const chunk = chunks[0]!;
       content = chunk.content;
-      const wasTruncated = chunk.has_more;
+      const chunkHasMore = chunk.has_more;
+      const wasTruncated = chunkHasMore || sourceHtmlTruncated;
 
       if (chunk.overlap_prefix) {
         content = `${chunk.overlap_prefix}\n${content}`;
@@ -1743,7 +1783,7 @@ export class Controller<Context = unknown> {
       if (startFromChar > 0) {
         contentStats.started_from_char = startFromChar;
       }
-      if (wasTruncated) {
+      if (chunkHasMore) {
         contentStats.truncated_at_char = chunk.char_offset_end;
         contentStats.next_start_char = chunk.char_offset_end;
         contentStats.chunk_index = chunk.chunk_index;
@@ -1762,7 +1802,7 @@ export class Controller<Context = unknown> {
         statsSummary += ` (started from char ${startFromChar.toLocaleString()})`;
       }
       if (
-        wasTruncated &&
+        chunkHasMore &&
         contentStats.next_start_char != null &&
         contentStats.chunk_index != null &&
         contentStats.total_chunks != null
@@ -1773,6 +1813,10 @@ export class Controller<Context = unknown> {
           `(${chunkInfo}use start_from_char=${contentStats.next_start_char} to continue)`;
       } else if (charsFiltered > 0) {
         statsSummary += ` (filtered ${charsFiltered.toLocaleString()} chars of noise)`;
+      }
+      if (sourceHtmlTruncated) {
+        statsSummary +=
+          ' (source HTML reached browser-use safety limits; omitted source content cannot be paged with start_from_char)';
       }
 
       content = sanitize_surrogates(content);
