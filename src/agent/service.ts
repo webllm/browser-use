@@ -50,6 +50,10 @@ import {
   type DOMElementNode,
 } from '../dom/views.js';
 import { extractCleanMarkdownFromHtml } from '../dom/markdown-extractor.js';
+import {
+  extractBoundedPageHtml,
+  MAX_MAIN_PAGE_HTML_CHARS,
+} from '../controller/page-content.js';
 import type { BaseChatModel } from '../llm/base.js';
 import { ChatBrowserUse } from '../llm/browser-use/chat.js';
 import {
@@ -3332,27 +3336,48 @@ export class Agent<
     let currentUrl = '';
     try {
       const page = await this.browser_session.get_current_page?.();
-      if (!page || typeof page.content !== 'function') {
+      if (
+        !page ||
+        (typeof page.evaluate !== 'function' &&
+          typeof page.content !== 'function')
+      ) {
         throw new Error('No page available for markdown extraction');
       }
       await this.browser_session.validate_page_after_action(page, signal);
       if (typeof page.url === 'function') {
         currentUrl = page.url();
       }
-      let html = '';
+      let pageHtmlResult;
       try {
-        html = (await page.content()) || '';
+        pageHtmlResult = await extractBoundedPageHtml(
+          page,
+          MAX_MAIN_PAGE_HTML_CHARS
+        );
       } finally {
         await this.browser_session.validate_page_after_action(page, signal);
       }
-      const extracted = extractCleanMarkdownFromHtml(html, {
+      if (
+        pageHtmlResult.sourceUrl &&
+        !this.browser_session.is_url_allowed(pageHtmlResult.sourceUrl)
+      ) {
+        throw new BrowserError(
+          'AI step page content source is blocked by browser domain policy.'
+        );
+      }
+      currentUrl = pageHtmlResult.sourceUrl || currentUrl;
+      const extracted = extractCleanMarkdownFromHtml(pageHtmlResult.html, {
         extract_links: extractLinks,
+        method: 'page_content',
+        url: currentUrl || undefined,
       });
       content = extracted.content;
       const contentStats = extracted.stats;
       statsSummary = `Content processed: ${contentStats.original_html_chars.toLocaleString()} HTML chars -> ${contentStats.initial_markdown_chars.toLocaleString()} initial markdown -> ${contentStats.final_filtered_chars.toLocaleString()} filtered markdown`;
       if (contentStats.filtered_chars_removed > 0) {
         statsSummary += ` (filtered ${contentStats.filtered_chars_removed.toLocaleString()} chars of noise)`;
+      }
+      if (pageHtmlResult.truncated) {
+        statsSummary += ` (source HTML truncated at ${MAX_MAIN_PAGE_HTML_CHARS.toLocaleString()} chars)`;
       }
     } catch (error) {
       const name = error instanceof Error ? error.name : 'Error';

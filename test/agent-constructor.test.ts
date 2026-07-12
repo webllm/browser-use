@@ -2877,6 +2877,90 @@ describe('Agent constructor browser session alignment', () => {
     await agent.close();
   });
 
+  it('bounds page-controlled HTML before an AI step', async () => {
+    const ainvoke = vi.fn(async () => ({
+      completion: 'ai result',
+      usage: null,
+    }));
+    const llm = {
+      model: 'gpt-test',
+      provider: 'test',
+      name: 'test',
+      model_name: 'gpt-test',
+      ainvoke,
+    } as unknown as BaseChatModel;
+    const agent = new Agent({ task: 'test bounded ai step', llm });
+    const content = vi.fn(async () => {
+      throw new Error(
+        'page.content must not be used when evaluate is available'
+      );
+    });
+
+    vi.spyOn(
+      agent.browser_session as any,
+      'get_current_page'
+    ).mockResolvedValue({
+      url: () => 'https://example.com/path',
+      content,
+      evaluate: vi.fn(async () => ({
+        html: '<html><body><p>bounded content</p></body></html>',
+        truncated: true,
+        visitedNodes: 5,
+        sourceUrl: 'https://example.com/path',
+      })),
+    } as any);
+
+    await (agent as any)._execute_ai_step(
+      'Find content',
+      false,
+      false,
+      null,
+      null
+    );
+
+    expect(content).not.toHaveBeenCalled();
+    const messages =
+      ((ainvoke.mock.calls[0] as unknown[] | undefined)?.[0] as any[]) ?? [];
+    expect(String(messages?.[1]?.content ?? '')).toContain(
+      'source HTML truncated at 4,194,304 chars'
+    );
+
+    await agent.close();
+  });
+
+  it('rejects AI-step content captured after a disallowed navigation', async () => {
+    const agent = new Agent({
+      task: 'test ai step domain policy',
+      llm: createLlm(),
+    });
+    vi.spyOn(
+      agent.browser_session as any,
+      'get_current_page'
+    ).mockResolvedValue({
+      url: () => 'https://example.com/path',
+      evaluate: vi.fn(async () => ({
+        html: '<html><body>secret</body></html>',
+        truncated: false,
+        visitedNodes: 3,
+        sourceUrl: 'https://evil.test/private',
+      })),
+    } as any);
+    vi.spyOn(agent.browser_session as any, 'is_url_allowed').mockReturnValue(
+      false
+    );
+
+    const result = await (agent as any)._execute_ai_step(
+      'Find content',
+      false,
+      false,
+      null,
+      null
+    );
+
+    expect(result.error).toContain('blocked by browser domain policy');
+    await agent.close();
+  });
+
   it('executes extract actions via AI step during history replay', async () => {
     const agent = new Agent({
       task: 'test extract ai-step replay',
