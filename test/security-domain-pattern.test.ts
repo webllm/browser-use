@@ -60,6 +60,44 @@ describe('Allowed Domains Security', () => {
     expect((session as any)._is_url_allowed('https://example.com')).toBe(true);
   });
 
+  it('blocks prohibited domains written with an equivalent trailing root label', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        prohibited_domains: ['https://evil.com'],
+      }),
+    });
+
+    expect((session as any)._is_url_allowed('https://evil.com./path')).toBe(
+      false
+    );
+  });
+
+  it('canonicalizes Unicode prohibited domains to their IDNA form', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        prohibited_domains: ['https://例子.测试'],
+      }),
+    });
+
+    expect(
+      (session as any)._is_url_allowed(
+        'https://xn--fsqu00a.xn--0zwm56d/private'
+      )
+    ).toBe(false);
+  });
+
+  it('matches bracketed IPv6 prohibited-domain patterns', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        prohibited_domains: ['https://[::1]:443'],
+      }),
+    });
+
+    expect((session as any)._is_url_allowed('https://[::1]/private')).toBe(
+      false
+    );
+  });
+
   it('lets prohibited_domains take precedence over allowed_domains', () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({
@@ -173,6 +211,7 @@ describe('Allowed Domains Security', () => {
       return `blocked-${idx}.example.com`;
     });
     domains[0] = 'evil.example.com';
+    domains[1] = '例子.测试';
 
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({
@@ -186,6 +225,14 @@ describe('Allowed Domains Security', () => {
     expect((session as any)._is_url_allowed('https://safe.example.com')).toBe(
       true
     );
+    expect(
+      (session as any)._is_url_allowed('https://evil.example.com./private')
+    ).toBe(false);
+    expect(
+      (session as any)._is_url_allowed(
+        'https://xn--fsqu00a.xn--0zwm56d/private'
+      )
+    ).toBe(false);
   });
 
   it('keeps wildcard allowlist patterns functional for large lists', () => {

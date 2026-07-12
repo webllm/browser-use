@@ -11,6 +11,7 @@ import {
 import { promisify } from 'node:util';
 import { createLogger } from '../logging-config.js';
 import { match_url_with_domain_pattern, uuid7str } from '../utils.js';
+import { canonicalizeDomainHostname } from '../domain-utils.js';
 import {
   EventBus,
   type EventDispatchOptions,
@@ -5913,7 +5914,7 @@ export class BrowserSession {
   }
 
   private _get_domain_variants(hostname: string): [string, string] {
-    const host = hostname.toLowerCase();
+    const host = canonicalizeDomainHostname(hostname);
     if (host.startsWith('www.')) {
       return [host, host.slice(4)];
     }

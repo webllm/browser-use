@@ -17,6 +17,7 @@ import { CONFIG } from '../config.js';
 import { observe_debug } from '../observability.js';
 import { createLogger } from '../logging-config.js';
 import { log_pretty_path, uuid7str } from '../utils.js';
+import { canonicalizeDomainHostname } from '../domain-utils.js';
 
 const logger = createLogger('browser_use.browser.profile');
 
@@ -588,10 +589,14 @@ const pathContains = (candidate: string, parent: string) => {
   );
 };
 
-const normalizeDomainEntry = (entry: unknown) =>
-  String(entry ?? '')
+const normalizeDomainEntry = (entry: unknown) => {
+  const normalized = String(entry ?? '')
     .trim()
     .toLowerCase();
+  return isExactHostDomainEntry(normalized)
+    ? canonicalizeDomainHostname(normalized)
+    : normalized;
+};
 
 const isExactHostDomainEntry = (entry: string) => {
   if (!entry) {

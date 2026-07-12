@@ -11,6 +11,7 @@ import { config as loadEnv } from 'dotenv';
 import * as minimatchModule from 'minimatch';
 import semver from 'semver';
 import { createLogger } from './logging-config.js';
+import { canonicalizeDomainHostname } from './domain-utils.js';
 
 loadEnv({ quiet: true });
 
@@ -710,31 +711,57 @@ export function match_url_with_domain_pattern(
 
     // Extract only the hostname and scheme components
     const scheme = parsed_url.protocol.replace(':', '').toLowerCase();
-    const domain = parsed_url.hostname.toLowerCase();
+    const domain = canonicalizeDomainHostname(parsed_url.hostname);
 
     if (!scheme || !domain) {
       return false;
     }
 
     // Normalize the domain pattern
-    const normalizedPattern = domain_pattern.toLowerCase();
+    const normalizedPattern = domain_pattern.trim().toLowerCase();
 
     // Handle pattern with scheme
     let pattern_scheme: string;
     let pattern_domain: string;
 
     if (normalizedPattern.includes('://')) {
-      const parts = normalizedPattern.split('://');
-      pattern_scheme = parts[0];
-      pattern_domain = parts[1];
+      const separatorIndex = normalizedPattern.indexOf('://');
+      pattern_scheme = normalizedPattern.slice(0, separatorIndex);
+      pattern_domain = normalizedPattern.slice(separatorIndex + 3);
     } else {
       pattern_scheme = 'https'; // Default to matching only https for security
       pattern_domain = normalizedPattern;
     }
 
-    // Handle port in pattern (we strip ports from patterns since we already extracted only the hostname from the URL)
-    if (pattern_domain.includes(':') && !pattern_domain.startsWith(':')) {
-      pattern_domain = pattern_domain.split(':')[0];
+    // Strip an optional port without truncating bracketed IPv6 addresses.
+    if (pattern_domain.startsWith('[')) {
+      const closingBracket = pattern_domain.indexOf(']');
+      if (closingBracket === -1) {
+        return false;
+      }
+      const suffix = pattern_domain.slice(closingBracket + 1);
+      if (suffix && !/^:\d+$/.test(suffix)) {
+        return false;
+      }
+      pattern_domain = pattern_domain.slice(0, closingBracket + 1);
+    } else {
+      const colonIndex = pattern_domain.lastIndexOf(':');
+      if (colonIndex !== -1) {
+        // Unbracketed IPv6 and non-numeric ports are invalid patterns. Fail
+        // closed instead of silently comparing only an arbitrary prefix.
+        if (
+          pattern_domain.indexOf(':') !== colonIndex ||
+          !/^\d+$/.test(pattern_domain.slice(colonIndex + 1))
+        ) {
+          return false;
+        }
+        pattern_domain = pattern_domain.slice(0, colonIndex);
+      }
+    }
+
+    pattern_domain = canonicalizeDomainHostname(pattern_domain);
+    if (!pattern_scheme || !pattern_domain) {
+      return false;
     }
 
     // If scheme doesn't match using minimatch, return false
