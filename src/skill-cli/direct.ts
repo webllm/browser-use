@@ -6,6 +6,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
+import { chromium } from 'playwright';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
@@ -588,21 +589,61 @@ const terminateFailedDirectLaunch = async (pid: number) => {
   return waitForProcessTargetExit(target);
 };
 
+export interface DirectBrowserExecutable {
+  executable_path: string;
+  source: 'system_chrome' | 'playwright_chromium';
+}
+
+export const resolveDirectBrowserExecutable =
+  (): DirectBrowserExecutable | null => {
+    const systemExecutablePath = systemChrome.findExecutable();
+    if (systemExecutablePath) {
+      return {
+        executable_path: systemExecutablePath,
+        source: 'system_chrome',
+      };
+    }
+
+    try {
+      const playwrightExecutablePath = chromium.executablePath();
+      if (playwrightExecutablePath && fs.existsSync(playwrightExecutablePath)) {
+        return {
+          executable_path: playwrightExecutablePath,
+          source: 'playwright_chromium',
+        };
+      }
+    } catch {
+      // Playwright reports the expected path even when a browser is absent,
+      // and can throw for incomplete installations. Both mean unavailable.
+    }
+
+    return null;
+  };
+
 export const defaultLocalLauncher = async (options: {
   state: DirectModeState;
   timeout_ms?: number;
 }) => {
-  const executablePath = systemChrome.findExecutable();
-  if (!executablePath) {
+  const browserExecutable = resolveDirectBrowserExecutable();
+  if (!browserExecutable) {
     throw new Error(
-      'Chrome not found. Install Chrome or provide an already-running browser via cdp_url.'
+      'No Chrome or Playwright Chromium executable found. Install Chrome, run "browser-use install", or provide an already-running browser via cdp_url.'
     );
   }
+  const executablePath = browserExecutable.executable_path;
 
-  const port = await getFreePort();
   const reusingUserDataDir =
     options.state.user_data_dir &&
     options.state.user_data_dir.trim().length > 0;
+  if (
+    browserExecutable.source === 'playwright_chromium' &&
+    reusingUserDataDir
+  ) {
+    throw new Error(
+      'Playwright Chromium fallback cannot reuse a saved Chrome profile. Close the stale direct-mode session or remove its state before retrying.'
+    );
+  }
+  const port = await getFreePort();
   const userDataDir = reusingUserDataDir
     ? options.state.user_data_dir
     : fs.mkdtempSync(path.join(os.tmpdir(), 'browser-use-direct-'));

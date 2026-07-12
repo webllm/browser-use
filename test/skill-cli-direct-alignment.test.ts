@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { chromium } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
 import {
   clear_direct_state,
   DIRECT_STATE_FILE,
   defaultLocalLauncher,
   load_direct_state,
+  resolveDirectBrowserExecutable,
   run_direct_command,
   save_direct_state,
 } from '../src/skill-cli/direct.js';
@@ -251,7 +253,25 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
-  it('removes ephemeral local profiles when direct launch fails before connect', async () => {
+  it('prefers system Chrome before the Playwright Chromium fallback', () => {
+    const findExecutableSpy = vi
+      .spyOn(systemChrome, 'findExecutable')
+      .mockReturnValue('/system/google-chrome');
+    const playwrightExecutableSpy = vi.spyOn(chromium, 'executablePath');
+
+    try {
+      expect(resolveDirectBrowserExecutable()).toEqual({
+        executable_path: '/system/google-chrome',
+        source: 'system_chrome',
+      });
+      expect(playwrightExecutableSpy).not.toHaveBeenCalled();
+    } finally {
+      findExecutableSpy.mockRestore();
+      playwrightExecutableSpy.mockRestore();
+    }
+  });
+
+  it('uses Playwright Chromium and removes its profile when direct launch fails', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
     );
@@ -262,6 +282,9 @@ describe('skill-cli direct alignment', () => {
 
     const findExecutableSpy = vi
       .spyOn(systemChrome, 'findExecutable')
+      .mockReturnValue(null);
+    const playwrightExecutableSpy = vi
+      .spyOn(chromium, 'executablePath')
       .mockReturnValue(fakeChrome);
     const mkdtempSpy = vi.spyOn(fs, 'mkdtempSync').mockImplementation(((
       prefix: string
@@ -281,9 +304,58 @@ describe('skill-cli direct alignment', () => {
         /Timed out waiting for local Chrome debugging endpoint/
       );
       expect(fs.existsSync(ownedProfileDir)).toBe(false);
+      expect(playwrightExecutableSpy).toHaveBeenCalledTimes(1);
     } finally {
       findExecutableSpy.mockRestore();
+      playwrightExecutableSpy.mockRestore();
       mkdtempSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('explains how to install Chromium when neither executable exists', async () => {
+    const findExecutableSpy = vi
+      .spyOn(systemChrome, 'findExecutable')
+      .mockReturnValue(null);
+    const playwrightExecutableSpy = vi
+      .spyOn(chromium, 'executablePath')
+      .mockReturnValue('/missing/playwright/chromium');
+
+    try {
+      await expect(defaultLocalLauncher({ state: {} })).rejects.toThrow(
+        'run "browser-use install"'
+      );
+    } finally {
+      findExecutableSpy.mockRestore();
+      playwrightExecutableSpy.mockRestore();
+    }
+  });
+
+  it('does not reuse a saved Chrome profile with Playwright Chromium', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-fallback-')
+    );
+    const fakeChromium = path.join(tempDir, 'chromium');
+    fs.writeFileSync(fakeChromium, '', { mode: 0o755 });
+    const findExecutableSpy = vi
+      .spyOn(systemChrome, 'findExecutable')
+      .mockReturnValue(null);
+    const playwrightExecutableSpy = vi
+      .spyOn(chromium, 'executablePath')
+      .mockReturnValue(fakeChromium);
+
+    try {
+      await expect(
+        defaultLocalLauncher({
+          state: {
+            user_data_dir: path.join(tempDir, 'saved-chrome-profile'),
+            owns_user_data_dir: false,
+          },
+        })
+      ).rejects.toThrow('cannot reuse a saved Chrome profile');
+    } finally {
+      findExecutableSpy.mockRestore();
+      playwrightExecutableSpy.mockRestore();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
