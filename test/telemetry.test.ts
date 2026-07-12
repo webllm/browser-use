@@ -247,7 +247,8 @@ describe('Telemetry Events', () => {
 
       expect(event.name).toBe('mcp_client_event');
       expect(event.properties().action).toBe('connect');
-      expect(event.properties().server_name).toBe('test-server');
+      expect(event.properties().server_name).toBe('<redacted>');
+      expect(event.properties().command).toBe('<redacted>');
     });
 
     it('creates MCP client telemetry event for tool call', () => {
@@ -277,7 +278,10 @@ describe('Telemetry Events', () => {
         duration_seconds: 30,
       });
 
-      expect(event.properties().error_message).toBe('Connection timeout');
+      expect(event.properties().error_message).toBe('<redacted>');
+      expect(JSON.stringify(event.properties())).not.toContain(
+        'Connection timeout'
+      );
     });
   });
 
@@ -315,6 +319,22 @@ describe('Telemetry Events', () => {
       expect(event.properties().action).toBe('stop');
       expect(event.properties().duration_seconds).toBe(3600);
     });
+
+    it('redacts server errors and parent process command lines', () => {
+      const event = new MCPServerTelemetryEvent({
+        version: '1.0.0',
+        action: 'tool_call',
+        error_message: 'failed while handling private task text',
+        parent_process_cmdline: 'node cli.js --api-key top-secret',
+      });
+
+      const properties = event.properties();
+      const serialized = JSON.stringify(properties);
+      expect(properties.error_message).toBe('<redacted>');
+      expect(properties.parent_process_cmdline).toBe('<redacted>');
+      expect(serialized).not.toContain('private task text');
+      expect(serialized).not.toContain('top-secret');
+    });
   });
 
   describe('CLITelemetryEvent', () => {
@@ -329,6 +349,18 @@ describe('Telemetry Events', () => {
       expect(event.name).toBe('cli_event');
       expect(event.properties().action).toBe('run');
       expect(event.properties().mode).toBe('mcp');
+    });
+
+    it('redacts CLI error text', () => {
+      const event = new CLITelemetryEvent({
+        version: '1.0.0',
+        action: 'run',
+        mode: 'agent',
+        error_message: 'task failed with secret input',
+      });
+
+      expect(event.properties().error_message).toBe('<redacted>');
+      expect(JSON.stringify(event.properties())).not.toContain('secret input');
     });
   });
 });

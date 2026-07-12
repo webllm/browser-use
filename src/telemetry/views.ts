@@ -174,14 +174,14 @@ export class MCPClientTelemetryEvent
 
   constructor(payload: MCPClientTelemetryPayload) {
     super();
-    this.server_name = payload.server_name;
-    this.command = payload.command;
+    this.server_name = payload.server_name ? REDACTED_TELEMETRY_VALUE : '';
+    this.command = payload.command ? REDACTED_TELEMETRY_VALUE : '';
     this.tools_discovered = payload.tools_discovered;
     this.version = payload.version;
     this.action = payload.action;
     this.tool_name = payload.tool_name ?? null;
     this.duration_seconds = payload.duration_seconds ?? null;
-    this.error_message = payload.error_message ?? null;
+    this.error_message = redactNullableString(payload.error_message);
   }
 }
 
@@ -212,8 +212,10 @@ export class MCPServerTelemetryEvent
     this.action = payload.action;
     this.tool_name = payload.tool_name ?? null;
     this.duration_seconds = payload.duration_seconds ?? null;
-    this.error_message = payload.error_message ?? null;
-    this.parent_process_cmdline = payload.parent_process_cmdline ?? null;
+    this.error_message = redactNullableString(payload.error_message);
+    this.parent_process_cmdline = redactNullableString(
+      payload.parent_process_cmdline
+    );
   }
 }
 
@@ -248,6 +250,6 @@ export class CLITelemetryEvent
     this.model = payload.model ?? null;
     this.model_provider = payload.model_provider ?? null;
     this.duration_seconds = payload.duration_seconds ?? null;
-    this.error_message = payload.error_message ?? null;
+    this.error_message = redactNullableString(payload.error_message);
   }
 }
