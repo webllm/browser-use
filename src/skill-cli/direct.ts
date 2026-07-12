@@ -338,18 +338,29 @@ export const clear_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
   fs.rmSync(state_file, { force: true });
 };
 
-const isOwnedDirectBrowserProcess = async (
+const getDirectBrowserProcessOwnership = async (
   state: DirectModeState,
   getProcessCommandLine: Required<DirectCliEnvironment>['get_process_command_line']
-) => {
+): Promise<'owned' | 'not_owned' | 'unverified'> => {
   const pid = state.browser_pid;
   const token = state.browser_launch_token?.trim();
   if (typeof pid !== 'number' || pid <= 0 || !token) {
-    return false;
+    return 'not_owned';
   }
 
-  const commandLine = await getProcessCommandLine(pid);
-  return Boolean(commandLine?.includes(`--browser-use-direct-token=${token}`));
+  let commandLine: string | null = null;
+  try {
+    commandLine = await getProcessCommandLine(pid);
+  } catch {
+    // Treat process inspection failures as unverified while the PID is alive.
+  }
+  if (commandLine) {
+    return commandLine.includes(`--browser-use-direct-token=${token}`)
+      ? 'owned'
+      : 'not_owned';
+  }
+
+  return isProcessTargetAlive(pid) ? 'unverified' : 'not_owned';
 };
 
 const writePrivateFile = (filePath: string, contents: string) => {
@@ -867,13 +878,15 @@ const killOwnedDirectBrowserProcess = async (
   state: DirectModeState,
   environment: Required<DirectCliEnvironment>
 ): Promise<'terminated' | 'not_owned' | 'failed'> => {
-  if (
-    !(await isOwnedDirectBrowserProcess(
-      state,
-      environment.get_process_command_line
-    ))
-  ) {
+  const ownership = await getDirectBrowserProcessOwnership(
+    state,
+    environment.get_process_command_line
+  );
+  if (ownership === 'not_owned') {
     return 'not_owned';
+  }
+  if (ownership === 'unverified') {
+    return 'failed';
   }
 
   try {

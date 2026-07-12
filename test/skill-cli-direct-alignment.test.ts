@@ -720,6 +720,54 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('retains state when a live browser PID cannot be ownership-verified', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const killProcessSpy = vi.fn(async () => {});
+    const processKillSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        browser_pid: 321,
+        browser_launch_token: 'owned-321',
+        user_data_dir: userDataDir,
+        owns_user_data_dir: true,
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(['close'], {
+        state_file: stateFile,
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        kill_process: killProcessSpy,
+        get_process_command_line: () => null,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(processKillSpy).toHaveBeenCalledWith(321, 0);
+      expect(killProcessSpy).not.toHaveBeenCalled();
+      expect(stderr.read()).toContain('state was retained for retry');
+      expect(fs.existsSync(stateFile)).toBe(true);
+      expect(fs.existsSync(userDataDir)).toBe(true);
+    } finally {
+      processKillSpy.mockRestore();
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not remove unsafe owned profile paths from direct state', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
