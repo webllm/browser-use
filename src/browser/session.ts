@@ -1703,7 +1703,11 @@ export class BrowserSession {
       ) {
         this._assertHttpCredentialsScoped(rawVal);
       }
-      const convertedValue = this._toPlaywrightOptions(rawVal);
+      const valueToConvert =
+        rawKey === 'storage_state' && this._has_url_access_restrictions()
+          ? this._prepareStorageStateForContext(rawVal)
+          : rawVal;
+      const convertedValue = this._toPlaywrightOptions(valueToConvert);
       if (convertedValue === undefined) {
         continue;
       }
@@ -1730,6 +1734,36 @@ export class BrowserSession {
     }
 
     this._assert_url_allowed(origin.trim());
+  }
+
+  private _prepareStorageStateForContext(value: unknown): unknown {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    let storageState = value;
+    if (typeof value === 'string') {
+      const resolvedPath = path.resolve(value);
+      try {
+        storageState = JSON.parse(fs.readFileSync(resolvedPath, 'utf-8'));
+      } catch (error) {
+        throw new BrowserError(
+          `Cannot safely load storage_state from ${resolvedPath}: ${(error as Error).message}`
+        );
+      }
+    }
+
+    if (
+      !storageState ||
+      typeof storageState !== 'object' ||
+      Array.isArray(storageState)
+    ) {
+      throw new BrowserError(
+        'storage_state must contain a JSON object when domain restrictions are configured.'
+      );
+    }
+
+    return this._sanitize_storage_state_for_save(storageState);
   }
 
   async set_extra_headers(headers: Record<string, string>): Promise<void> {

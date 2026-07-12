@@ -24,6 +24,89 @@ const createTempStoragePath = () => {
 };
 
 describe('storage state watchdog alignment', () => {
+  it('filters inline storage state before creating the browser context', () => {
+    const session = new BrowserSession({
+      profile: {
+        user_data_dir: null,
+        allowed_domains: ['https://example.com'],
+        storage_state: {
+          cookies: [
+            { name: 'sid', value: '123', domain: 'example.com', path: '/' },
+            { name: 'secret', value: 'leak', domain: 'evil.test', path: '/' },
+          ],
+          origins: [
+            {
+              origin: 'https://example.com',
+              localStorage: [{ name: 'theme', value: 'dark' }],
+            },
+            {
+              origin: 'https://evil.test',
+              localStorage: [{ name: 'token', value: 'leak' }],
+            },
+          ],
+        },
+      },
+    });
+
+    const contextOptions = (session as any)._toPlaywrightOptions(
+      session.browser_profile.kwargs_for_new_context()
+    );
+
+    expect(contextOptions.storageState).toEqual({
+      cookies: [
+        { name: 'sid', value: '123', domain: 'example.com', path: '/' },
+      ],
+      origins: [
+        {
+          origin: 'https://example.com',
+          localStorage: [{ name: 'theme', value: 'dark' }],
+        },
+      ],
+    });
+  });
+
+  it('filters file-backed storage state before creating the browser context', () => {
+    const { tempDir, storagePath } = createTempStoragePath();
+    const originalState = {
+      cookies: [
+        { name: 'sid', value: '123', domain: 'example.com', path: '/' },
+        { name: 'secret', value: 'leak', domain: 'evil.test', path: '/' },
+      ],
+      origins: [
+        {
+          origin: 'https://evil.test',
+          localStorage: [{ name: 'token', value: 'leak' }],
+        },
+      ],
+    };
+    try {
+      fs.writeFileSync(storagePath, JSON.stringify(originalState));
+      const session = new BrowserSession({
+        profile: {
+          user_data_dir: null,
+          allowed_domains: ['https://example.com'],
+          storage_state: storagePath,
+        },
+      });
+
+      const contextOptions = (session as any)._toPlaywrightOptions(
+        session.browser_profile.kwargs_for_new_context()
+      );
+
+      expect(contextOptions.storageState).toEqual({
+        cookies: [
+          { name: 'sid', value: '123', domain: 'example.com', path: '/' },
+        ],
+        origins: [],
+      });
+      expect(JSON.parse(fs.readFileSync(storagePath, 'utf-8'))).toEqual(
+        originalState
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('saves storage state and emits StorageStateSavedEvent', async () => {
     const { tempDir, storagePath } = createTempStoragePath();
     try {
