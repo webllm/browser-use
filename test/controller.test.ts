@@ -2596,7 +2596,7 @@ describe('Regression Coverage', () => {
     const page = {
       evaluate: vi.fn(async () => ({
         ok: true,
-        result: { status: 'ok', count: 2 },
+        result: '{"status":"ok","count":2}',
       })),
       url: vi.fn(() => 'https://example.com'),
     };
@@ -2614,6 +2614,40 @@ describe('Regression Coverage', () => {
     expect(result.error).toBeNull();
     expect(result.extracted_content).toContain('"status":"ok"');
     expect(result.include_extracted_content_only_once).toBe(false);
+  });
+
+  it('bounds evaluate results before they leave the page context', async () => {
+    const controller = new Controller();
+    let pagePayload: any = null;
+    const page = {
+      evaluate: vi.fn(
+        async (
+          handler: (args: { code: string }) => Promise<unknown>,
+          args: { code: string }
+        ) => {
+          pagePayload = await handler(args);
+          return pagePayload;
+        }
+      ),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+    };
+
+    const result = await controller.registry.execute_action(
+      'evaluate',
+      { code: '"x".repeat(1_000_000)' },
+      { browser_session: browserSession as any }
+    );
+
+    expect(pagePayload.ok).toBe(true);
+    expect(pagePayload.truncated).toBe(true);
+    expect(pagePayload.result.length).toBeLessThanOrEqual(20_000);
+    expect(result.extracted_content.length).toBeLessThanOrEqual(20_000);
+    expect(result.extracted_content).toContain(
+      'Result truncated by browser-use safety limits'
+    );
   });
 
   it('evaluate rolls back JavaScript navigations to disallowed URLs', async () => {

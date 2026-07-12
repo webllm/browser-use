@@ -85,6 +85,9 @@ type BaseChatModel = {
 
 const DEFAULT_WAIT_OFFSET = 1;
 const MAX_WAIT_SECONDS = 30;
+const MAX_EVALUATE_RESULT_CHARS = 20_000;
+const MAX_EVALUATE_IMAGE_CHARS = 5 * 1024 * 1024;
+const MAX_EVALUATE_IMAGES = 4;
 const DEFAULT_PDF_HEADER_TEMPLATE =
   '<div style="font-size:9px; color:#666; width:100%; padding:0 0.4in; ' +
   'box-sizing:border-box; text-align:right;"><span class="date"></span></div>';
@@ -2758,37 +2761,179 @@ You will be given a query and the markdown of a webpage that has been filtered t
 
       const validatedCode = validateAndFixJavaScript(params.code);
 
-      let payload: { ok: boolean; result?: unknown; error?: string } | null =
-        null;
+      let payload: {
+        ok: boolean;
+        result?: unknown;
+        images?: unknown;
+        truncated?: boolean;
+        error?: string;
+      } | null = null;
       await validateBrowserPageAfterAction(browser_session, page, signal);
       try {
         payload = (await page.evaluate(
           async ({ code }: { code: string }) => {
             try {
               const raw = await Promise.resolve((0, eval)(code));
-              let serializedResult: unknown;
-              if (raw === undefined) {
-                serializedResult = null;
+              const MAX_TEXT_CHARS = 20_000;
+              const MAX_ENTRIES = 2_000;
+              const MAX_DEPTH = 20;
+              const MAX_IMAGES = 4;
+              const MAX_IMAGE_CHARS = 5 * 1024 * 1024;
+              let remainingTextChars = MAX_TEXT_CHARS;
+              let remainingEntries = MAX_ENTRIES;
+              let imageChars = 0;
+              let truncated = false;
+              const images: string[] = [];
+              const seen = new WeakSet<object>();
+
+              const takeText = (value: string, limit = MAX_TEXT_CHARS) => {
+                const length = Math.min(
+                  value.length,
+                  limit,
+                  remainingTextChars
+                );
+                const result = value.slice(0, length);
+                remainingTextChars -= result.length;
+                if (result.length < value.length) truncated = true;
+                return result;
+              };
+
+              const captureImages = (value: string) => {
+                const startsWithImage = value.startsWith('data:image/');
+                const scanLimit = startsWithImage
+                  ? MAX_IMAGE_CHARS + 1
+                  : MAX_TEXT_CHARS;
+                const scanned = value.slice(0, scanLimit);
+                if (scanned.length < value.length) truncated = true;
+
+                return scanned.replace(
+                  /data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/g,
+                  (imageData: string, offset: number) => {
+                    const endsAtTruncatedBoundary =
+                      offset + imageData.length === scanned.length &&
+                      scanned.length < value.length;
+                    const fits =
+                      !endsAtTruncatedBoundary &&
+                      images.length < MAX_IMAGES &&
+                      imageData.length <= MAX_IMAGE_CHARS &&
+                      imageChars + imageData.length <= MAX_IMAGE_CHARS;
+                    if (fits) {
+                      images.push(imageData);
+                      imageChars += imageData.length;
+                    } else {
+                      truncated = true;
+                    }
+                    return '[Image]';
+                  }
+                );
+              };
+
+              const boundedClone = (value: unknown, depth = 0): unknown => {
+                if (value === undefined || value === null) return null;
+                if (typeof value === 'string') {
+                  return takeText(captureImages(value));
+                }
+                if (typeof value === 'boolean' || typeof value === 'number') {
+                  return value;
+                }
+                if (typeof value === 'bigint' || typeof value === 'symbol') {
+                  return takeText(String(value), 256);
+                }
+                if (typeof value === 'function') {
+                  return `[Function ${takeText(value.name || 'anonymous', 128)}]`;
+                }
+                if (depth >= MAX_DEPTH || remainingEntries <= 0) {
+                  truncated = true;
+                  return '[Truncated]';
+                }
+
+                const objectValue = value as object;
+                if (seen.has(objectValue)) return '[Circular]';
+                seen.add(objectValue);
+
+                if (Array.isArray(value)) {
+                  const output: unknown[] = [];
+                  const count = Math.min(value.length, remainingEntries);
+                  if (count < value.length) truncated = true;
+                  for (let index = 0; index < count; index += 1) {
+                    remainingEntries -= 1;
+                    try {
+                      output.push(boundedClone(value[index], depth + 1));
+                    } catch {
+                      output.push('[Unreadable]');
+                    }
+                  }
+                  return output;
+                }
+
+                const output: Record<string, unknown> = {};
+                const record = value as Record<string, unknown>;
+                let propertyCount = 0;
+                try {
+                  for (const key in record) {
+                    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+                      continue;
+                    }
+                    if (remainingEntries <= 0 || remainingTextChars <= 0) {
+                      truncated = true;
+                      break;
+                    }
+                    remainingEntries -= 1;
+                    propertyCount += 1;
+                    const safeKey = takeText(key, 256);
+                    if (!safeKey) break;
+                    try {
+                      output[safeKey] = boundedClone(record[key], depth + 1);
+                    } catch {
+                      output[safeKey] = '[Unreadable]';
+                    }
+                  }
+                } catch {
+                  truncated = true;
+                }
+                if (propertyCount === 0) {
+                  return '[Object]';
+                }
+                return output;
+              };
+
+              const boundedResult = boundedClone(raw);
+              let serializedResult: string;
+              if (typeof boundedResult === 'string') {
+                serializedResult = boundedResult;
               } else {
                 try {
-                  serializedResult = JSON.parse(JSON.stringify(raw));
+                  serializedResult = JSON.stringify(boundedResult);
                 } catch {
-                  serializedResult = String(raw);
+                  serializedResult = '[Unserializable]';
+                  truncated = true;
                 }
               }
-              return { ok: true, result: serializedResult };
+              return {
+                ok: true,
+                result: serializedResult,
+                images,
+                truncated,
+              };
             } catch (error: unknown) {
+              const errorText =
+                error instanceof Error
+                  ? error.message
+                  : String(error ?? 'Unknown evaluate error');
               return {
                 ok: false,
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : String(error ?? 'Unknown evaluate error'),
+                error: errorText.slice(0, 2_000),
               };
             }
           },
           { code: validatedCode }
-        )) as { ok: boolean; result?: unknown; error?: string } | null;
+        )) as {
+          ok: boolean;
+          result?: unknown;
+          images?: unknown;
+          truncated?: boolean;
+          error?: string;
+        } | null;
       } finally {
         await validateBrowserPageAfterAction(browser_session, page, signal);
       }
@@ -2801,32 +2946,77 @@ You will be given a query and the markdown of a webpage that has been filtered t
           validatedCode.length > 500
             ? `${validatedCode.slice(0, 500)}...`
             : validatedCode;
+        const errorMessage = String(payload.error ?? 'Unknown error').slice(
+          0,
+          2_000
+        );
         return new ActionResult({
           error:
             `JavaScript Execution Failed:\n` +
-            `JavaScript execution error: ${payload.error ?? 'Unknown error'}\n\n` +
+            `JavaScript execution error: ${errorMessage}\n\n` +
             `Validated Code (after quote fixing):\n${codePreview}`,
         });
       }
 
-      let rendered =
-        typeof payload.result === 'string'
-          ? payload.result
-          : JSON.stringify(payload.result);
+      let rendered: string;
+      if (typeof payload.result === 'string') {
+        rendered = payload.result;
+      } else if (payload.result == null) {
+        rendered = 'null';
+      } else if (
+        typeof payload.result === 'number' ||
+        typeof payload.result === 'boolean'
+      ) {
+        rendered = String(payload.result);
+      } else {
+        // The in-page serializer always returns a string. Do not recursively
+        // stringify an unexpected browser payload on the trusted Node side.
+        rendered = '[Non-string evaluate result omitted]';
+      }
+      const renderedWasOversized = rendered.length > MAX_EVALUATE_RESULT_CHARS;
+      if (payload.truncated) {
+        const notice = '\n... [Result truncated by browser-use safety limits]';
+        rendered = `${rendered.slice(
+          0,
+          Math.max(0, MAX_EVALUATE_RESULT_CHARS - notice.length)
+        )}${notice}`;
+      } else if (renderedWasOversized) {
+        rendered = `${rendered.slice(0, MAX_EVALUATE_RESULT_CHARS - 50)}\n... [Truncated after 20000 characters]`;
+      }
 
       const imagePattern = /(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/g;
-      const foundImages = rendered.match(imagePattern) ?? [];
+      const inlineImages = renderedWasOversized
+        ? []
+        : (rendered.match(imagePattern) ?? []);
+      const foundImages: string[] = [];
+      let imageChars = 0;
+      const imageSources: unknown[][] = [
+        ...(Array.isArray(payload.images) ? [payload.images] : []),
+        inlineImages,
+      ];
+      for (const source of imageSources) {
+        const candidateCount = Math.min(source.length, MAX_EVALUATE_IMAGES);
+        for (let index = 0; index < candidateCount; index += 1) {
+          const imageData = source[index];
+          if (
+            typeof imageData !== 'string' ||
+            foundImages.length >= MAX_EVALUATE_IMAGES ||
+            imageData.length > MAX_EVALUATE_IMAGE_CHARS ||
+            imageChars + imageData.length > MAX_EVALUATE_IMAGE_CHARS ||
+            foundImages.includes(imageData)
+          ) {
+            continue;
+          }
+          foundImages.push(imageData);
+          imageChars += imageData.length;
+        }
+      }
       let metadata: Record<string, unknown> | null = null;
       if (foundImages.length > 0) {
         metadata = { images: foundImages };
         for (const imageData of foundImages) {
           rendered = rendered.split(imageData).join('[Image]');
         }
-      }
-
-      const maxChars = 20000;
-      if (rendered.length > maxChars) {
-        rendered = `${rendered.slice(0, maxChars - 50)}\n... [Truncated after 20000 characters]`;
       }
 
       const maxMemoryChars = 10000;
