@@ -11,6 +11,7 @@ describe('bounded page HTML extraction', () => {
       html: 'x'.repeat(limits.maxOutputChars + 1_000),
       truncated: false,
       visitedNodes: 12,
+      sourceUrl: 'https://example.com/page',
     }));
 
     const result = await extractBoundedPageHtml(
@@ -21,6 +22,7 @@ describe('bounded page HTML extraction', () => {
     expect(result.html).toHaveLength(MAX_MAIN_PAGE_HTML_CHARS);
     expect(result.truncated).toBe(true);
     expect(result.visitedNodes).toBe(12);
+    expect(result.sourceUrl).toBe('https://example.com/page');
     expect(evaluate).toHaveBeenCalledWith(
       expect.any(Function),
       expect.objectContaining({

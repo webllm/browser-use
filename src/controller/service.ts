@@ -455,6 +455,20 @@ const validateBrowserPageAfterAction = async (
   }
 };
 
+const browserSessionAllowsUrl = (
+  browser_session: any,
+  url: string
+): boolean => {
+  const checker =
+    browser_session?.is_url_allowed ?? browser_session?._is_url_allowed;
+  if (typeof checker !== 'function') return true;
+  try {
+    return checker.call(browser_session, url) === true;
+  } catch {
+    return false;
+  }
+};
+
 const runWithTimeoutAndSignal = async <T>(
   operation: () => Promise<T>,
   timeoutMs: number,
@@ -1643,6 +1657,14 @@ export class Controller<Context = unknown> {
         signal,
         'Page content extraction timed out'
       );
+      if (
+        pageHtmlResult.sourceUrl &&
+        !browserSessionAllowsUrl(browser_session, pageHtmlResult.sourceUrl)
+      ) {
+        throw new BrowserError(
+          'Page content source is blocked by browser domain policy.'
+        );
+      }
       const pageHtml = pageHtmlResult.html;
       if (!pageHtml) {
         throw new BrowserError('Unable to extract page content.');
@@ -1669,8 +1691,29 @@ export class Controller<Context = unknown> {
         sourceHtmlTruncated = true;
       }
       let extractedIframeCount = 0;
+      let blockedIframeCount = 0;
+      const readIframeUrl = (iframe: any): string =>
+        typeof iframe?.url === 'function'
+          ? String(iframe.url() ?? '')
+          : typeof iframe?.url === 'string'
+            ? iframe.url
+            : '';
       for (const iframe of iframeCandidates) {
         throwIfAborted(signal);
+        let iframeUrl = readIframeUrl(iframe);
+        if (
+          !iframeUrl ||
+          iframeUrl === currentUrl ||
+          iframeUrl.startsWith('data:') ||
+          iframeUrl.startsWith('about:')
+        ) {
+          continue;
+        }
+        if (!browserSessionAllowsUrl(browser_session, iframeUrl)) {
+          blockedIframeCount += 1;
+          continue;
+        }
+
         try {
           await runWithTimeoutAndSignal(
             async () => {
@@ -1686,12 +1729,7 @@ export class Controller<Context = unknown> {
           }
         }
 
-        const iframeUrl =
-          typeof iframe.url === 'function'
-            ? iframe.url()
-            : typeof iframe.url === 'string'
-              ? iframe.url
-              : '';
+        iframeUrl = readIframeUrl(iframe);
         if (
           !iframeUrl ||
           iframeUrl === currentUrl ||
@@ -1700,31 +1738,29 @@ export class Controller<Context = unknown> {
         ) {
           continue;
         }
+        if (!browserSessionAllowsUrl(browser_session, iframeUrl)) {
+          blockedIframeCount += 1;
+          continue;
+        }
         if (extractedIframeCount >= MAX_EXTRACTED_IFRAMES) {
           sourceHtmlTruncated = true;
           break;
         }
 
-        const safeIframeUrl = iframeUrl.slice(0, 16 * 1024);
-        const sectionPrefix = `\n<section><h2>IFRAME ${safeIframeUrl}</h2>`;
-        const sectionSuffix = '</section>';
         const remainingHtmlChars =
-          MAX_COMBINED_PAGE_HTML_CHARS -
-          combinedHtml.length -
-          sectionPrefix.length -
-          sectionSuffix.length;
-        if (remainingHtmlChars <= 0) {
+          MAX_COMBINED_PAGE_HTML_CHARS - combinedHtml.length;
+        const iframeContentBudget = Math.min(
+          MAX_IFRAME_HTML_CHARS,
+          Math.max(0, remainingHtmlChars - 32 * 1024)
+        );
+        if (iframeContentBudget <= 0) {
           sourceHtmlTruncated = true;
           break;
         }
 
         try {
           const iframeHtmlResult = await runWithTimeoutAndSignal(
-            () =>
-              extractBoundedPageHtml(
-                iframe,
-                Math.min(MAX_IFRAME_HTML_CHARS, remainingHtmlChars)
-              ),
+            () => extractBoundedPageHtml(iframe, iframeContentBudget),
             2000,
             signal,
             'Iframe content extraction timeout'
@@ -1733,6 +1769,25 @@ export class Controller<Context = unknown> {
           if (!iframeHtml) {
             continue;
           }
+          const serializedIframeUrl = iframeHtmlResult.sourceUrl || iframeUrl;
+          const finalIframeUrl = readIframeUrl(iframe);
+          if (
+            !serializedIframeUrl ||
+            !finalIframeUrl ||
+            !browserSessionAllowsUrl(browser_session, serializedIframeUrl) ||
+            !browserSessionAllowsUrl(browser_session, finalIframeUrl)
+          ) {
+            blockedIframeCount += 1;
+            continue;
+          }
+          const safeIframeUrl = serializedIframeUrl
+            .slice(0, 16 * 1024)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .slice(0, 16 * 1024);
+          const sectionPrefix = `\n<section><h2>IFRAME ${safeIframeUrl}</h2>`;
+          const sectionSuffix = '</section>';
           combinedHtml += `${sectionPrefix}${iframeHtml}${sectionSuffix}`;
           extractedIframeCount += 1;
           if (iframeHtmlResult.truncated) sourceHtmlTruncated = true;
@@ -1754,6 +1809,10 @@ export class Controller<Context = unknown> {
         (contentStats as any).source_html_truncated = true;
         (contentStats as any).source_html_limit_chars =
           MAX_COMBINED_PAGE_HTML_CHARS;
+      }
+      if (blockedIframeCount > 0) {
+        (contentStats as any).iframes_blocked_by_domain_policy =
+          blockedIframeCount;
       }
       const finalFilteredLength = contentStats.final_filtered_chars;
 

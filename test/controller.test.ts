@@ -3303,6 +3303,88 @@ describe('Regression Coverage', () => {
     expect(pageExtractionLlm.ainvoke).not.toHaveBeenCalled();
   });
 
+  it('extract_structured_data discards iframe content that crossed the domain policy during serialization', async () => {
+    const controller = new Controller();
+    let userPrompt = '';
+    const pageExtractionLlm = {
+      ainvoke: vi.fn(async (messages: any[]) => {
+        userPrompt = String(messages?.[1]?.content ?? '');
+        return { completion: 'main result' };
+      }),
+    };
+    const iframe = {
+      waitForLoadState: vi.fn(async () => {}),
+      url: vi.fn(() => 'https://example.com/frame'),
+      evaluate: vi.fn(async () => ({
+        html: '<html><body>Secret iframe content</body></html>',
+        truncated: false,
+        visitedNodes: 3,
+        sourceUrl: 'https://evil.test/frame',
+      })),
+    };
+    const page = {
+      content: vi.fn(async () => '<html><body>Main content</body></html>'),
+      frames: vi.fn(() => [iframe]),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+      is_url_allowed: vi.fn(
+        (url: string) => new URL(url).hostname === 'example.com'
+      ),
+    };
+
+    const result = await controller.registry.execute_action(
+      'extract_structured_data',
+      { query: 'Extract data' },
+      {
+        browser_session: browserSession as any,
+        page_extraction_llm: pageExtractionLlm as any,
+      }
+    );
+
+    expect(result.error).toBeNull();
+    expect(iframe.evaluate).toHaveBeenCalledTimes(1);
+    expect(userPrompt).toContain('Main content');
+    expect(userPrompt).not.toContain('Secret iframe content');
+    expect(userPrompt).not.toContain('evil.test');
+  });
+
+  it('extract_structured_data rejects a main document serialized from a blocked URL', async () => {
+    const controller = new Controller();
+    const pageExtractionLlm = {
+      ainvoke: vi.fn(async () => ({ completion: 'must not run' })),
+    };
+    const page = {
+      evaluate: vi.fn(async () => ({
+        html: '<html><body>Secret document</body></html>',
+        truncated: false,
+        visitedNodes: 3,
+        sourceUrl: 'https://evil.test/secret',
+      })),
+      frames: vi.fn(() => []),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+      is_url_allowed: vi.fn(
+        (url: string) => new URL(url).hostname === 'example.com'
+      ),
+    };
+
+    await expect(
+      controller.registry.execute_action(
+        'extract_structured_data',
+        { query: 'Extract data' },
+        {
+          browser_session: browserSession as any,
+          page_extraction_llm: pageExtractionLlm as any,
+        }
+      )
+    ).rejects.toThrow('blocked by browser domain policy');
+    expect(pageExtractionLlm.ainvoke).not.toHaveBeenCalled();
+  });
+
   it('read_file truncates long-term memory above 1k chars', async () => {
     const controller = new Controller();
     const content = Array.from({ length: 250 }, (_, idx) => `line-${idx}`).join(

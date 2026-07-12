@@ -6921,6 +6921,10 @@ export class BrowserSession {
     return this._get_url_access_denial_reason(url) === null;
   }
 
+  is_url_allowed(url: string): boolean {
+    return this._is_url_allowed(url);
+  }
+
   private _formatDomainCollection(
     value: string[] | Set<string> | null | undefined
   ) {

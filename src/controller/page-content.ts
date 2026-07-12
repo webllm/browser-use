@@ -13,6 +13,7 @@ export type BoundedPageHtml = {
   html: string;
   truncated: boolean;
   visitedNodes: number;
+  sourceUrl: string;
 };
 
 type PageContentSource = {
@@ -170,6 +171,7 @@ export const extractBoundedPageHtml = async (
           html: output.join(''),
           truncated,
           visitedNodes,
+          sourceUrl: window.location.href.slice(0, 16 * 1024),
         };
         if (hadNameHelper) nameHelperOwner.__name = previousNameHelper;
         else delete nameHelperOwner.__name;
@@ -198,6 +200,10 @@ export const extractBoundedPageHtml = async (
         Number.isSafeInteger(result.visitedNodes)
           ? Math.max(0, result.visitedNodes)
           : 0,
+      sourceUrl:
+        typeof result.sourceUrl === 'string'
+          ? result.sourceUrl.slice(0, 16 * 1024)
+          : '',
     };
   }
 
@@ -208,8 +214,12 @@ export const extractBoundedPageHtml = async (
       html: html.slice(0, boundedMaxChars),
       truncated: html.length > boundedMaxChars,
       visitedNodes: 0,
+      sourceUrl:
+        typeof (source as any).url === 'function'
+          ? String((source as any).url() ?? '').slice(0, 16 * 1024)
+          : '',
     };
   }
 
-  return { html: '', truncated: false, visitedNodes: 0 };
+  return { html: '', truncated: false, visitedNodes: 0, sourceUrl: '' };
 };
