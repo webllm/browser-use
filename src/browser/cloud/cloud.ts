@@ -1,6 +1,7 @@
 import { CONFIG } from '../../config.js';
 import { createLogger } from '../../logging-config.js';
 import { DeviceAuthClient } from '../../sync/auth.js';
+import { readBoundedResponseText } from '../../http-response.js';
 import {
   CloudBrowserAuthError,
   CloudBrowserError,
@@ -121,7 +122,7 @@ export class CloudBrowserClient {
       redirect: 'error',
     });
 
-    const text = await response.text();
+    const text = await readBoundedResponseText(response);
     let payload: unknown = null;
     if (text) {
       try {
@@ -142,7 +143,7 @@ export class CloudBrowserClient {
         );
       }
       throw new CloudBrowserError(
-        `Cloud browser request failed (${response.status}): ${errorDetails}`
+        `Cloud browser request failed (${response.status}): ${errorDetails.slice(0, 8192)}`
       );
     }
 

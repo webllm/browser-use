@@ -1,5 +1,6 @@
 import { CONFIG } from '../../config.js';
 import { DeviceAuthClient } from '../../sync/auth.js';
+import { readBoundedResponseText } from '../../http-response.js';
 import { CloudBrowserAuthError, CloudBrowserError } from './views.js';
 
 const stripTrailingSlash = (input: string) => input.replace(/\/+$/, '');
@@ -140,7 +141,7 @@ export class CloudManagementClient {
       redirect: 'error',
     });
 
-    const text = await response.text();
+    const text = await readBoundedResponseText(response);
     let payload: unknown = null;
     if (text) {
       try {
@@ -161,7 +162,7 @@ export class CloudManagementClient {
         );
       }
       throw new CloudBrowserError(
-        `Cloud API request failed (${response.status}): ${details}`
+        `Cloud API request failed (${response.status}): ${details.slice(0, 8192)}`
       );
     }
 

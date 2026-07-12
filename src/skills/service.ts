@@ -2,6 +2,10 @@ import { CONFIG } from '../config.js';
 import { createLogger } from '../logging-config.js';
 import { build_skill_parameters_schema, get_skill_slug } from './utils.js';
 import {
+  HttpResponseTooLargeError,
+  readBoundedResponseJson,
+} from '../http-response.js';
+import {
   MissingCookieException,
   type BrowserCookie,
   type ExecuteSkillInput,
@@ -129,8 +133,9 @@ export class CloudSkillService implements SkillService {
 
     let payload: unknown;
     try {
-      payload = await response.json();
-    } catch {
+      payload = await readBoundedResponseJson(response);
+    } catch (error) {
+      if (error instanceof HttpResponseTooLargeError) throw error;
       payload = null;
     }
 
@@ -140,7 +145,7 @@ export class CloudSkillService implements SkillService {
           ? JSON.stringify(payload)
           : String(payload ?? '');
       throw new Error(
-        `Skill API request failed (${response.status}): ${details}`
+        `Skill API request failed (${response.status}): ${details.slice(0, 8192)}`
       );
     }
 
