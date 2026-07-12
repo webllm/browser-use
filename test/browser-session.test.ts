@@ -3309,6 +3309,16 @@ esac
     expect((session as any)._closedPopupMessages).toContain(
       '[prompt] Need user input'
     );
+
+    const oversizedDialog = {
+      type: () => 'alert',
+      message: () => 'x'.repeat(100_000),
+      accept: vi.fn(async () => {}),
+      dismiss: vi.fn(async () => {}),
+    };
+    await dialogHandler?.(oversizedDialog);
+    const captured = (session as any)._closedPopupMessages.at(-1) as string;
+    expect(captured.length).toBeLessThanOrEqual(8 * 1024 + '[alert] '.length);
   });
 
   it('preserves closed popup messages in minimal state summary', async () => {

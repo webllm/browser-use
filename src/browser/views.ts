@@ -2,6 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DOMState } from '../dom/views.js';
 import type { DOMHistoryElement } from '../dom/history-tree-processor/view.js';
+import {
+  boundBrowserStateText,
+  boundBrowserStateTitle,
+  boundBrowserStateUrl,
+  MAX_BROWSER_STATE_MESSAGE_CHARS,
+  MAX_BROWSER_STATE_MESSAGES,
+  MAX_BROWSER_STATE_NETWORK_REQUESTS,
+  MAX_BROWSER_STATE_PAGINATION_BUTTONS,
+  MAX_BROWSER_STATE_RECENT_EVENTS_CHARS,
+  MAX_BROWSER_STATE_TABS,
+} from './state-limits.js';
 
 export const PLACEHOLDER_4PX_SCREENSHOT =
   'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAFElEQVR4nGP8//8/AwwwMSAB3BwAlm4DBfIlvvkAAAAASUVORK5CYII=';
@@ -78,20 +89,65 @@ export class BrowserStateSummary extends DOMState {
 
   constructor(dom_state: DOMState, init: BrowserStateSummaryInit) {
     super(dom_state.element_tree, dom_state.selector_map);
-    this.url = init.url;
-    this.title = init.title;
-    this.tabs = init.tabs;
+    this.url = boundBrowserStateUrl(init.url);
+    this.title = boundBrowserStateTitle(init.title);
+    this.tabs = (Array.isArray(init.tabs) ? init.tabs : [])
+      .slice(0, MAX_BROWSER_STATE_TABS)
+      .map((tab) => ({
+        ...tab,
+        url: boundBrowserStateUrl(tab?.url),
+        title: boundBrowserStateTitle(tab?.title),
+      }));
     this.screenshot = init.screenshot ?? null;
     this.page_info = init.page_info ?? null;
     this.pixels_above = init.pixels_above ?? 0;
     this.pixels_below = init.pixels_below ?? 0;
-    this.browser_errors = init.browser_errors ?? [];
+    this.browser_errors = (init.browser_errors ?? [])
+      .slice(0, MAX_BROWSER_STATE_MESSAGES)
+      .map((message) =>
+        boundBrowserStateText(message, MAX_BROWSER_STATE_MESSAGE_CHARS)
+      );
     this.is_pdf_viewer = init.is_pdf_viewer ?? false;
-    this.loading_status = init.loading_status ?? null;
-    this.recent_events = init.recent_events ?? null;
-    this.pending_network_requests = init.pending_network_requests ?? [];
-    this.pagination_buttons = init.pagination_buttons ?? [];
-    this.closed_popup_messages = init.closed_popup_messages ?? [];
+    this.loading_status = init.loading_status
+      ? boundBrowserStateText(
+          init.loading_status,
+          MAX_BROWSER_STATE_MESSAGE_CHARS
+        )
+      : null;
+    this.recent_events = init.recent_events
+      ? boundBrowserStateText(
+          init.recent_events,
+          MAX_BROWSER_STATE_RECENT_EVENTS_CHARS
+        )
+      : null;
+    this.pending_network_requests = (init.pending_network_requests ?? [])
+      .slice(0, MAX_BROWSER_STATE_NETWORK_REQUESTS)
+      .map((request) => ({
+        ...request,
+        url: boundBrowserStateUrl(request?.url),
+        method: request?.method
+          ? boundBrowserStateText(request.method, 32)
+          : undefined,
+        resource_type: request?.resource_type
+          ? boundBrowserStateText(request.resource_type, 128)
+          : null,
+      }));
+    this.pagination_buttons = (init.pagination_buttons ?? [])
+      .slice(0, MAX_BROWSER_STATE_PAGINATION_BUTTONS)
+      .map((button) => ({
+        ...button,
+        button_type: boundBrowserStateText(button?.button_type, 128),
+        text: boundBrowserStateText(
+          button?.text,
+          MAX_BROWSER_STATE_MESSAGE_CHARS
+        ),
+        selector: boundBrowserStateText(button?.selector, 4 * 1024),
+      }));
+    this.closed_popup_messages = (init.closed_popup_messages ?? [])
+      .slice(-MAX_BROWSER_STATE_MESSAGES)
+      .map((message) =>
+        boundBrowserStateText(message, MAX_BROWSER_STATE_MESSAGE_CHARS)
+      );
   }
 }
 

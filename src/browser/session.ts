@@ -15,6 +15,14 @@ import { match_url_with_domain_pattern, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
 import { getMaxAutoDownloadBytes } from './download-limits.js';
 import {
+  boundBrowserStateText,
+  boundBrowserStateTitle,
+  boundBrowserStateUrl,
+  MAX_BROWSER_STATE_MESSAGE_CHARS,
+  MAX_BROWSER_STATE_TABS,
+  readBoundedPageTitle,
+} from './state-limits.js';
+import {
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,
   MAX_DROPDOWN_MESSAGE_CHARS,
@@ -501,7 +509,7 @@ export class BrowserSession {
     this.agent_current_page = init.page ?? null;
     this.human_current_page = init.page ?? null;
     this.currentUrl = normalize_url(init.url ?? 'about:blank');
-    this.currentTitle = init.title ?? '';
+    this.currentTitle = boundBrowserStateTitle(init.title ?? '');
     this.wss_url = init.wss_url ?? null;
     this.cdp_url = init.cdp_url ?? null;
     this.browser_pid = init.browser_pid ?? null;
@@ -510,7 +518,11 @@ export class BrowserSession {
       ? [...init.downloaded_files]
       : [];
     this._closedPopupMessages = Array.isArray(init.closed_popup_messages)
-      ? [...init.closed_popup_messages]
+      ? init.closed_popup_messages
+          .slice(-this._maxClosedPopupMessages)
+          .map((message) =>
+            boundBrowserStateText(message, MAX_BROWSER_STATE_MESSAGE_CHARS)
+          )
       : [];
     if (typeof (init as any)?.auto_download_pdfs === 'boolean') {
       this._autoDownloadPdfs = Boolean((init as any).auto_download_pdfs);
@@ -722,7 +734,7 @@ export class BrowserSession {
       tab_id: this._formatTabId(page_id),
       target_id: this._buildSyntheticTargetId(page_id),
       url,
-      title,
+      title: boundBrowserStateTitle(title),
       parent_page_id,
     };
   }
@@ -1004,7 +1016,7 @@ export class BrowserSession {
     let resolvedTitle: string | null = null;
     if (typeof page.title === 'function') {
       try {
-        const title = await page.title();
+        const title = await readBoundedPageTitle(page);
         if (typeof title === 'string' && title.trim()) {
           resolvedTitle = title;
         }
@@ -1015,14 +1027,14 @@ export class BrowserSession {
     if (!resolvedTitle) {
       resolvedTitle = resolvedUrl ?? this.currentTitle ?? this.currentUrl;
     }
-    this.currentTitle = resolvedTitle;
+    this.currentTitle = boundBrowserStateTitle(resolvedTitle);
 
     const currentTab = this._tabs[this.currentTabIndex];
     if (currentTab) {
       if (resolvedUrl) {
         currentTab.url = resolvedUrl;
       }
-      currentTab.title = resolvedTitle;
+      currentTab.title = boundBrowserStateTitle(resolvedTitle);
       this._syncSessionManagerFromTabs();
     }
   }
@@ -1072,7 +1084,7 @@ export class BrowserSession {
         // Keep existing tab url when page url is not readable.
       }
       if (!existingTab || !tab.title || tab.title === 'about:blank') {
-        tab.title = tab.url;
+        tab.title = boundBrowserStateTitle(tab.url);
       }
 
       nextTabs.push(tab);
@@ -1106,7 +1118,9 @@ export class BrowserSession {
     const activeTab = this._tabs[this.currentTabIndex] ?? null;
     if (activeTab) {
       this.currentUrl = activeTab.url;
-      this.currentTitle = activeTab.title || activeTab.url;
+      this.currentTitle = boundBrowserStateTitle(
+        activeTab.title || activeTab.url
+      );
       this.agent_current_page = this.tabPages.get(activeTab.page_id) ?? null;
       this.human_current_page =
         this.human_current_page ?? this.agent_current_page;
@@ -1115,8 +1129,14 @@ export class BrowserSession {
   }
 
   private _captureClosedPopupMessage(dialogType: string, message: string) {
-    const normalizedType = String(dialogType || 'alert').trim() || 'alert';
-    const normalizedMessage = String(message || '').trim();
+    const normalizedType = boundBrowserStateText(
+      String(dialogType || 'alert').trim() || 'alert',
+      128
+    );
+    const normalizedMessage = boundBrowserStateText(
+      String(message || '').trim(),
+      MAX_BROWSER_STATE_MESSAGE_CHARS
+    );
     if (!normalizedMessage) {
       return;
     }
@@ -1140,19 +1160,25 @@ export class BrowserSession {
     details: Partial<Omit<RecentBrowserEvent, 'event_type' | 'timestamp'>> = {}
   ) {
     const event: RecentBrowserEvent = {
-      event_type: String(event_type || 'unknown').trim() || 'unknown',
+      event_type:
+        boundBrowserStateText(String(event_type || 'unknown').trim(), 128) ||
+        'unknown',
       timestamp: new Date().toISOString(),
     };
     if (typeof details.url === 'string' && details.url.trim()) {
-      event.url = BrowserSession._redact_url_for_logging(details.url.trim());
+      event.url = boundBrowserStateUrl(
+        BrowserSession._redact_url_for_logging(
+          details.url.slice(0, MAX_BROWSER_STATE_MESSAGE_CHARS).trim()
+        )
+      );
     }
     if (
       typeof details.error_message === 'string' &&
       details.error_message.trim()
     ) {
       event.error_message = BrowserSession._redact_urls_in_text(
-        details.error_message.trim()
-      );
+        details.error_message.slice(0, MAX_BROWSER_STATE_MESSAGE_CHARS).trim()
+      ).slice(0, MAX_BROWSER_STATE_MESSAGE_CHARS);
     }
     if (
       typeof details.page_id === 'number' &&
@@ -1161,7 +1187,7 @@ export class BrowserSession {
       event.page_id = details.page_id;
     }
     if (typeof details.tab_id === 'string' && details.tab_id.trim()) {
-      event.tab_id = details.tab_id.trim();
+      event.tab_id = boundBrowserStateText(details.tab_id.trim(), 128);
     }
 
     this._recentEvents.push(event);
@@ -1197,14 +1223,17 @@ export class BrowserSession {
       try {
         const dialogType =
           typeof dialog?.type === 'function' ? dialog.type() : 'alert';
-        const message =
-          typeof dialog?.message === 'function' ? dialog.message() : '';
+        const boundedDialogType = boundBrowserStateText(dialogType, 128);
+        const message = boundBrowserStateText(
+          typeof dialog?.message === 'function' ? dialog.message() : '',
+          MAX_BROWSER_STATE_MESSAGE_CHARS
+        );
         try {
           await this.event_bus.dispatch(
             new DialogOpenedEvent({
-              dialog_type: dialogType,
-              message: String(message ?? ''),
-              url: this.currentUrl ?? 'about:blank',
+              dialog_type: boundedDialogType,
+              message,
+              url: boundBrowserStateUrl(this.currentUrl ?? 'about:blank'),
               frame_id: null,
             })
           );
@@ -1213,18 +1242,18 @@ export class BrowserSession {
             `Failed to dispatch DialogOpenedEvent: ${(error as Error).message}`
           );
         }
-        this._captureClosedPopupMessage(dialogType, message);
+        this._captureClosedPopupMessage(boundedDialogType, message);
         this._recordRecentEvent('javascript_dialog_closed', {
           url: this.currentUrl,
           error_message: message
-            ? `[${dialogType}] ${String(message).trim()}`
-            : `[${dialogType}]`,
+            ? `[${boundedDialogType}] ${message.trim()}`
+            : `[${boundedDialogType}]`,
         });
 
         const shouldAccept =
-          dialogType === 'alert' ||
-          dialogType === 'confirm' ||
-          dialogType === 'beforeunload';
+          boundedDialogType === 'alert' ||
+          boundedDialogType === 'confirm' ||
+          boundedDialogType === 'beforeunload';
         if (shouldAccept && typeof dialog?.accept === 'function') {
           await dialog.accept();
         } else if (typeof dialog?.dismiss === 'function') {
@@ -2124,7 +2153,7 @@ export class BrowserSession {
     if (!pages.length) {
       this.currentTabIndex = 0;
       this.currentUrl = normalize_url(preferredUrl ?? 'about:blank');
-      this.currentTitle = this.currentUrl;
+      this.currentTitle = boundBrowserStateTitle(this.currentUrl);
       if (!this._tabs.length) {
         this._tabs = [
           this._createTabInfo({
@@ -2525,7 +2554,7 @@ export class BrowserSession {
       }
       if (typeof activePage.title === 'function') {
         try {
-          this.currentTitle = await activePage.title();
+          this.currentTitle = await readBoundedPageTitle(activePage);
         } catch {
           // Ignore title read errors from transient pages.
         }
@@ -3010,7 +3039,7 @@ export class BrowserSession {
       this.currentUrl = normalize_url(url);
     }
     if (title) {
-      this.currentTitle = title;
+      this.currentTitle = boundBrowserStateTitle(title);
     }
   }
 
@@ -3030,10 +3059,12 @@ export class BrowserSession {
         tab.tab_id = this._formatTabId(tab.page_id);
       }
       tab.url = this.currentUrl;
-      tab.title = this.currentTitle || this.currentUrl;
+      tab.title = boundBrowserStateTitle(this.currentTitle || this.currentUrl);
     }
     this._syncSessionManagerFromTabs();
-    return this._tabs.map((tab) => this._sanitize_tab_for_exposure(tab));
+    return this._tabs
+      .slice(0, MAX_BROWSER_STATE_TABS)
+      .map((tab) => this._sanitize_tab_for_exposure(tab));
   }
 
   async navigate_to(url: string, options: BrowserNavigationOptions = {}) {
@@ -3115,10 +3146,11 @@ export class BrowserSession {
       completedUrl = this.currentUrl || completedUrl;
     } else {
       this.currentUrl = normalized;
-      this.currentTitle = normalized;
+      this.currentTitle = boundBrowserStateTitle(normalized);
       if (this._tabs[this.currentTabIndex]) {
         this._tabs[this.currentTabIndex].url = normalized;
-        this._tabs[this.currentTabIndex].title = normalized;
+        this._tabs[this.currentTabIndex].title =
+          boundBrowserStateTitle(normalized);
       }
       this._syncSessionManagerFromTabs();
     }
@@ -3154,7 +3186,7 @@ export class BrowserSession {
     this._tabs.push(newTab);
     this.currentTabIndex = this._tabs.length - 1;
     this.currentUrl = normalized;
-    this.currentTitle = normalized;
+    this.currentTitle = boundBrowserStateTitle(normalized);
     this.historyStack.push(normalized);
     let page: Page | null = null;
     try {
@@ -3225,7 +3257,7 @@ export class BrowserSession {
         this.currentTabIndex = Math.max(0, restoredIndex);
         const restoredTab = this._tabs[this.currentTabIndex];
         this.currentUrl = restoredTab.url;
-        this.currentTitle = restoredTab.title;
+        this.currentTitle = boundBrowserStateTitle(restoredTab.title);
         const restoredPage = this.tabPages.get(restoredTab.page_id) ?? null;
         this._setActivePage(restoredPage);
         await this._syncCurrentTabFromPage(restoredPage);
@@ -3339,7 +3371,7 @@ export class BrowserSession {
     }
     this.currentTabIndex = index;
     this.currentUrl = tab.url;
-    this.currentTitle = tab.title;
+    this.currentTitle = boundBrowserStateTitle(tab.title);
     this._syncSessionManagerFromTabs();
     const page = this.tabPages.get(tab.page_id) ?? null;
     this._setActivePage(page);
@@ -3410,7 +3442,7 @@ export class BrowserSession {
     if (this._tabs.length) {
       const tab = this._tabs[this.currentTabIndex];
       this.currentUrl = tab.url;
-      this.currentTitle = tab.title;
+      this.currentTitle = boundBrowserStateTitle(tab.title);
       await this.event_bus.dispatch(
         new AgentFocusChangedEvent({
           target_id: tab.target_id ?? tab.tab_id ?? 'unknown_target',
@@ -5618,7 +5650,7 @@ export class BrowserSession {
       url: string;
       title: string;
     }> = [];
-    for (const tab of this._tabs) {
+    for (const tab of this._tabs.slice(0, MAX_BROWSER_STATE_TABS)) {
       const page_id = tab.page_id;
       const page = this.tabPages.get(page_id) ?? null;
       const tab_id = tab.tab_id || this._formatTabId(page_id);
@@ -5642,7 +5674,10 @@ export class BrowserSession {
         url: currentUrl,
         title: tab.title || currentUrl,
       });
-      if (exposedTab.url !== currentUrl) {
+      const accessDenied =
+        this._has_url_access_restrictions() &&
+        this._get_url_access_denial_reason(currentUrl) !== null;
+      if (accessDenied) {
         tabs_info.push(exposedTab);
         continue;
       }
@@ -5675,13 +5710,20 @@ export class BrowserSession {
         if (!page?.title) {
           throw new Error('page_title_unavailable');
         }
-        const titlePromise = page.title();
+        const titlePromise = readBoundedPageTitle(page);
         const timeoutPromise = new Promise<string>((_, reject) => {
           setTimeout(() => reject(new Error('timeout')), 2000);
         });
 
         const title = await Promise.race([titlePromise, timeoutPromise]);
-        tabs_info.push({ page_id, tab_id, url: currentUrl, title });
+        tabs_info.push(
+          this._sanitize_tab_for_exposure({
+            page_id,
+            tab_id,
+            url: currentUrl,
+            title,
+          })
+        );
       } catch (error) {
         this.logger.debug(
           `⚠️ Failed to get tab info for tab #${page_id}: ${BrowserSession._redact_url_for_logging(
@@ -5707,7 +5749,9 @@ export class BrowserSession {
       }
     }
 
-    return tabs_info;
+    return tabs_info
+      .slice(0, MAX_BROWSER_STATE_TABS)
+      .map((tab) => this._sanitize_tab_for_exposure(tab));
   }
 
   /**
@@ -5858,7 +5902,7 @@ export class BrowserSession {
       let title = 'Page Load Error';
       try {
         if (page) {
-          const titlePromise = page.title();
+          const titlePromise = readBoundedPageTitle(page);
           const timeoutPromise = new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error('timeout')), 2000)
           );
@@ -6157,7 +6201,7 @@ export class BrowserSession {
     let title = 'Title unavailable';
     try {
       await this.validate_page_after_action(page);
-      const titlePromise = page.title();
+      const titlePromise = readBoundedPageTitle(page);
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('timeout')), 3000)
       );
@@ -6897,15 +6941,20 @@ export class BrowserSession {
   }
 
   private _sanitize_tab_for_exposure<T extends TabInfo>(tab: T): T {
+    const bounded = {
+      ...tab,
+      url: boundBrowserStateUrl(tab.url),
+      title: boundBrowserStateTitle(tab.title),
+    } as T;
     if (!this._has_url_access_restrictions()) {
-      return { ...tab };
+      return bounded;
     }
     const denialReason = this._get_url_access_denial_reason(tab.url);
     if (!denialReason) {
-      return { ...tab };
+      return bounded;
     }
     return {
-      ...tab,
+      ...bounded,
       url: 'about:blank',
       title: 'blocked by domain policy',
     };
