@@ -796,21 +796,21 @@ const createDefaultSessionFactory =
 const killOwnedDirectBrowserProcess = async (
   state: DirectModeState,
   environment: Required<DirectCliEnvironment>
-) => {
+): Promise<'terminated' | 'not_owned' | 'failed'> => {
   if (
     !(await isOwnedDirectBrowserProcess(
       state,
       environment.get_process_command_line
     ))
   ) {
-    return false;
+    return 'not_owned';
   }
 
   try {
     await environment.kill_process(state.browser_pid!);
-    return true;
+    return 'terminated';
   } catch {
-    return false;
+    return 'failed';
   }
 };
 
@@ -835,10 +835,10 @@ const connectDirectSession = async (
         await environment
           .cloud_client_factory()
           .stop_browser(currentState.session_id);
+        return true;
       } catch {
-        // Best-effort cleanup for stale remote sessions.
+        return false;
       }
-      return;
     }
 
     if (
@@ -846,13 +846,24 @@ const connectDirectSession = async (
       typeof currentState.browser_pid === 'number' &&
       currentState.browser_pid > 0
     ) {
-      await killOwnedDirectBrowserProcess(currentState, environment);
+      const termination = await killOwnedDirectBrowserProcess(
+        currentState,
+        environment
+      );
+      if (termination === 'failed') {
+        return false;
+      }
     }
     cleanupOwnedDirectUserDataDir(currentState);
+    return true;
   };
 
   if (useRemote && state.cdp_url && state.mode !== 'remote') {
-    await cleanupDisconnectedState(state);
+    if (!(await cleanupDisconnectedState(state))) {
+      throw new Error(
+        'Failed to close the existing direct-mode browser; state was retained for retry'
+      );
+    }
     clear_direct_state(environment.state_file);
     state = {};
   }
@@ -862,7 +873,11 @@ const connectDirectSession = async (
       const session = await connectWithState(state);
       return { session, state };
     } catch {
-      await cleanupDisconnectedState(state);
+      if (!(await cleanupDisconnectedState(state))) {
+        throw new Error(
+          'Failed to clean up the disconnected direct-mode browser; state was retained for retry'
+        );
+      }
       clear_direct_state(environment.state_file);
       state = {};
     }
@@ -975,10 +990,24 @@ export const run_direct_command = async (
       try {
         await environment.cloud_client_factory().stop_browser(state.session_id);
       } catch {
-        // Best-effort remote cleanup.
+        writeLine(
+          environment.stderr,
+          'Failed to close cloud browser; state was retained for retry'
+        );
+        return 1;
       }
     } else if (typeof state.browser_pid === 'number' && state.browser_pid > 0) {
-      await killOwnedDirectBrowserProcess(state, environment);
+      const termination = await killOwnedDirectBrowserProcess(
+        state,
+        environment
+      );
+      if (termination === 'failed') {
+        writeLine(
+          environment.stderr,
+          'Failed to close local browser; state was retained for retry'
+        );
+        return 1;
+      }
     }
     cleanupOwnedDirectUserDataDir(state);
 

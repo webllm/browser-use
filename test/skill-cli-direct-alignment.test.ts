@@ -463,6 +463,53 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('retains local state and profile when process termination fails', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stdout = createWritable();
+    const stderr = createWritable();
+
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        browser_pid: 321,
+        browser_launch_token: 'owned-321',
+        user_data_dir: userDataDir,
+        owns_user_data_dir: true,
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(['close'], {
+        state_file: stateFile,
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        kill_process: vi.fn(async () => {
+          throw new Error('permission denied');
+        }),
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=owned-321',
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stdout.read()).not.toContain('Browser closed');
+      expect(stderr.read()).toContain('state was retained for retry');
+      expect(fs.existsSync(stateFile)).toBe(true);
+      expect(fs.existsSync(userDataDir)).toBe(true);
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not terminate a reused PID whose launch marker does not match', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
@@ -700,6 +747,50 @@ describe('skill-cli direct alignment', () => {
       expect(stdout.read()).toContain('Browser closed');
       expect(stderr.read()).toBe('');
       expect(fs.existsSync(stateFile)).toBe(false);
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains remote state when closing the cloud session fails', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const stdout = createWritable();
+    const stderr = createWritable();
+
+    save_direct_state(
+      {
+        mode: 'remote',
+        cdp_url: 'wss://cloud.example/devtools/browser/test',
+        session_id: 'session-123',
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(['close'], {
+        state_file: stateFile,
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        cloud_client_factory: () =>
+          ({
+            create_browser: vi.fn(),
+            stop_browser: vi.fn(async () => {
+              throw new Error('cloud unavailable');
+            }),
+          }) as any,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stdout.read()).not.toContain('Browser closed');
+      expect(stderr.read()).toContain('state was retained for retry');
+      expect(load_direct_state(stateFile)).toMatchObject({
+        mode: 'remote',
+        session_id: 'session-123',
+      });
     } finally {
       clear_direct_state(stateFile);
       fs.rmSync(tempDir, { recursive: true, force: true });
