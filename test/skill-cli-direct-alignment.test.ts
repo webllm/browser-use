@@ -322,6 +322,59 @@ describe('skill-cli direct alignment', () => {
     }
   );
 
+  it.skipIf(process.platform === 'win32')(
+    'force-stops an owned browser launch that ignores SIGTERM before deleting its profile',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const fakeChrome = path.join(tempDir, 'ignores-term');
+      const pidFile = path.join(tempDir, 'pid');
+      const ownedProfileDir = path.join(tempDir, 'owned-profile');
+      fs.writeFileSync(
+        fakeChrome,
+        `#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nprocess.on('SIGTERM', () => {});\nsetInterval(() => {}, 1000);\n`,
+        { mode: 0o755 }
+      );
+
+      const findExecutableSpy = vi
+        .spyOn(systemChrome, 'findExecutable')
+        .mockReturnValue(fakeChrome);
+      const mkdtempSpy = vi.spyOn(fs, 'mkdtempSync').mockImplementation(((
+        prefix: string
+      ) => {
+        expect(prefix).toContain('browser-use-direct-');
+        fs.mkdirSync(ownedProfileDir, { recursive: true });
+        return ownedProfileDir;
+      }) as any);
+
+      let launchedPid: number | null = null;
+      try {
+        await expect(
+          defaultLocalLauncher({ state: {}, timeout_ms: 500 })
+        ).rejects.toThrow(
+          /Timed out waiting for local Chrome debugging endpoint/
+        );
+        launchedPid = Number(fs.readFileSync(pidFile, 'utf8'));
+        expect(Number.isSafeInteger(launchedPid)).toBe(true);
+        expect(() => process.kill(launchedPid!, 0)).toThrow();
+        expect(fs.existsSync(ownedProfileDir)).toBe(false);
+      } finally {
+        findExecutableSpy.mockRestore();
+        mkdtempSpy.mockRestore();
+        if (launchedPid) {
+          try {
+            process.kill(-launchedPid, 'SIGKILL');
+          } catch {
+            // The failed launch should already be gone.
+          }
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    10_000
+  );
+
   it('reuses saved direct-mode state for click-by-index commands', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

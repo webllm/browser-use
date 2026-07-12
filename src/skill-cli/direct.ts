@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
 import { isMainModule } from '../entrypoint.js';
@@ -513,6 +513,63 @@ const waitForLocalCdpEndpoint = async (port: number, timeoutMs = 15000) => {
   );
 };
 
+const isProcessTargetAlive = (target: number) => {
+  try {
+    process.kill(target, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
+
+const waitForProcessTargetExit = async (target: number) => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!isProcessTargetAlive(target)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isProcessTargetAlive(target);
+};
+
+const terminateFailedDirectLaunch = async (pid: number) => {
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/PID', String(pid), '/T'], {
+      stdio: 'ignore',
+    });
+    if (await waitForProcessTargetExit(pid)) {
+      return true;
+    }
+    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+    });
+    return waitForProcessTargetExit(pid);
+  }
+
+  let target = -pid;
+  try {
+    process.kill(target, 'SIGTERM');
+  } catch {
+    target = pid;
+    try {
+      process.kill(target, 'SIGTERM');
+    } catch {
+      return !isProcessTargetAlive(target);
+    }
+  }
+
+  if (await waitForProcessTargetExit(target)) {
+    return true;
+  }
+
+  try {
+    process.kill(target, 'SIGKILL');
+  } catch {
+    return !isProcessTargetAlive(target);
+  }
+  return waitForProcessTargetExit(target);
+};
+
 export const defaultLocalLauncher = async (options: {
   state: DirectModeState;
   timeout_ms?: number;
@@ -566,19 +623,26 @@ export const defaultLocalLauncher = async (options: {
       owns_user_data_dir: !reusingUserDataDir,
     };
   } catch (error) {
+    let launchTerminated = true;
     if (typeof child.pid === 'number' && child.pid > 0) {
-      try {
-        process.kill(child.pid, 'SIGTERM');
-      } catch {
-        // Ignore cleanup failures for a process that may not have started.
-      }
+      launchTerminated = await terminateFailedDirectLaunch(child.pid);
     }
-    if (!reusingUserDataDir && typeof userDataDir === 'string') {
+    if (
+      launchTerminated &&
+      !reusingUserDataDir &&
+      typeof userDataDir === 'string'
+    ) {
       try {
         fs.rmSync(userDataDir, { recursive: true, force: true });
       } catch {
         // Ignore cleanup failures for ephemeral launch profiles.
       }
+    }
+    if (!launchTerminated) {
+      throw new Error(
+        `${(error as Error).message}; browser process ${child.pid} could not be terminated and its profile was retained at ${userDataDir}`,
+        { cause: error }
+      );
     }
     throw error;
   }
