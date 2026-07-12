@@ -3,6 +3,7 @@ import {
   CreateAgentOutputFileEvent,
   CreateAgentTaskEvent,
   CreateAgentStepEvent,
+  UpdateAgentTaskEvent,
   UpdateAgentSessionEvent,
 } from '../src/agent/cloud-events.js';
 
@@ -62,6 +63,71 @@ describe('cloud events alignment', () => {
     );
 
     expect(event.screenshot_url).toBeNull();
+  });
+
+  it('redacts sensitive data from cloud task, state, result, and step payloads', () => {
+    const agent = {
+      task_id: 'task-sensitive',
+      session_id: 'session-sensitive',
+      task: 'Use deep-secret to sign in',
+      llm: { model_name: 'model' },
+      sensitive_data: {
+        password: 'deep-secret',
+      },
+      state: {
+        stopped: false,
+        paused: false,
+        n_steps: 2,
+        model_dump: () => ({
+          last_result: [
+            {
+              nested: [['server reflected deep-secret']],
+            },
+          ],
+        }),
+      },
+      history: {
+        final_result: () => 'completed with deep-secret',
+        is_done: () => true,
+      },
+      browser_session: {
+        id: 'browser-session-sensitive',
+      },
+      _task_start_time: 1_760_000_000,
+    } as any;
+
+    const taskEvent = CreateAgentTaskEvent.fromAgent(agent).toJSON();
+    const updateEvent = UpdateAgentTaskEvent.fromAgent(agent).toJSON();
+    const stepEvent = CreateAgentStepEvent.fromAgentStep(
+      agent,
+      {
+        current_state: {
+          evaluation_previous_goal: 'used deep-secret',
+          memory: 'remember deep-secret',
+          next_goal: 'submit deep-secret',
+        },
+        action: [],
+      },
+      [],
+      [{ input: { text: 'deep-secret' } }],
+      {
+        screenshot: null,
+        url: 'https://example.com/?token=deep-secret',
+      }
+    ).toJSON();
+    const serialized = JSON.stringify({ taskEvent, updateEvent, stepEvent });
+
+    expect(serialized).not.toContain('deep-secret');
+    expect(taskEvent.task).toBe('Use <secret>password</secret> to sign in');
+    expect(updateEvent.done_output).toBe(
+      'completed with <secret>password</secret>'
+    );
+    expect(stepEvent.actions).toEqual([
+      { input: { text: '<secret>password</secret>' } },
+    ]);
+    expect(stepEvent.url).toBe(
+      'https://example.com/?token=<secret>password</secret>'
+    );
   });
 
   it('UpdateAgentSessionEvent serializes optional update fields', () => {

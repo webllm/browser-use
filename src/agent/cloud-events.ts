@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { uuid7str } from '../utils.js';
 import { createLogger } from '../logging-config.js';
+import { redactSensitiveDataFromString } from './views.js';
 
 const MAX_STRING_LENGTH = 100_000;
 const MAX_URL_LENGTH = 100_000;
@@ -55,6 +56,7 @@ interface AgentReference {
     };
   };
   _task_start_time?: number;
+  sensitive_data?: Record<string, string | Record<string, string>> | null;
 }
 
 interface AgentWithState extends AgentReference {
@@ -69,15 +71,42 @@ const getDeviceId = (agent: AgentReference) =>
 const getBrowserProfile = (agent: AgentReference) =>
   agent.browser_profile ?? agent.browser_session?.browser_profile ?? null;
 
-const serializeAgentState = (agent: AgentWithState) => {
-  if (typeof agent.state.model_dump === 'function') {
-    return agent.state.model_dump();
+const redactAgentValue = (agent: AgentReference, value: unknown): unknown => {
+  if (typeof value === 'string') {
+    return redactSensitiveDataFromString(value, agent.sensitive_data ?? null);
   }
-  return {
-    stopped: agent.state.stopped,
-    paused: agent.state.paused,
-    n_steps: agent.state.n_steps,
-  };
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactAgentValue(agent, entry));
+  }
+  if (value && typeof value === 'object') {
+    if (value instanceof Date) {
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        redactAgentValue(agent, entry),
+      ])
+    );
+  }
+  return value;
+};
+
+const redactAgentString = (agent: AgentReference, value: string) =>
+  redactAgentValue(agent, value) as string;
+
+const serializeAgentState = (agent: AgentWithState) => {
+  let state: Record<string, unknown>;
+  if (typeof agent.state.model_dump === 'function') {
+    state = agent.state.model_dump();
+  } else {
+    state = {
+      stopped: agent.state.stopped,
+      paused: agent.state.paused,
+      n_steps: agent.state.n_steps,
+    };
+  }
+  return redactAgentValue(agent, state) as Record<string, unknown>;
 };
 
 const toDate = (timestamp?: number | null) => {
@@ -136,12 +165,14 @@ export class UpdateAgentTaskEvent extends BaseEvent {
     if (agent._task_start_time == null) {
       throw new Error('Agent must have _task_start_time attribute');
     }
+    const finalResult = agent.history.final_result();
     return new UpdateAgentTaskEvent({
       id: String(agent.task_id),
       device_id: getDeviceId(agent),
       stopped: agent.state.stopped,
       paused: agent.state.paused,
-      done_output: agent.history.final_result(),
+      done_output:
+        finalResult == null ? null : redactAgentString(agent, finalResult),
       finished_at: agent.history.is_done() ? new Date() : null,
       agent_state: serializeAgentState(agent),
       user_feedback_type: null,
@@ -310,11 +341,16 @@ export class CreateAgentStepEvent extends BaseEvent {
       device_id: getDeviceId(agent),
       agent_task_id: String(agent.task_id),
       step: agent.state.n_steps,
-      evaluation_previous_goal: currentState?.evaluation_previous_goal ?? '',
-      memory: currentState?.memory ?? '',
-      next_goal: currentState?.next_goal ?? '',
-      actions: actions_data ?? [],
-      url: browser_state_summary.url ?? '',
+      evaluation_previous_goal: redactAgentString(
+        agent,
+        currentState?.evaluation_previous_goal ?? ''
+      ),
+      memory: redactAgentString(agent, currentState?.memory ?? ''),
+      next_goal: redactAgentString(agent, currentState?.next_goal ?? ''),
+      actions: redactAgentValue(agent, actions_data ?? []) as Array<
+        Record<string, unknown>
+      >,
+      url: redactAgentString(agent, browser_state_summary.url ?? ''),
       screenshot_url: screenshot,
     });
   }
@@ -398,7 +434,7 @@ export class CreateAgentTaskEvent extends BaseEvent {
       id: String(agent.task_id),
       device_id: getDeviceId(agent),
       agent_session_id: String(agent.session_id),
-      task: agent.task,
+      task: redactAgentString(agent, agent.task),
       llm_model: agent.llm.model_name || agent.llm.model || 'unknown',
       agent_state: serializeAgentState(agent),
       stopped: false,
