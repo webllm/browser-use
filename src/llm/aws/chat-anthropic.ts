@@ -28,7 +28,7 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import { ChatInvokeCompletion } from '../views.js';
 import { type Message } from '../messages.js';
@@ -325,7 +325,7 @@ export class ChatAnthropicBedrock implements BaseChatModel {
         options.signal ? { abortSignal: options.signal } : undefined
       );
 
-      raiseIfOutputTruncated(response?.stopReason, {
+      raiseIfStructuredOutputTruncated(output_format, response?.stopReason, {
         model: this.model,
         tokenLimit: this.max_tokens,
       });

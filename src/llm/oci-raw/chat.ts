@@ -10,7 +10,7 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
@@ -540,7 +540,7 @@ export class ChatOCIRaw implements BaseChatModel {
       const payload = response.chatResult?.chatResponse;
       const usage = this.getUsage(payload);
       const { text, thinking, stopReason } = this.extractText(payload);
-      raiseIfOutputTruncated(stopReason, {
+      raiseIfStructuredOutputTruncated(outputFormat, stopReason, {
         model: this.model,
         tokenLimit: this.maxTokens,
       });

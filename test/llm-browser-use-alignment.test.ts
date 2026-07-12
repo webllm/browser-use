@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ChatBrowserUse } from '../src/llm/browser-use/chat.js';
-import { ModelRateLimitError } from '../src/llm/exceptions.js';
+import {
+  ModelOutputTruncatedError,
+  ModelRateLimitError,
+} from '../src/llm/exceptions.js';
 import { UserMessage } from '../src/llm/messages.js';
 
 const createFetchResponse = (status: number, body: unknown): Response =>
@@ -83,6 +86,29 @@ describe('ChatBrowserUse alignment', () => {
     expect(result.completion).toBe('gateway response');
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(request.body)).model).toBe(model);
+  });
+
+  it('returns partial text but rejects truncated structured output', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createFetchResponse(200, {
+        completion: '{"value":"partial',
+        finish_reason: 'length',
+      })
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    const textResult = await llm.ainvoke([new UserMessage('write')]);
+    expect(textResult.completion).toBe('{"value":"partial');
+    expect(textResult.stop_reason).toBe('length');
+
+    await expect(
+      llm.ainvoke(
+        [new UserMessage('extract')],
+        z.object({ value: z.string() }) as any
+      )
+    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 
   it.each([

@@ -11,7 +11,7 @@ import { AnthropicMessageSerializer } from './serializer.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 
@@ -496,10 +496,14 @@ export class ChatAnthropic implements BaseChatModel {
         );
       }
 
-      raiseIfOutputTruncated((response as any).stop_reason, {
-        model: this.model,
-        tokenLimit: this.maxTokens,
-      });
+      raiseIfStructuredOutputTruncated(
+        output_format,
+        (response as any).stop_reason,
+        {
+          model: this.model,
+          tokenLimit: this.maxTokens,
+        }
+      );
 
       const content = this.extractContentBlocks(response);
       const usage = this.getUsage(response);

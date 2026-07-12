@@ -348,13 +348,34 @@ describe('OpenAI-compatible providers alignment', () => {
     ['Cerebras', () => new ChatCerebras({ model: 'llama3.1-8b' })],
     ['Vercel', () => new ChatVercel({ model: 'openai/gpt-4o' })],
   ])(
-    'reports %s length finishes as output truncation before parsing',
+    'reports %s length finishes as structured output truncation before parsing',
     async (_provider, createLlm) => {
       openaiCreateMock.mockResolvedValue(buildResponse(null, 'length'));
 
       await expect(
-        createLlm().ainvoke([new UserMessage('produce a long answer')])
+        createLlm().ainvoke(
+          [new UserMessage('produce a long answer')],
+          z.object({ value: z.string() }) as any
+        )
       ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
     }
   );
+
+  it.each([
+    ['OpenAI', () => new ChatOpenAI({ model: 'gpt-4o' })],
+    ['OpenRouter', () => new ChatOpenRouter({ model: 'openai/gpt-4o' })],
+    ['DeepSeek', () => new ChatDeepSeek({ model: 'deepseek-chat' })],
+    ['Mistral', () => new ChatMistral({ model: 'mistral-medium-latest' })],
+    ['Cerebras', () => new ChatCerebras({ model: 'llama3.1-8b' })],
+    ['Vercel', () => new ChatVercel({ model: 'openai/gpt-4o' })],
+  ])('preserves %s partial text completions', async (_provider, createLlm) => {
+    openaiCreateMock.mockResolvedValue(buildResponse('partial', 'length'));
+
+    const response = await createLlm().ainvoke([
+      new UserMessage('produce a long answer'),
+    ]);
+
+    expect(response.completion).toBe('partial');
+    expect(response.stop_reason).toBe('length');
+  });
 });

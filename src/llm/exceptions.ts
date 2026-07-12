@@ -65,3 +65,14 @@ export const raiseIfOutputTruncated = (
     details.model ?? null
   );
 };
+
+export const raiseIfStructuredOutputTruncated = (
+  outputFormat: unknown,
+  reason: unknown,
+  details: OutputTruncationDetails = {}
+): void => {
+  if (outputFormat == null) {
+    return;
+  }
+  raiseIfOutputTruncated(reason, details);
+};

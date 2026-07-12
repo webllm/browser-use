@@ -273,16 +273,22 @@ describe('ChatAzure alignment', () => {
           incomplete_details: { reason: 'max_output_tokens' },
         }),
     ],
-  ])('reports truncation from %s', async (_label, useResponsesApi, arrange) => {
-    arrange();
-    const llm = new ChatAzure({
-      model: useResponsesApi ? 'gpt-5.1-codex' : 'gpt-4o',
-      useResponsesApi,
-      maxCompletionTokens: 128,
-    });
+  ])(
+    'reports structured output truncation from %s',
+    async (_label, useResponsesApi, arrange) => {
+      arrange();
+      const llm = new ChatAzure({
+        model: useResponsesApi ? 'gpt-5.1-codex' : 'gpt-4o',
+        useResponsesApi,
+        maxCompletionTokens: 128,
+      });
 
-    await expect(
-      llm.ainvoke([new UserMessage('produce a long answer')])
-    ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
-  });
+      await expect(
+        llm.ainvoke(
+          [new UserMessage('produce a long answer')],
+          z.object({ value: z.string() }) as any
+        )
+      ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
+    }
+  );
 });

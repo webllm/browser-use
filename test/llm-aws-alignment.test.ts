@@ -207,7 +207,7 @@ describe('AWS Bedrock alignment', () => {
     ['Bedrock Converse', () => new ChatBedrockConverse({ maxTokens: 128 })],
     ['Anthropic Bedrock', () => new ChatAnthropicBedrock({ max_tokens: 128 })],
   ])(
-    'reports %s max_tokens stops as output truncation',
+    'reports %s max_tokens stops as structured output truncation',
     async (_, createLlm) => {
       bedrockSendMock.mockResolvedValue({
         ...buildResponse([{ text: 'partial' }]),
@@ -215,7 +215,10 @@ describe('AWS Bedrock alignment', () => {
       });
 
       await expect(
-        createLlm().ainvoke([new UserMessage('produce a long answer')])
+        createLlm().ainvoke(
+          [new UserMessage('produce a long answer')],
+          z.object({ value: z.string() }) as any
+        )
       ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
     }
   );

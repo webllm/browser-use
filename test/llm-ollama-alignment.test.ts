@@ -82,7 +82,7 @@ describe('ChatOllama alignment', () => {
     expect(response.usage?.total_tokens).toBe(15);
   });
 
-  it('reports length done reasons as output truncation', async () => {
+  it('reports length done reasons as structured output truncation', async () => {
     ollamaChatMock.mockResolvedValue({
       ...buildResponse('partial'),
       done_reason: 'length',
@@ -90,7 +90,10 @@ describe('ChatOllama alignment', () => {
 
     const llm = new ChatOllama('qwen2.5:latest');
     await expect(
-      llm.ainvoke([new UserMessage('produce a long answer')])
+      llm.ainvoke(
+        [new UserMessage('produce a long answer')],
+        z.object({ value: z.string() }) as any
+      )
     ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 

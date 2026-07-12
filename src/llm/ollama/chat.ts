@@ -5,7 +5,10 @@ import {
   type Options as OllamaOptions,
 } from 'ollama';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, raiseIfOutputTruncated } from '../exceptions.js';
+import {
+  ModelProviderError,
+  raiseIfStructuredOutputTruncated,
+} from '../exceptions.js';
 import { ChatInvokeCompletion } from '../views.js';
 import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
@@ -211,7 +214,7 @@ export class ChatOllama implements BaseChatModel {
       : await requestPromise;
 
     try {
-      raiseIfOutputTruncated(response.done_reason, {
+      raiseIfStructuredOutputTruncated(output_format, response.done_reason, {
         model: this.model,
       });
       const content = response.message.content;

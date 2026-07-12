@@ -7,7 +7,7 @@ import { OpenAIMessageSerializer } from './serializer.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 
@@ -298,11 +298,15 @@ export class ChatOpenAI implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
-      raiseIfOutputTruncated(response.choices[0].finish_reason, {
-        model: this.model,
-        tokenLimit: this.maxCompletionTokens,
-        tokenLimitName: 'max_completion_tokens',
-      });
+      raiseIfStructuredOutputTruncated(
+        output_format,
+        response.choices[0].finish_reason,
+        {
+          model: this.model,
+          tokenLimit: this.maxCompletionTokens,
+          tokenLimitName: 'max_completion_tokens',
+        }
+      );
       const content = response.choices[0].message.content || '';
       const usage = this.getUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;

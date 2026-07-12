@@ -56,6 +56,7 @@ import {
   ModelRateLimitError,
   isOutputTruncationReason,
   raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../src/llm/exceptions.js';
 import {
   ChatInvokeCompletion,
@@ -492,6 +493,19 @@ describe('LLM Exceptions', () => {
       expect(() =>
         raiseIfOutputTruncated('MAX_TOKENS', { model: 'model-test' })
       ).toThrow("the model's output token limit");
+    });
+
+    it('only rejects truncation for structured output requests', () => {
+      expect(() =>
+        raiseIfStructuredOutputTruncated(undefined, 'length', {
+          model: 'model-test',
+        })
+      ).not.toThrow();
+      expect(() =>
+        raiseIfStructuredOutputTruncated({ parse: vi.fn() }, 'length', {
+          model: 'model-test',
+        })
+      ).toThrowError(ModelOutputTruncatedError);
     });
   });
 });

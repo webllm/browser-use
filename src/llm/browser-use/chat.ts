@@ -4,7 +4,7 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
@@ -431,7 +431,9 @@ export class ChatBrowserUse implements BaseChatModel {
     const completionPayload = (result as any).completion;
     const stopReason =
       (result as any).stop_reason ?? (result as any).finish_reason ?? null;
-    raiseIfOutputTruncated(stopReason, { model: this.model });
+    raiseIfStructuredOutputTruncated(output_format, stopReason, {
+      model: this.model,
+    });
 
     if (!output_format) {
       const textCompletion =

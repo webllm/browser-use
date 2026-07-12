@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, raiseIfOutputTruncated } from '../exceptions.js';
+import {
+  ModelProviderError,
+  raiseIfStructuredOutputTruncated,
+} from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
@@ -205,9 +208,11 @@ export class ChatOpenRouter implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
-      raiseIfOutputTruncated(response.choices[0].finish_reason, {
-        model: this.model,
-      });
+      raiseIfStructuredOutputTruncated(
+        output_format,
+        response.choices[0].finish_reason,
+        { model: this.model }
+      );
       const content = response.choices[0].message.content || '';
       const usage = this.getUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;

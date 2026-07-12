@@ -3,7 +3,7 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
@@ -214,10 +214,14 @@ export class ChatMistral implements BaseChatModel {
         options.signal ? { signal: options.signal } : undefined
       );
 
-      raiseIfOutputTruncated(response.choices[0].finish_reason, {
-        model: this.model,
-        tokenLimit: this.maxTokens,
-      });
+      raiseIfStructuredOutputTruncated(
+        output_format,
+        response.choices[0].finish_reason,
+        {
+          model: this.model,
+          tokenLimit: this.maxTokens,
+        }
+      );
       const content = response.choices[0].message.content || '';
       const usage = this.getUsage(response);
       const stopReason = response.choices[0].finish_reason ?? null;

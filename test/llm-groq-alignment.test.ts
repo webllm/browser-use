@@ -110,7 +110,7 @@ describe('ChatGroq alignment', () => {
     expect((response.completion as any).value).toBe('ok');
   });
 
-  it('reports length finishes as output truncation', async () => {
+  it('reports length finishes as structured output truncation', async () => {
     groqCreateMock.mockResolvedValue({
       ...buildResponse('partial'),
       choices: [{ message: { content: 'partial' }, finish_reason: 'length' }],
@@ -118,7 +118,10 @@ describe('ChatGroq alignment', () => {
 
     const llm = new ChatGroq();
     await expect(
-      llm.ainvoke([new UserMessage('produce a long answer')])
+      llm.ainvoke(
+        [new UserMessage('produce a long answer')],
+        z.object({ value: z.string() }) as any
+      )
     ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

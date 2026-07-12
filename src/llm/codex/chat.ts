@@ -3,7 +3,7 @@ import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
-  raiseIfOutputTruncated,
+  raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import type { Message } from '../messages.js';
 import {
@@ -527,11 +527,15 @@ export class ChatCodex implements BaseChatModel {
       );
       const response = await this.collectResponse(responseOrStream);
 
-      raiseIfOutputTruncated(response?.incomplete_details?.reason, {
-        model: this.model,
-        tokenLimit: this.maxCompletionTokens,
-        tokenLimitName: 'max_output_tokens',
-      });
+      raiseIfStructuredOutputTruncated(
+        output_format,
+        response?.incomplete_details?.reason,
+        {
+          model: this.model,
+          tokenLimit: this.maxCompletionTokens,
+          tokenLimitName: 'max_output_tokens',
+        }
+      );
 
       const content = this.getResponseOutputText(response);
       const usage = this.getResponsesUsage(response);

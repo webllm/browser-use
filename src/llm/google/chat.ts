@@ -4,7 +4,10 @@ import type {
   GenerateContentParameters,
 } from '@google/genai';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
-import { ModelProviderError, raiseIfOutputTruncated } from '../exceptions.js';
+import {
+  ModelProviderError,
+  raiseIfStructuredOutputTruncated,
+} from '../exceptions.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
@@ -500,11 +503,15 @@ export class ChatGoogle implements BaseChatModel {
         const result = await this.client.models.generateContent(request);
 
         const candidate = result.candidates?.[0];
-        raiseIfOutputTruncated(candidate?.finishReason, {
-          model: this.model,
-          tokenLimit: this.maxOutputTokens,
-          tokenLimitName: 'max_output_tokens',
-        });
+        raiseIfStructuredOutputTruncated(
+          output_format,
+          candidate?.finishReason,
+          {
+            model: this.model,
+            tokenLimit: this.maxOutputTokens,
+            tokenLimitName: 'max_output_tokens',
+          }
+        );
         const textParts =
           candidate?.content?.parts?.filter((p: any) => p.text) || [];
         const text = textParts.map((p: any) => p.text).join('');

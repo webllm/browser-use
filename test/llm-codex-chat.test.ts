@@ -312,7 +312,7 @@ describe('ChatCodex', () => {
     expect(response.completion).toBe('fallback text');
   });
 
-  it('reports max_output_tokens incomplete responses as truncation', async () => {
+  it('reports max_output_tokens incomplete structured responses as truncation', async () => {
     responsesCreateMock.mockResolvedValue({
       ...buildResponse('partial'),
       status: 'incomplete',
@@ -324,7 +324,10 @@ describe('ChatCodex', () => {
     });
 
     await expect(
-      llm.ainvoke([new UserMessage('produce a long answer')])
+      llm.ainvoke(
+        [new UserMessage('produce a long answer')],
+        z.object({ value: z.string() }) as any
+      )
     ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });

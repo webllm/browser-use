@@ -296,7 +296,7 @@ describe('ChatOCIRaw alignment', () => {
     expect(instanceProviderBuildMock).toHaveBeenCalledTimes(1);
   });
 
-  it('reports max token finish reasons as output truncation', async () => {
+  it('reports max token finish reasons as structured output truncation', async () => {
     chatMock.mockResolvedValue({
       chatResult: {
         chatResponse: {
@@ -315,7 +315,10 @@ describe('ChatOCIRaw alignment', () => {
 
     const llm = new ChatOCIRaw(buildOptions({ maxTokens: 128 }));
     await expect(
-      llm.ainvoke([new UserMessage('produce a long answer')])
+      llm.ainvoke(
+        [new UserMessage('produce a long answer')],
+        z.object({ value: z.string() }) as any
+      )
     ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 });
