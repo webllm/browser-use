@@ -137,6 +137,7 @@ export class CloudManagementClient {
     const response = await this.fetch_impl(`${this.api_base_url}${path}`, {
       ...init,
       headers: this.auth_headers(init.headers as Record<string, string>),
+      redirect: 'error',
     });
 
     const text = await response.text();

@@ -1,10 +1,27 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { DeviceAuthClient } from '../src/sync/auth.js';
 import {
   CloudBrowserAuthError,
   CloudBrowserClient,
   CloudBrowserError,
 } from '../src/browser/cloud/index.js';
+
+const listenOnLoopback = async (server: Server) => {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return (server.address() as AddressInfo).port;
+};
+
+const closeServer = async (server: Server) => {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+};
 
 describe('browser cloud alignment', () => {
   afterEach(() => {
@@ -53,6 +70,7 @@ describe('browser cloud alignment', () => {
       'X-Browser-Use-API-Key': 'test-api-key',
       'Content-Type': 'application/json',
     });
+    expect(init.redirect).toBe('error');
     expect(JSON.parse(String(init.body))).toEqual({
       profile_id: 'profile-123',
       proxy_country_code: 'us',
@@ -184,5 +202,33 @@ describe('browser cloud alignment', () => {
     await expect(client.create_browser({})).rejects.toBeInstanceOf(
       CloudBrowserError
     );
+  });
+
+  it('does not forward its API key to a redirect target', async () => {
+    let redirectedRequests = 0;
+    const redirectTarget = createServer((_request, response) => {
+      redirectedRequests += 1;
+      response.end('{}');
+    });
+    const targetPort = await listenOnLoopback(redirectTarget);
+    const apiServer = createServer((_request, response) => {
+      response.writeHead(302, {
+        location: `http://127.0.0.1:${targetPort}/steal`,
+      });
+      response.end();
+    });
+    const apiPort = await listenOnLoopback(apiServer);
+
+    try {
+      const client = new CloudBrowserClient({
+        api_base_url: `http://127.0.0.1:${apiPort}`,
+        api_key: 'top-secret-api-key',
+      });
+
+      await expect(client.create_browser({})).rejects.toThrow();
+      expect(redirectedRequests).toBe(0);
+    } finally {
+      await Promise.all([closeServer(apiServer), closeServer(redirectTarget)]);
+    }
   });
 });

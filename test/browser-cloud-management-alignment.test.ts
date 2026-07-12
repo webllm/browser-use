@@ -40,6 +40,7 @@ describe('browser cloud management alignment', () => {
         'X-Browser-Use-API-Key'
       ]
     ).toBe('bu_test_key');
+    expect(requests[0]!.init.redirect).toBe('error');
   });
 
   it('supports session and profile lifecycle endpoints', async () => {

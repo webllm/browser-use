@@ -118,6 +118,7 @@ export class CloudBrowserClient {
     const response = await this.fetch_impl(`${this.api_base_url}${path}`, {
       ...init,
       headers: this._auth_headers(extra_headers),
+      redirect: 'error',
     });
 
     const text = await response.text();
