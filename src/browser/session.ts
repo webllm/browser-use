@@ -29,6 +29,10 @@ import {
 } from './text-search.js';
 import { SMART_SCROLL_JS } from './smart-scroll.js';
 import {
+  extractBoundedPageHtml,
+  MAX_MAIN_PAGE_HTML_CHARS,
+} from '../controller/page-content.js';
+import {
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,
   MAX_DROPDOWN_MESSAGE_CHARS,
@@ -5304,7 +5308,16 @@ export class BrowserSession {
     }
     await this.validate_page_after_action(page);
     try {
-      return await page.content();
+      const result = await extractBoundedPageHtml(
+        page,
+        MAX_MAIN_PAGE_HTML_CHARS
+      );
+      if (result.sourceUrl && !this._is_url_allowed(result.sourceUrl)) {
+        throw new URLNotAllowedError(
+          `Page HTML source is blocked by browser domain policy: ${this._get_url_access_denial_reason(result.sourceUrl)}`
+        );
+      }
+      return result.html;
     } finally {
       await this.validate_page_after_action(page);
     }

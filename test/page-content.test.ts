@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
+  MAX_PAGE_HTML_SELECTOR_CHARS,
 } from '../src/controller/page-content.js';
 
 describe('bounded page HTML extraction', () => {
@@ -12,6 +13,7 @@ describe('bounded page HTML extraction', () => {
       truncated: false,
       visitedNodes: 12,
       sourceUrl: 'https://example.com/page',
+      rootFound: true,
     }));
 
     const result = await extractBoundedPageHtml(
@@ -23,6 +25,7 @@ describe('bounded page HTML extraction', () => {
     expect(result.truncated).toBe(true);
     expect(result.visitedNodes).toBe(12);
     expect(result.sourceUrl).toBe('https://example.com/page');
+    expect(result.rootFound).toBe(true);
     expect(evaluate).toHaveBeenCalledWith(
       expect.any(Function),
       expect.objectContaining({
@@ -40,5 +43,33 @@ describe('bounded page HTML extraction', () => {
 
     expect(result.html).toHaveLength(1_000);
     expect(result.truncated).toBe(true);
+  });
+
+  it('passes a bounded selector to the page serializer', async () => {
+    const evaluate = vi.fn(async (_fn: unknown, limits: any) => ({
+      html: '<main>content</main>',
+      truncated: false,
+      visitedNodes: 2,
+      sourceUrl: 'https://example.com/page',
+      rootFound: true,
+      selector: limits.rootSelector,
+    }));
+
+    const result = await extractBoundedPageHtml(
+      { evaluate },
+      MAX_MAIN_PAGE_HTML_CHARS,
+      { selector: `main${'x'.repeat(3_000)}` }
+    );
+
+    expect(result.rootFound).toBe(true);
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({
+        rootSelector: expect.stringMatching(/^mainx+$/),
+      })
+    );
+    expect((evaluate.mock.calls[0]?.[1] as any).rootSelector).toHaveLength(
+      MAX_PAGE_HTML_SELECTOR_CHARS
+    );
   });
 });

@@ -8,11 +8,18 @@ import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
+import { readBoundedPageTitle } from '../browser/state-limits.js';
+import {
+  extractBoundedPageHtml,
+  MAX_MAIN_PAGE_HTML_CHARS,
+  MAX_PAGE_HTML_SELECTOR_CHARS,
+} from '../controller/page-content.js';
 import { isMainModule } from '../entrypoint.js';
 import {
   getProcessCommandLine,
   type ProcessCommandLineReader,
 } from '../process-identity.js';
+import { readBoundedCliElementData } from './page-inspection.js';
 
 export interface DirectModeState {
   mode?: 'local' | 'remote';
@@ -703,52 +710,7 @@ const readDirectNodeData = async (
 
   await validateDirectPageAfterAction(session, page);
   try {
-    return await page.evaluate(
-      ({ xpath, dataKind }: { xpath: string; dataKind: string }) => {
-        const element = document.evaluate(
-          xpath,
-          document,
-          null,
-          XPathResult.FIRST_ORDERED_NODE_TYPE,
-          null
-        ).singleNodeValue as HTMLElement | null;
-        if (!element) {
-          return null;
-        }
-
-        if (dataKind === 'text') {
-          return element.textContent?.trim() ?? '';
-        }
-        if (dataKind === 'value') {
-          return 'value' in element
-            ? String((element as HTMLInputElement).value ?? '')
-            : null;
-        }
-        if (dataKind === 'attributes') {
-          return Object.fromEntries(
-            Array.from(element.attributes).map((attribute) => [
-              attribute.name,
-              attribute.value,
-            ])
-          );
-        }
-        if (dataKind === 'bbox') {
-          const rect = element.getBoundingClientRect();
-          return {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-            left: rect.left,
-          };
-        }
-        return null;
-      },
-      { xpath: node.xpath, dataKind: kind }
-    );
+    return await readBoundedCliElementData(page, node.xpath, kind);
   } finally {
     await validateDirectPageAfterAction(session, page);
   }
@@ -1518,12 +1480,16 @@ export const run_direct_command = async (
         }
         await validateDirectPageAfterAction(session, page);
         try {
-          writeLine(environment.stdout, await page.title());
+          writeLine(environment.stdout, await readBoundedPageTitle(page));
         } finally {
           await validateDirectPageAfterAction(session, page);
         }
       } else if (subcommand === 'html') {
-        const selector = args.slice(2).join(' ').trim();
+        const selector = args
+          .slice(2)
+          .join(' ')
+          .trim()
+          .slice(0, MAX_PAGE_HTML_SELECTOR_CHARS);
         if (!selector) {
           writeLine(
             environment.stdout,
@@ -1537,18 +1503,19 @@ export const run_direct_command = async (
           await validateDirectPageAfterAction(session, page);
           const html = await (async () => {
             try {
-              return await page.evaluate((targetSelector: string) => {
-                const element = document.querySelector(targetSelector);
-                return element ? element.outerHTML : null;
-              }, selector);
+              return await extractBoundedPageHtml(
+                page,
+                MAX_MAIN_PAGE_HTML_CHARS,
+                { selector }
+              );
             } finally {
               await validateDirectPageAfterAction(session, page);
             }
           })();
-          if (typeof html !== 'string' || html.length === 0) {
+          if (!html.rootFound || html.html.length === 0) {
             throw new Error(`No element found for selector: ${selector}`);
           }
-          writeLine(environment.stdout, html);
+          writeLine(environment.stdout, html.html);
         }
       } else if (
         subcommand === 'text' ||
@@ -1584,7 +1551,11 @@ export const run_direct_command = async (
         })
       );
     } else if (command === 'html') {
-      const selector = args.slice(1).join(' ').trim();
+      const selector = args
+        .slice(1)
+        .join(' ')
+        .trim()
+        .slice(0, MAX_PAGE_HTML_SELECTOR_CHARS);
       if (!selector) {
         writeLine(environment.stdout, (await session.get_page_html?.()) ?? '');
       } else {
@@ -1595,18 +1566,19 @@ export const run_direct_command = async (
         await validateDirectPageAfterAction(session, page);
         const html = await (async () => {
           try {
-            return await page.evaluate((targetSelector: string) => {
-              const element = document.querySelector(targetSelector);
-              return element ? element.outerHTML : null;
-            }, selector);
+            return await extractBoundedPageHtml(
+              page,
+              MAX_MAIN_PAGE_HTML_CHARS,
+              { selector }
+            );
           } finally {
             await validateDirectPageAfterAction(session, page);
           }
         })();
-        if (typeof html !== 'string' || html.length === 0) {
+        if (!html.rootFound || html.html.length === 0) {
           throw new Error(`No element found for selector: ${selector}`);
         }
-        writeLine(environment.stdout, html);
+        writeLine(environment.stdout, html.html);
       }
     } else if (command === 'eval') {
       const script = args.slice(1).join(' ').trim();

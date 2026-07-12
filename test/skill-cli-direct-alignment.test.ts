@@ -1176,12 +1176,24 @@ describe('skill-cli direct alignment', () => {
             input:
               | string
               | {
-                  xpath: string;
+                  elementXPath: string;
                   dataKind: string;
+                }
+              | {
+                  rootSelector: string | null;
                 }
           ) => {
             if (typeof input === 'string') {
               return `<div class="target">${input}</div>`;
+            }
+            if ('rootSelector' in input) {
+              return {
+                html: `<div class="target">${input.rootSelector}</div>`,
+                truncated: false,
+                visitedNodes: 2,
+                sourceUrl: 'https://example.com',
+                rootFound: true,
+              };
             }
             if (input.dataKind === 'text') {
               return 'Visible text';

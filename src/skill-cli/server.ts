@@ -2,6 +2,13 @@ import fs, { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { Request, Response } from './protocol.js';
 import { SessionRegistry } from './sessions.js';
+import {
+  extractBoundedPageHtml,
+  MAX_MAIN_PAGE_HTML_CHARS,
+  MAX_PAGE_HTML_SELECTOR_CHARS,
+} from '../controller/page-content.js';
+import { readBoundedPageTitle } from '../browser/state-limits.js';
+import { readBoundedCliElementData } from './page-inspection.js';
 
 export interface SkillCliServerOptions {
   registry?: SessionRegistry;
@@ -193,10 +200,10 @@ export class SkillCliServer {
     return node;
   }
 
-  private async _run_with_page_validation(
+  private async _run_with_page_validation<T>(
     browser_session: any,
-    action: () => Promise<unknown>
-  ) {
+    action: () => Promise<T>
+  ): Promise<T> {
     const page = await browser_session.get_current_page?.();
     await browser_session.validate_page_after_action?.(page);
     try {
@@ -221,52 +228,7 @@ export class SkillCliServer {
     }
 
     return await this._run_with_page_validation(browser_session, () =>
-      page.evaluate(
-        ({ xpath, dataKind }: { xpath: string; dataKind: string }) => {
-          const element = document.evaluate(
-            xpath,
-            document,
-            null,
-            XPathResult.FIRST_ORDERED_NODE_TYPE,
-            null
-          ).singleNodeValue as HTMLElement | null;
-          if (!element) {
-            return null;
-          }
-
-          if (dataKind === 'text') {
-            return element.textContent?.trim() ?? '';
-          }
-          if (dataKind === 'value') {
-            return 'value' in element
-              ? String((element as HTMLInputElement).value ?? '')
-              : null;
-          }
-          if (dataKind === 'attributes') {
-            return Object.fromEntries(
-              Array.from(element.attributes).map((attribute) => [
-                attribute.name,
-                attribute.value,
-              ])
-            );
-          }
-          if (dataKind === 'bbox') {
-            const rect = element.getBoundingClientRect();
-            return {
-              x: rect.x,
-              y: rect.y,
-              width: rect.width,
-              height: rect.height,
-              top: rect.top,
-              right: rect.right,
-              bottom: rect.bottom,
-              left: rect.left,
-            };
-          }
-          return null;
-        },
-        { xpath: node.xpath, dataKind: kind }
-      )
+      readBoundedCliElementData(page, node.xpath, kind)
     );
   }
 
@@ -528,7 +490,9 @@ export class SkillCliServer {
 
     if (action === 'html') {
       const selector =
-        typeof params.selector === 'string' ? params.selector.trim() : '';
+        typeof params.selector === 'string'
+          ? params.selector.trim().slice(0, MAX_PAGE_HTML_SELECTOR_CHARS)
+          : '';
       if (!selector) {
         return { html: await browser_session.get_page_html() };
       }
@@ -537,16 +501,13 @@ export class SkillCliServer {
       if (!page?.evaluate) {
         throw new Error('No active page available for html');
       }
-      const html = await this._run_with_page_validation(browser_session, () =>
-        page.evaluate((targetSelector: string) => {
-          const element = document.querySelector(targetSelector);
-          return element ? element.outerHTML : null;
-        }, selector)
+      const result = await this._run_with_page_validation(browser_session, () =>
+        extractBoundedPageHtml(page, MAX_MAIN_PAGE_HTML_CHARS, { selector })
       );
-      if (typeof html !== 'string' || html.length === 0) {
+      if (!result.rootFound || result.html.length === 0) {
         throw new Error(`No element found for selector: ${selector}`);
       }
-      return { selector, html };
+      return { selector, html: result.html, truncated: result.truncated };
     }
 
     if (action === 'eval') {
@@ -578,14 +539,16 @@ export class SkillCliServer {
       }
       return {
         title: await this._run_with_page_validation(browser_session, () =>
-          page.title()
+          readBoundedPageTitle(page)
         ),
       };
     }
 
     if (action === 'get_html') {
       const selector =
-        typeof params.selector === 'string' ? params.selector.trim() : '';
+        typeof params.selector === 'string'
+          ? params.selector.trim().slice(0, MAX_PAGE_HTML_SELECTOR_CHARS)
+          : '';
       return selector
         ? await this._handle_browser_action('html', sessionName, { selector })
         : await this._handle_browser_action('html', sessionName, {});
