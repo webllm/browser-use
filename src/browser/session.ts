@@ -27,6 +27,7 @@ import {
   MAX_SCROLL_TEXT_QUERY_CHARS,
   type ScrollToTextPageResult,
 } from './text-search.js';
+import { SMART_SCROLL_JS } from './smart-scroll.js';
 import {
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,
@@ -7568,32 +7569,6 @@ export class BrowserSession {
 
     // Fallback to JavaScript for older browsers or when CDP fails
     this.logger.debug('Falling back to JavaScript scrolling');
-    const SMART_SCROLL_JS = `(dy) => {
-			const bigEnough = el => el.clientHeight >= window.innerHeight * 0.5;
-			const canScroll = el =>
-				el &&
-				/(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY) &&
-				el.scrollHeight > el.clientHeight &&
-				bigEnough(el);
-
-			let el = document.activeElement;
-			while (el && !canScroll(el) && el !== document.body) el = el.parentElement;
-
-			el = canScroll(el)
-					? el
-					: [...document.querySelectorAll('*')].find(canScroll)
-					|| document.scrollingElement
-					|| document.documentElement;
-
-			if (el === document.scrollingElement ||
-				el === document.documentElement ||
-				el === document.body) {
-				window.scrollBy(0, dy);
-			} else {
-				el.scrollBy(0, dy);
-			}
-		}`;
-
     await page.evaluate(SMART_SCROLL_JS, pixels);
   }
 

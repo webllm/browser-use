@@ -2649,9 +2649,9 @@ You will be given a query and the markdown of a webpage that has been filtered t
 									success: true,
 									method: 'direct_container_scroll',
 									containerType: 'element',
-									containerTag: scrolledElement.tagName.toLowerCase(),
-									containerClass: scrolledElement.className || '',
-									containerId: scrolledElement.id || '',
+									containerTag: String(scrolledElement.tagName || '').toLowerCase().slice(0, 128),
+									containerClass: String(scrolledElement.className || '').slice(0, 1024),
+									containerId: String(scrolledElement.id || '').slice(0, 1024),
 									scrollDelta: scrollDelta
 								};
 							} else {
