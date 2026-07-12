@@ -547,18 +547,6 @@ const FILE_TYPES: Record<string, FileClass> = {
   xml: XmlFile,
 };
 
-const TYPE_NAME_MAP: Record<string, FileClass> = {
-  MarkdownFile,
-  TxtFile,
-  JsonFile,
-  JsonlFile,
-  CsvFile,
-  PdfFile,
-  DocxFile,
-  HtmlFile,
-  XmlFile,
-};
-
 export interface FileState {
   type: string;
   data: { name: string; content: string };
@@ -1155,15 +1143,49 @@ export class FileSystem {
   }
 
   static from_state_sync(state: FileSystemState) {
+    if (
+      !state ||
+      typeof state.base_dir !== 'string' ||
+      state.base_dir.trim().length === 0 ||
+      !state.files ||
+      typeof state.files !== 'object' ||
+      Array.isArray(state.files) ||
+      !Number.isSafeInteger(state.extracted_content_count) ||
+      state.extracted_content_count < 0
+    ) {
+      throw new FileSystemError('Error: Invalid file system state.');
+    }
+
+    const entries = Object.entries(state.files);
+    const filenameRegex = buildFilenameRegex(Object.keys(FILE_TYPES));
+    for (const [filename, fileState] of entries) {
+      const extensionIndex = filename.lastIndexOf('.');
+      const name = filename.slice(0, extensionIndex);
+      const extension = filename.slice(extensionIndex + 1).toLowerCase();
+      const FileCtor = FILE_TYPES[extension];
+      if (
+        filename !== path.basename(filename) ||
+        !filenameRegex.test(filename) ||
+        extensionIndex <= 0 ||
+        name.trim().length === 0 ||
+        !FileCtor ||
+        !fileState ||
+        fileState.type !== FileCtor.name ||
+        !fileState.data ||
+        fileState.data.name !== name ||
+        typeof fileState.data.content !== 'string'
+      ) {
+        throw new FileSystemError(
+          `Error: Invalid file system state entry '${filename}'.`
+        );
+      }
+    }
+
     const fsInstance = new FileSystem(state.base_dir, false);
     fsInstance.extractedContentCount = state.extracted_content_count;
 
-    for (const [filename, fileState] of Object.entries(state.files)) {
-      const FileCtor = TYPE_NAME_MAP[fileState.type];
-      if (!FileCtor) {
-        continue;
-      }
-      const file = new FileCtor(fileState.data.name, fileState.data.content);
+    for (const [filename, fileState] of entries) {
+      const file = fsInstance.instantiateFile(filename, fileState.data.content);
       fsInstance.files.set(filename, file);
       try {
         file.writeSync(fileState.data.content, fsInstance.dataDir);
