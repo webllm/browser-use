@@ -4244,15 +4244,43 @@ export class BrowserSession {
     }
     const page = await this._withAbort(this.get_current_page(), signal);
     await this.validate_page_after_action(page, signal);
+    const elementHandle =
+      typeof locator.elementHandle === 'function'
+        ? await this._withAbort(
+            locator.elementHandle({ timeout: 5000 }),
+            signal
+          )
+        : null;
+    if (typeof locator.elementHandle === 'function' && !elementHandle) {
+      throw new Error('Element not found');
+    }
+    // A Locator is re-resolved against the current document for every action.
+    // Pin the element whenever Playwright exposes an ElementHandle so a click
+    // that navigates cannot make the subsequent fill target a matching element
+    // on a different origin.
+    const inputTarget = elementHandle ?? locator;
     try {
-      await this._withAbort(locator.click({ timeout: 5000 }), signal);
+      await this._withAbort(inputTarget.click({ timeout: 5000 }), signal);
+      // Playwright waits for synchronous click-triggered navigation. Validate
+      // it before any text (which may contain credentials) reaches the page.
+      await this.validate_page_after_action(page, signal);
       if (clear) {
-        await this._withAbort(locator.fill(text, { timeout: 5000 }), signal);
+        await this._withAbort(
+          inputTarget.fill(text, { timeout: 5000 }),
+          signal
+        );
       } else {
-        await this._withAbort(locator.type(text, { timeout: 5000 }), signal);
+        await this._withAbort(
+          inputTarget.type(text, { timeout: 5000 }),
+          signal
+        );
       }
     } finally {
-      await this.validate_page_after_action(page, signal);
+      try {
+        await this.validate_page_after_action(page, signal);
+      } finally {
+        await elementHandle?.dispose().catch(() => undefined);
+      }
     }
   }
 

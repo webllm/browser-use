@@ -869,6 +869,52 @@ esac
     expect(session.active_tab?.url).toBe('about:blank');
   });
 
+  it('does not input text after a click navigates to a disallowed URL', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['https://example.com'],
+      }),
+    });
+    let pageUrl = 'https://example.com/form';
+    const elementHandle = {
+      click: vi.fn(async () => {
+        pageUrl = 'https://evil.test/credential-field';
+      }),
+      fill: vi.fn(async () => {}),
+      type: vi.fn(async () => {}),
+      dispose: vi.fn(async () => {}),
+    };
+    const locator = {
+      elementHandle: vi.fn(async () => elementHandle),
+    };
+    const fakePage = {
+      url: vi.fn(() => pageUrl),
+      title: vi.fn(async () => pageUrl),
+      waitForLoadState: vi.fn(async () => {}),
+      goto: vi.fn(async (url: string) => {
+        pageUrl = url;
+      }),
+    } as any;
+    vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
+    vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage);
+    session.update_current_page(fakePage, 'Form', 'https://example.com/form');
+
+    await expect(
+      session._input_text_element_node(
+        { xpath: '/html/body/input' } as any,
+        'super-secret-value'
+      )
+    ).rejects.toBeInstanceOf(URLNotAllowedError);
+
+    expect(elementHandle.fill).not.toHaveBeenCalled();
+    expect(elementHandle.type).not.toHaveBeenCalled();
+    expect(elementHandle.dispose).toHaveBeenCalledTimes(1);
+    expect(fakePage.goto).toHaveBeenCalledWith(
+      'about:blank',
+      expect.objectContaining({ waitUntil: 'load' })
+    );
+  });
+
   it('rolls back upload-triggered navigation to disallowed URLs', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-nav-'));
     const uploadPath = path.join(tempDir, 'file.txt');
