@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
 import { isMainModule } from '../entrypoint.js';
@@ -14,6 +15,7 @@ export interface DirectModeState {
   cdp_url?: string | null;
   session_id?: string | null;
   browser_pid?: number | null;
+  browser_launch_token?: string | null;
   user_data_dir?: string | null;
   owns_user_data_dir?: boolean | null;
   active_url?: string | null;
@@ -281,10 +283,14 @@ export interface DirectCliEnvironment {
   local_launcher?: (options: { state: DirectModeState }) => Promise<{
     cdp_url: string;
     browser_pid?: number | null;
+    browser_launch_token?: string | null;
     user_data_dir?: string | null;
     owns_user_data_dir?: boolean | null;
   }>;
   kill_process?: (pid: number) => void | Promise<void>;
+  get_process_command_line?: (
+    pid: number
+  ) => string | null | Promise<string | null>;
 }
 
 const DEFAULT_STDOUT: StreamLike = process.stdout;
@@ -328,6 +334,64 @@ export const save_direct_state = (
 
 export const clear_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
   fs.rmSync(state_file, { force: true });
+};
+
+const defaultGetProcessCommandLine = (pid: number): string | null => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return null;
+  }
+
+  if (process.platform === 'linux') {
+    try {
+      const commandLine = fs
+        .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+        .replace(/\0/g, ' ')
+        .trim();
+      return commandLine || null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (process.platform === 'win32') {
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`,
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    if (result.status !== 0) {
+      return null;
+    }
+    return result.stdout.trim() || null;
+  }
+
+  const result = spawnSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  return result.stdout.trim() || null;
+};
+
+const isOwnedDirectBrowserProcess = async (
+  state: DirectModeState,
+  getProcessCommandLine: Required<DirectCliEnvironment>['get_process_command_line']
+) => {
+  const pid = state.browser_pid;
+  const token = state.browser_launch_token?.trim();
+  if (typeof pid !== 'number' || pid <= 0 || !token) {
+    return false;
+  }
+
+  const commandLine = await getProcessCommandLine(pid);
+  return Boolean(commandLine?.includes(`--browser-use-direct-token=${token}`));
 };
 
 const writePrivateFile = (filePath: string, contents: string) => {
@@ -509,12 +573,14 @@ export const defaultLocalLauncher = async (options: {
   const userDataDir = reusingUserDataDir
     ? options.state.user_data_dir
     : fs.mkdtempSync(path.join(os.tmpdir(), 'browser-use-direct-'));
+  const browserLaunchToken = randomUUID();
 
   const child = spawn(
     executablePath,
     [
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${userDataDir}`,
+      `--browser-use-direct-token=${browserLaunchToken}`,
       '--no-first-run',
       '--no-default-browser-check',
       'about:blank',
@@ -531,6 +597,7 @@ export const defaultLocalLauncher = async (options: {
     return {
       cdp_url,
       browser_pid: child.pid ?? null,
+      browser_launch_token: browserLaunchToken,
       user_data_dir: userDataDir,
       owns_user_data_dir: !reusingUserDataDir,
     };
@@ -768,6 +835,27 @@ const createDefaultSessionFactory =
       },
     });
 
+const killOwnedDirectBrowserProcess = async (
+  state: DirectModeState,
+  environment: Required<DirectCliEnvironment>
+) => {
+  if (
+    !(await isOwnedDirectBrowserProcess(
+      state,
+      environment.get_process_command_line
+    ))
+  ) {
+    return false;
+  }
+
+  try {
+    await environment.kill_process(state.browser_pid!);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const connectDirectSession = async (
   useRemote: boolean,
   environment: Required<DirectCliEnvironment>
@@ -800,11 +888,7 @@ const connectDirectSession = async (
       typeof currentState.browser_pid === 'number' &&
       currentState.browser_pid > 0
     ) {
-      try {
-        await environment.kill_process(currentState.browser_pid);
-      } catch {
-        // Ignore cleanup errors for stale local browser processes.
-      }
+      await killOwnedDirectBrowserProcess(currentState, environment);
     }
     cleanupOwnedDirectUserDataDir(currentState);
   };
@@ -852,6 +936,7 @@ const connectDirectSession = async (
     mode: 'local',
     cdp_url: localLaunch.cdp_url,
     browser_pid: localLaunch.browser_pid ?? null,
+    browser_launch_token: localLaunch.browser_launch_token ?? null,
     user_data_dir: localLaunch.user_data_dir ?? null,
     owns_user_data_dir: localLaunch.owns_user_data_dir ?? null,
     active_url: null,
@@ -903,6 +988,8 @@ export const run_direct_command = async (
       ((pid: number) => {
         process.kill(pid, 'SIGTERM');
       }),
+    get_process_command_line:
+      options.get_process_command_line ?? defaultGetProcessCommandLine,
   };
 
   const { useRemote, args } = extractDirectModeArgs(argv);
@@ -933,11 +1020,7 @@ export const run_direct_command = async (
         // Best-effort remote cleanup.
       }
     } else if (typeof state.browser_pid === 'number' && state.browser_pid > 0) {
-      try {
-        await environment.kill_process(state.browser_pid);
-      } catch {
-        // Ignore close errors for an already-exited browser.
-      }
+      await killOwnedDirectBrowserProcess(state, environment);
     }
     cleanupOwnedDirectUserDataDir(state);
 

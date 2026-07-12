@@ -94,6 +94,7 @@ describe('skill-cli direct alignment', () => {
     const localLauncher = vi.fn(async () => ({
       cdp_url: 'http://127.0.0.1:9222',
       browser_pid: 321,
+      browser_launch_token: 'owned-321',
       user_data_dir: '/tmp/browser-use-direct-profile',
     }));
 
@@ -115,6 +116,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
         active_url: 'https://example.com',
       });
     } finally {
@@ -204,6 +206,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
       },
       stateFile
     );
@@ -216,6 +219,8 @@ describe('skill-cli direct alignment', () => {
           stdout: stdout.stream,
           stderr: stderr.stream,
           kill_process: killProcessSpy,
+          get_process_command_line: () =>
+            'chrome --browser-use-direct-token=owned-321',
           cloud_client_factory: () =>
             ({
               create_browser: createBrowserSpy,
@@ -372,6 +377,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
         user_data_dir: staleUserDataDir,
         owns_user_data_dir: true,
       },
@@ -384,6 +390,8 @@ describe('skill-cli direct alignment', () => {
         stdout: stdout.stream,
         stderr: stderr.stream,
         kill_process: killProcessSpy,
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=owned-321',
         local_launcher: localLauncher,
         session_factory: ({ cdp_url }) =>
           (cdp_url === 'http://127.0.0.1:9222'
@@ -426,6 +434,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
         user_data_dir: userDataDir,
         owns_user_data_dir: true,
       },
@@ -438,6 +447,8 @@ describe('skill-cli direct alignment', () => {
         stdout: stdout.stream,
         stderr: stderr.stream,
         kill_process: killProcessSpy,
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=owned-321',
       });
 
       expect(exitCode).toBe(0);
@@ -449,6 +460,48 @@ describe('skill-cli direct alignment', () => {
       clear_direct_state(stateFile);
       fs.rmSync(tempDir, { recursive: true, force: true });
       fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not terminate a reused PID whose launch marker does not match', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const killProcessSpy = vi.fn(async () => {});
+    const getProcessCommandLineSpy = vi.fn(
+      () => '/usr/bin/sleep --browser-use-direct-token=someone-else'
+    );
+
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        browser_pid: 321,
+        browser_launch_token: 'owned-321',
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(['close'], {
+        state_file: stateFile,
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        kill_process: killProcessSpy,
+        get_process_command_line: getProcessCommandLineSpy,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(getProcessCommandLineSpy).toHaveBeenCalledWith(321);
+      expect(killProcessSpy).not.toHaveBeenCalled();
+      expect(fs.existsSync(stateFile)).toBe(false);
+      expect(stderr.read()).toBe('');
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
@@ -468,6 +521,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
         user_data_dir: userDataDir,
         owns_user_data_dir: true,
       },
@@ -480,6 +534,8 @@ describe('skill-cli direct alignment', () => {
         stdout: stdout.stream,
         stderr: stderr.stream,
         kill_process: killProcessSpy,
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=owned-321',
       });
 
       expect(exitCode).toBe(0);
@@ -509,6 +565,7 @@ describe('skill-cli direct alignment', () => {
         mode: 'local',
         cdp_url: 'http://127.0.0.1:9222',
         browser_pid: 321,
+        browser_launch_token: 'owned-321',
         user_data_dir: userDataDir,
         owns_user_data_dir: false,
       },
@@ -521,6 +578,8 @@ describe('skill-cli direct alignment', () => {
         stdout: stdout.stream,
         stderr: stderr.stream,
         kill_process: killProcessSpy,
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=owned-321',
       });
 
       expect(exitCode).toBe(0);
