@@ -115,6 +115,38 @@ export const DEFAULT_INCLUDE_ATTRIBUTES = [
   'ax_name',
 ];
 
+const PASSWORD_VALUE_ATTRIBUTE_NAMES = new Set([
+  'value',
+  'valuetext',
+  'aria-valuetext',
+]);
+
+const sanitizeDomAttributes = (
+  tagName: string,
+  attributes: Record<string, string>
+) => {
+  if (tagName.trim().toLowerCase() !== 'input') {
+    return attributes;
+  }
+
+  const type = Object.entries(attributes).find(
+    ([key]) => key.toLowerCase() === 'type'
+  )?.[1];
+  if (
+    String(type ?? '')
+      .trim()
+      .toLowerCase() !== 'password'
+  ) {
+    return attributes;
+  }
+
+  return Object.fromEntries(
+    Object.entries(attributes).filter(
+      ([key]) => !PASSWORD_VALUE_ATTRIBUTE_NAMES.has(key.toLowerCase())
+    )
+  );
+};
+
 export class DOMElementNode extends DOMBaseNode {
   is_interactive = false;
   is_top_element = false;
@@ -126,16 +158,18 @@ export class DOMElementNode extends DOMBaseNode {
   viewport_info: ViewportInfo | null = null;
   is_new: boolean | null = null;
   private cached_hash: HashedDomElement | null = null;
+  public attributes: Record<string, string>;
 
   constructor(
     is_visible: boolean,
     parent: DOMElementNode | null,
     public tag_name: string,
     public xpath: string,
-    public attributes: Record<string, string>,
+    attributes: Record<string, string>,
     public children: DOMBaseNode[]
   ) {
     super(is_visible, parent);
+    this.attributes = sanitizeDomAttributes(tag_name, attributes);
   }
 
   toJSON() {

@@ -641,6 +641,43 @@ describe('DomService', () => {
       expect(state.selector_map).toBeDefined();
     });
 
+    it('excludes password values from DOM snapshots and LLM output', async () => {
+      const secret = 'hunter2_super_secret';
+      const html = `
+        <style>input { display: block; width: 200px; height: 40px; }</style>
+        <input
+          id="password"
+          name="password"
+          type="password"
+          value="${secret}"
+          aria-valuetext="${secret}"
+        />
+        <input id="username" type="text" value="alice@example.com" />
+      `;
+      await page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+      const state = await new DomService(page).get_clickable_elements();
+      const password = Object.values(state.selector_map).find(
+        (node) => node.attributes.id === 'password'
+      );
+      const username = Object.values(state.selector_map).find(
+        (node) => node.attributes.id === 'username'
+      );
+      const serializedTree = JSON.stringify(state.element_tree.toJSON());
+      const llmRepresentation = state.llm_representation();
+
+      expect(password?.attributes).toMatchObject({
+        id: 'password',
+        name: 'password',
+        type: 'password',
+      });
+      expect(password?.attributes).not.toHaveProperty('value');
+      expect(password?.attributes).not.toHaveProperty('aria-valuetext');
+      expect(serializedTree).not.toContain(secret);
+      expect(llmRepresentation).not.toContain(secret);
+      expect(username?.attributes.value).toBe('alice@example.com');
+    });
+
     it('handles empty page', async () => {
       await page.setContent('<html><body></body></html>');
 

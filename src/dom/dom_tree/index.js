@@ -1308,10 +1308,28 @@
       children: [],
     };
 
+    // Password values must never leave the page. They may be present in the
+    // HTML value attribute (for example from server-rendered or autofilled
+    // forms) even when they were not supplied through Agent.sensitive_data.
+    const isPasswordInput =
+      node.tagName.toLowerCase() === "input" &&
+      (node.getAttribute("type") || "").trim().toLowerCase() === "password";
+    const passwordValueAttributes = new Set([
+      "value",
+      "valuetext",
+      "aria-valuetext",
+    ]);
+
     // Get attributes for interactive elements or potential text containers
     if (isInteractiveCandidate(node) || node.tagName.toLowerCase() === 'iframe' || node.tagName.toLowerCase() === 'body') {
       const attributeNames = node.getAttributeNames?.() || [];
       for (const name of attributeNames) {
+        if (
+          isPasswordInput &&
+          passwordValueAttributes.has(name.toLowerCase())
+        ) {
+          continue;
+        }
         const value = node.getAttribute(name);
         nodeData.attributes[name] = value;
       }
