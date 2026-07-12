@@ -57,7 +57,22 @@ describe('Allowed Domains Security', () => {
     });
 
     expect((session as any)._is_url_allowed('https://evil.com')).toBe(false);
+    expect((session as any)._is_url_allowed('http://evil.com')).toBe(true);
     expect((session as any)._is_url_allowed('https://example.com')).toBe(true);
+  });
+
+  it('blocks scheme-less prohibited patterns across URL schemes', () => {
+    for (const pattern of ['evil.com', '*.evil.com', '*']) {
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({
+          prohibited_domains: [pattern],
+        }),
+      });
+
+      expect((session as any)._is_url_allowed('http://evil.com/private')).toBe(
+        false
+      );
+    }
   });
 
   it('applies bare root-domain policies consistently to www hosts', () => {
@@ -272,6 +287,9 @@ describe('Allowed Domains Security', () => {
     );
     expect(
       (session as any)._is_url_allowed('https://evil.example.com./private')
+    ).toBe(false);
+    expect(
+      (session as any)._is_url_allowed('http://www.evil.example.com/private')
     ).toBe(false);
     expect(
       (session as any)._is_url_allowed(

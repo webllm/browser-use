@@ -5925,20 +5925,52 @@ export class BrowserSession {
     domains: Set<string>,
     hostVariant: string,
     hostAlt: string,
-    protocol: string
+    protocol: string,
+    policy: 'allow' | 'prohibit'
   ) {
     const matchedHost = domains.has(hostVariant) || domains.has(hostAlt);
     if (!matchedHost) {
       return false;
     }
-    // Set-optimized entries are exact hostnames without explicit schemes,
-    // so keep parity with pattern matching default: https-only.
-    return protocol.toLowerCase() === 'https:';
+    // Set-optimized entries are exact hostnames without explicit schemes.
+    // Allowlists fail closed to HTTPS; blocklists must not be bypassable by
+    // downgrading an otherwise identical URL to HTTP.
+    return policy === 'prohibit' || protocol.toLowerCase() === 'https:';
   }
 
-  private _domainPatternMatchesUrl(url: string, pattern: string): boolean {
+  private _domainPatternMatchesUrl(
+    url: string,
+    pattern: string,
+    policy: 'allow' | 'prohibit'
+  ): boolean {
     if (match_url_with_domain_pattern(url, pattern, true)) {
       return true;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+
+    // A scheme-less allowlist entry intentionally defaults to HTTPS so it
+    // fails closed. Applying that same default to a blocklist is unsafe: an
+    // otherwise identical HTTP URL would bypass the prohibition. Compare a
+    // canonical HTTPS equivalent for scheme-less prohibited patterns while
+    // continuing to honor explicit scheme-qualified patterns exactly.
+    if (policy === 'prohibit' && !pattern.includes('://')) {
+      const canonicalHost = canonicalizeDomainHostname(parsed.hostname);
+      if (
+        canonicalHost &&
+        match_url_with_domain_pattern(
+          `https://${canonicalHost}/`,
+          pattern,
+          true
+        )
+      ) {
+        return true;
+      }
     }
 
     // Browser domain policy treats a bare, simple root domain as covering its
@@ -5956,16 +5988,10 @@ export class BrowserSession {
       return false;
     }
 
-    try {
-      const parsed = new URL(url);
-      return (
-        parsed.protocol.toLowerCase() === 'https:' &&
-        canonicalizeDomainHostname(parsed.hostname) ===
-          `www.${normalizedPattern}`
-      );
-    } catch {
-      return false;
-    }
+    return (
+      (policy === 'prohibit' || parsed.protocol.toLowerCase() === 'https:') &&
+      canonicalizeDomainHostname(parsed.hostname) === `www.${normalizedPattern}`
+    );
   }
 
   private _domainCollectionHasEntries(
@@ -6380,7 +6406,8 @@ export class BrowserSession {
             prohibitedDomains,
             hostVariant,
             hostAlt,
-            parsed.protocol
+            parsed.protocol,
+            'prohibit'
           )
         ) {
           return 'in_prohibited_domains';
@@ -6388,7 +6415,9 @@ export class BrowserSession {
       } else {
         for (const prohibitedDomain of prohibitedDomains) {
           try {
-            if (this._domainPatternMatchesUrl(url, prohibitedDomain)) {
+            if (
+              this._domainPatternMatchesUrl(url, prohibitedDomain, 'prohibit')
+            ) {
               return 'in_prohibited_domains';
             }
           } catch {
@@ -6405,7 +6434,8 @@ export class BrowserSession {
             allowedDomains,
             hostVariant,
             hostAlt,
-            parsed.protocol
+            parsed.protocol,
+            'allow'
           )
         ) {
           return null;
@@ -6413,7 +6443,7 @@ export class BrowserSession {
       } else {
         for (const allowedDomain of allowedDomains) {
           try {
-            if (this._domainPatternMatchesUrl(url, allowedDomain)) {
+            if (this._domainPatternMatchesUrl(url, allowedDomain, 'allow')) {
               return null;
             }
           } catch {
