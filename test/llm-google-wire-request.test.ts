@@ -11,15 +11,17 @@ describe('Google LLM wire request', () => {
   });
 
   it('sends system instruction, generation config, schema, and abort signal through SDK config', async () => {
+    let capturedUrl = '';
     let capturedBody: Record<string, any> | null = null;
     let capturedSignal: AbortSignal | null = null;
     let capturedRedirect: RequestRedirect | null = null;
 
     const fetchMock = vi.fn(
       async (
-        _url: Parameters<typeof fetch>[0],
+        url: Parameters<typeof fetch>[0],
         init?: Parameters<typeof fetch>[1]
       ) => {
+        capturedUrl = String(url);
         capturedSignal = init?.signal ?? null;
         capturedRedirect = init?.redirect ?? null;
         capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
@@ -49,6 +51,7 @@ describe('Google LLM wire request', () => {
     const llm = new ChatGoogle({
       model: 'gemini-2.5-flash',
       apiKey: 'test-key',
+      baseUrl: 'https://google-proxy.example.test',
       temperature: 0.3,
       topP: 0.8,
       seed: 7,
@@ -67,6 +70,7 @@ describe('Google LLM wire request', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(capturedUrl).toMatch(/^https:\/\/google-proxy\.example\.test\//);
     expect(capturedSignal).toBeTruthy();
     expect(capturedRedirect).toBe('error');
     expect(capturedBody).not.toBeNull();

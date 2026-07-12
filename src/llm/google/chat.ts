@@ -44,11 +44,15 @@ export interface ChatGoogleOptions {
 }
 
 const buildGoogleHttpOptions = (
-  httpOptions: Record<string, unknown> | undefined
+  httpOptions: Record<string, unknown> | undefined,
+  baseUrl: string | undefined
 ) => {
   const resolvedHttpOptions: Record<string, unknown> = {
     ...(httpOptions ?? {}),
   };
+  if (baseUrl) {
+    resolvedHttpOptions.baseUrl = baseUrl;
+  }
   const existingHeaders = resolvedHttpOptions.headers;
   const headers: Record<string, string> =
     existingHeaders &&
@@ -99,7 +103,7 @@ export class ChatGoogle implements BaseChatModel {
       model = 'gemini-2.5-flash',
       apiKey = process.env.GOOGLE_API_KEY,
       apiVersion = process.env.GOOGLE_API_VERSION,
-      baseUrl = process.env.GOOGLE_API_BASE_URL,
+      baseUrl,
       vertexai,
       vertexAi,
       project,
@@ -147,11 +151,18 @@ export class ChatGoogle implements BaseChatModel {
           };
 
     const resolvedVertexAi = vertexai ?? vertexAi;
-    const resolvedHttpOptions = buildGoogleHttpOptions(httpOptions);
+    const resolvedBaseUrl =
+      baseUrl ??
+      (httpOptions?.baseUrl == null
+        ? process.env.GOOGLE_API_BASE_URL
+        : undefined);
+    const resolvedHttpOptions = buildGoogleHttpOptions(
+      httpOptions,
+      resolvedBaseUrl
+    );
 
     const clientOptions: Record<string, unknown> = {
       ...(apiKey != null ? { apiKey } : {}),
-      ...(baseUrl ? { baseUrl } : {}),
       ...(apiVersion ? { apiVersion } : {}),
       ...(resolvedVertexAi != null ? { vertexai: resolvedVertexAi } : {}),
       ...(project ? { project } : {}),

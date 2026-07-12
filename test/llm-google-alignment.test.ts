@@ -168,11 +168,11 @@ describe('Google LLM alignment', () => {
     expect(googleCtorMock).toHaveBeenCalledWith({
       apiKey: 'test-key',
       apiVersion: 'v1',
-      baseUrl: 'https://example.googleapis.com',
       vertexai: true,
       project: 'test-project',
       location: 'us-central1',
       httpOptions: {
+        baseUrl: 'https://example.googleapis.com',
         timeout: 30000,
         headers: {
           'x-existing-client': 'keep-me',
