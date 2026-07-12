@@ -88,6 +88,37 @@ describe('ChatBrowserUse alignment', () => {
     expect(JSON.parse(String(request.body)).model).toBe(model);
   });
 
+  it('preserves gateway cache TTL usage and pricing multipliers', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createFetchResponse(200, {
+        completion: 'gateway response',
+        usage: {
+          prompt_tokens: 100,
+          prompt_cached_tokens: 20,
+          prompt_cache_creation_tokens: 7,
+          prompt_cache_creation_5m_tokens: 3,
+          prompt_cache_creation_1h_tokens: 4,
+          prompt_image_tokens: null,
+          completion_tokens: 10,
+          total_tokens: 110,
+          pricing_multiplier: 1.1,
+        },
+      })
+    );
+    const llm = new ChatBrowserUse({
+      model: 'anthropic/claude-sonnet-4-6',
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(result.usage).toMatchObject({
+      prompt_cache_creation_5m_tokens: 3,
+      prompt_cache_creation_1h_tokens: 4,
+      pricing_multiplier: 1.1,
+    });
+  });
+
   it('returns partial text but rejects truncated structured output', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createFetchResponse(200, {

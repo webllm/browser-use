@@ -209,12 +209,24 @@ export class ChatBrowserUse implements BaseChatModel {
         usage.prompt_cache_creation_tokens == null
           ? null
           : Number(usage.prompt_cache_creation_tokens),
+      prompt_cache_creation_5m_tokens:
+        usage.prompt_cache_creation_5m_tokens == null
+          ? null
+          : Number(usage.prompt_cache_creation_5m_tokens),
+      prompt_cache_creation_1h_tokens:
+        usage.prompt_cache_creation_1h_tokens == null
+          ? null
+          : Number(usage.prompt_cache_creation_1h_tokens),
       prompt_image_tokens:
         usage.prompt_image_tokens == null
           ? null
           : Number(usage.prompt_image_tokens),
       completion_tokens: Number(usage.completion_tokens ?? 0) || 0,
       total_tokens: Number(usage.total_tokens ?? 0) || 0,
+      pricing_multiplier:
+        usage.pricing_multiplier == null
+          ? null
+          : Number(usage.pricing_multiplier),
     };
   }
 
