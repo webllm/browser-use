@@ -351,7 +351,10 @@ describe('skill-cli direct alignment', () => {
       let launchedPid: number | null = null;
       try {
         await expect(
-          defaultLocalLauncher({ state: {}, timeout_ms: 500 })
+          // Parallel Vitest workers can delay a fresh Node process well past
+          // 500ms before it writes the PID marker. Keep this comfortably
+          // below the production timeout while allowing the child to start.
+          defaultLocalLauncher({ state: {}, timeout_ms: 3_000 })
         ).rejects.toThrow(
           /Timed out waiting for local Chrome debugging endpoint/
         );
@@ -372,7 +375,7 @@ describe('skill-cli direct alignment', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     },
-    10_000
+    15_000
   );
 
   it('reuses saved direct-mode state for click-by-index commands', async () => {
