@@ -226,7 +226,7 @@ describe('skill-cli tunnel alignment', () => {
         stopped: 3000,
         url: 'https://demo.trycloudflare.com',
       });
-      expect(killProcessSpy).toHaveBeenCalledWith(4321);
+      expect(killProcessSpy).toHaveBeenCalledWith(4321, expect.any(Function));
       expect(fs.existsSync(infoPath)).toBe(false);
       expect(fs.existsSync(logPath)).toBe(false);
     } finally {
@@ -268,6 +268,53 @@ describe('skill-cli tunnel alignment', () => {
       expect(fs.existsSync(infoPath)).toBe(false);
       expect(fs.existsSync(logPath)).toBe(false);
     } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rechecks tunnel ownership before escalating to SIGKILL', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const logPath = path.join(tunnelDir, '3000.log');
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({
+        port: 3000,
+        pid: 4321,
+        url: 'https://demo.trycloudflare.com',
+        binary_path: '/usr/bin/cloudflared',
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(logPath, 'tunnel log', 'utf8');
+    const getProcessCommandLine = vi
+      .fn()
+      .mockReturnValueOnce(
+        '/usr/bin/cloudflared tunnel --url http://localhost:3000'
+      )
+      .mockReturnValue('/usr/bin/sleep 30');
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        is_process_alive: () => true,
+        get_process_command_line: getProcessCommandLine,
+        sleep_impl: vi.fn(async () => {}),
+      });
+
+      await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+        error:
+          'Failed to stop tunnel on port 3000; process 4321 is still running',
+      });
+      expect(killSpy).toHaveBeenCalledWith(4321, 'SIGTERM');
+      expect(killSpy).not.toHaveBeenCalledWith(4321, 'SIGKILL');
+      expect(fs.existsSync(infoPath)).toBe(true);
+      expect(fs.existsSync(logPath)).toBe(true);
+    } finally {
+      killSpy.mockRestore();
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
   });

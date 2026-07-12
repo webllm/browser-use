@@ -77,7 +77,10 @@ export interface TunnelManagerOptions {
   spawn_impl?: typeof spawn;
   sleep_impl?: (ms: number) => Promise<void>;
   is_process_alive?: (pid: number) => boolean;
-  kill_process?: (pid: number) => Promise<boolean>;
+  kill_process?: (
+    pid: number,
+    is_still_owned?: () => boolean
+  ) => Promise<boolean>;
   get_process_command_line?: (pid: number) => string | null;
 }
 
@@ -87,7 +90,10 @@ export class TunnelManager {
   private readonly spawn_impl: typeof spawn;
   private readonly sleep_impl: (ms: number) => Promise<void>;
   private readonly is_process_alive_impl: (pid: number) => boolean;
-  private readonly kill_process_impl: (pid: number) => Promise<boolean>;
+  private readonly kill_process_impl: (
+    pid: number,
+    is_still_owned?: () => boolean
+  ) => Promise<boolean>;
   private readonly get_process_command_line_impl: (
     pid: number
   ) => string | null;
@@ -100,7 +106,10 @@ export class TunnelManager {
     this.sleep_impl = options.sleep_impl ?? sleep;
     this.is_process_alive_impl =
       options.is_process_alive ?? default_is_process_alive;
-    this.kill_process_impl = options.kill_process ?? default_kill_process;
+    this.kill_process_impl =
+      options.kill_process ??
+      ((pid, isStillOwned) =>
+        default_kill_process(pid, isStillOwned, this.sleep_impl));
     this.get_process_command_line_impl =
       options.get_process_command_line ?? getProcessCommandLine;
   }
@@ -321,7 +330,15 @@ export class TunnelManager {
       }
 
       if (typeof child.pid === 'number') {
-        await this.kill_process_impl(child.pid);
+        const info: TunnelInfo = {
+          port,
+          pid: child.pid,
+          url: '',
+          binary_path: binaryPath,
+        };
+        await this.kill_process_impl(child.pid, () =>
+          this.is_owned_tunnel_process(info)
+        );
       }
       return { error: 'Timed out waiting for cloudflare tunnel URL (15s)' };
     } finally {
@@ -360,7 +377,9 @@ export class TunnelManager {
 
     let terminated = false;
     try {
-      terminated = await this.kill_process_impl(info.pid);
+      terminated = await this.kill_process_impl(info.pid, () =>
+        this.is_owned_tunnel_process(info)
+      );
     } catch {
       // Preserve metadata so a later stop attempt can retry.
     }
@@ -408,12 +427,16 @@ const default_is_process_alive = (pid: number) => {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 };
 
-const default_kill_process = async (pid: number) => {
+const default_kill_process = async (
+  pid: number,
+  is_still_owned: (() => boolean) | undefined,
+  sleep_impl: (ms: number) => Promise<void>
+) => {
   try {
     process.kill(pid, 'SIGTERM');
   } catch {
@@ -424,15 +447,26 @@ const default_kill_process = async (pid: number) => {
     if (!default_is_process_alive(pid)) {
       return true;
     }
-    await sleep(100);
+    await sleep_impl(100);
+  }
+
+  if (is_still_owned && !is_still_owned()) {
+    return false;
   }
 
   try {
     process.kill(pid, 'SIGKILL');
-    return true;
   } catch {
     return false;
   }
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (!default_is_process_alive(pid)) {
+      return true;
+    }
+    await sleep_impl(100);
+  }
+  return false;
 };
 
 let tunnel_manager: TunnelManager | null = null;
