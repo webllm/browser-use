@@ -97,11 +97,54 @@ const ensure_dir = (target: string) => {
 };
 
 const write_private_config_file = (config_path: string, config: unknown) => {
-  fs.writeFileSync(config_path, JSON.stringify(config, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-  chmod_private(config_path, 0o600);
+  const parent = path.dirname(config_path);
+  ensure_dir(parent);
+  const temp_path = path.join(
+    parent,
+    `.${path.basename(config_path)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  let fd: number | null = null;
+
+  try {
+    fd = fs.openSync(temp_path, 'wx', 0o600);
+    fs.writeFileSync(fd, JSON.stringify(config, null, 2), {
+      encoding: 'utf-8',
+    });
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = null;
+
+    fs.renameSync(temp_path, config_path);
+    chmod_private(config_path, 0o600);
+
+    if (process.platform !== 'win32') {
+      let parent_fd: number | null = null;
+      try {
+        parent_fd = fs.openSync(parent, 'r');
+        fs.fsyncSync(parent_fd);
+      } catch {
+        // Directory fsync is best effort on filesystems that do not support it.
+      } finally {
+        if (parent_fd !== null) {
+          fs.closeSync(parent_fd);
+        }
+      }
+    }
+  } catch (error) {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Preserve the original write error.
+      }
+    }
+    try {
+      fs.rmSync(temp_path, { force: true });
+    } catch {
+      // Preserve the original write error.
+    }
+    throw error;
+  }
 };
 
 class OldConfig {
@@ -541,33 +584,26 @@ const load_and_migrate_config = (config_path: string): DBStyleConfigJSON => {
     return fresh;
   }
 
+  let raw: unknown;
   try {
-    const raw = JSON.parse(fs.readFileSync(config_path, 'utf-8'));
-    if (looks_like_new_format(raw)) {
-      chmod_private(config_path, 0o600);
-      return sanitize_db_config(raw as DBStyleConfigJSON);
-    }
-
-    logger.debug(
-      `Old config format detected at ${config_path}, creating fresh config`
-    );
-    const fresh = create_default_config();
-    write_private_config_file(config_path, fresh);
-    return fresh;
+    raw = JSON.parse(fs.readFileSync(config_path, 'utf-8'));
   } catch (error) {
-    logger.error(
-      `Failed to load config from ${config_path}: ${(error as Error).message}, creating fresh config`
+    chmod_private(config_path, 0o600);
+    throw new Error(
+      `Failed to load config from ${config_path}: ${(error as Error).message}. Existing config was not modified. Repair or remove the file before retrying.`,
+      { cause: error }
     );
-    const fresh = create_default_config();
-    try {
-      write_private_config_file(config_path, fresh);
-    } catch (write_error) {
-      logger.error(
-        `Failed to write fresh config: ${(write_error as Error).message}`
-      );
-    }
-    return fresh;
   }
+
+  if (looks_like_new_format(raw)) {
+    chmod_private(config_path, 0o600);
+    return sanitize_db_config(raw as DBStyleConfigJSON);
+  }
+
+  chmod_private(config_path, 0o600);
+  throw new Error(
+    `Unsupported legacy config format at ${config_path}. Existing config was not modified. Migrate, back up, or remove the file before retrying.`
+  );
 };
 
 type RuntimeConfig = {

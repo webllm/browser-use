@@ -155,6 +155,73 @@ describe('Config alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it('does not overwrite a malformed config file with permissive defaults', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    const configPath = path.join(tempDir, 'config.json');
+    const malformed =
+      '{"browser_profile":{"locked":{"allowed_domains":["example.com"]}},"llm":{"api_key":"sk-do-not-delete"';
+    try {
+      fs.writeFileSync(configPath, malformed, 'utf-8');
+
+      await withEnv(
+        {
+          BROWSER_USE_CONFIG_DIR: tempDir,
+          BROWSER_USE_CONFIG_PATH: configPath,
+        },
+        async () => {
+          const { CONFIG } = await importConfigModule();
+          expect(() => CONFIG.get_default_profile()).toThrow(
+            /Existing config was not modified/
+          );
+        }
+      );
+
+      expect(fs.readFileSync(configPath, 'utf-8')).toBe(malformed);
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves unsupported legacy config instead of deleting it', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    const configPath = path.join(tempDir, 'config.json');
+    const legacy = JSON.stringify(
+      {
+        allowed_domains: ['example.com'],
+        api_key: 'sk-do-not-delete',
+      },
+      null,
+      2
+    );
+    try {
+      fs.writeFileSync(configPath, legacy, 'utf-8');
+
+      await withEnv(
+        {
+          BROWSER_USE_CONFIG_DIR: tempDir,
+          BROWSER_USE_CONFIG_PATH: configPath,
+        },
+        async () => {
+          const { CONFIG } = await importConfigModule();
+          expect(() => CONFIG.get_default_profile()).toThrow(
+            /Unsupported legacy config format/
+          );
+        }
+      );
+
+      expect(fs.readFileSync(configPath, 'utf-8')).toBe(legacy);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes placeholder llm api keys from config files', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-config-')
