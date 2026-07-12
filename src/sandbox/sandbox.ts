@@ -8,10 +8,15 @@ import {
   SSEEvent,
   SSEEventType,
 } from './views.js';
+import {
+  HttpResponseTooLargeError,
+  readBoundedResponseText,
+} from '../http-response.js';
 
 const logger = createLogger('browser_use.sandbox');
 
 const defaultServerUrl = 'https://sandbox.api.browser-use.com/sandbox-stream';
+export const MAX_SANDBOX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
 
 const maybeInvoke = async <T>(
   callback: ((data: T) => void | Promise<void>) | undefined,
@@ -28,6 +33,11 @@ const parseSSEChunks = async (
   onEvent: (event: SSEEvent) => Promise<void>
 ) => {
   const processLine = async (line: string) => {
+    if (Buffer.byteLength(line, 'utf8') > MAX_SANDBOX_SSE_EVENT_BYTES) {
+      throw new SandboxError(
+        `Sandbox SSE event exceeds ${MAX_SANDBOX_SSE_EVENT_BYTES.toLocaleString()} bytes`
+      );
+    }
     if (!line.startsWith('data:')) {
       return;
     }
@@ -46,7 +56,18 @@ const parseSSEChunks = async (
   };
 
   if (!response.body) {
-    const text = await response.text();
+    let text: string;
+    try {
+      text = await readBoundedResponseText(
+        response,
+        MAX_SANDBOX_SSE_EVENT_BYTES
+      );
+    } catch (error) {
+      if (error instanceof HttpResponseTooLargeError) {
+        throw new SandboxError(error.message);
+      }
+      throw error;
+    }
     for (const line of text.split(/\r?\n/)) {
       await processLine(line);
     }
@@ -56,20 +77,39 @@ const parseSSEChunks = async (
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+      if (!value) continue;
+      if (value.byteLength > MAX_SANDBOX_SSE_EVENT_BYTES) {
+        throw new SandboxError(
+          `Sandbox SSE chunk exceeds ${MAX_SANDBOX_SSE_EVENT_BYTES.toLocaleString()} bytes`
+        );
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        await processLine(line);
+      }
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_SANDBOX_SSE_EVENT_BYTES) {
+        throw new SandboxError(
+          `Sandbox SSE event exceeds ${MAX_SANDBOX_SSE_EVENT_BYTES.toLocaleString()} bytes`
+        );
+      }
     }
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      await processLine(line);
+    if (buffer) {
+      await processLine(buffer);
     }
-  }
-  if (buffer) {
-    await processLine(buffer);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
 };
 

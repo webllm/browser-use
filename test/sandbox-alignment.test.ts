@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BrowserCreatedData,
+  MAX_SANDBOX_SSE_EVENT_BYTES,
   SandboxError,
   sandbox,
   SSEEvent,
@@ -161,6 +162,22 @@ describe('sandbox alignment', () => {
     await expect(wrapped()).rejects.toThrow(
       'Execution failed: remote function failed'
     );
+  });
+
+  it('rejects an SSE event that exceeds the bounded line buffer', async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(
+        `data: ${'x'.repeat(MAX_SANDBOX_SSE_EVENT_BYTES + 1)}`,
+        { status: 200, headers: { 'content-type': 'text/event-stream' } }
+      );
+    });
+    const wrapped = sandbox({
+      api_key: 'sandbox-test-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+      quiet: true,
+    })(async () => 'local');
+
+    await expect(wrapped()).rejects.toThrow(/SSE (chunk|event) exceeds/);
   });
 
   it('does not forward sandbox code or arguments to a redirect target', async () => {
