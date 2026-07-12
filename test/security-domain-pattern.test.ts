@@ -60,6 +60,51 @@ describe('Allowed Domains Security', () => {
     expect((session as any)._is_url_allowed('https://example.com')).toBe(true);
   });
 
+  it('applies bare root-domain policies consistently to www hosts', () => {
+    const prohibitedSession = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        prohibited_domains: ['example.com'],
+      }),
+    });
+    const allowedSession = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['example.com'],
+      }),
+    });
+
+    expect(
+      (prohibitedSession as any)._is_url_allowed('https://example.com')
+    ).toBe(false);
+    expect(
+      (prohibitedSession as any)._is_url_allowed('https://www.example.com')
+    ).toBe(false);
+    expect(
+      (prohibitedSession as any)._is_url_allowed('https://mail.example.com')
+    ).toBe(true);
+
+    expect((allowedSession as any)._is_url_allowed('https://example.com')).toBe(
+      true
+    );
+    expect(
+      (allowedSession as any)._is_url_allowed('https://www.example.com')
+    ).toBe(true);
+    expect(
+      (allowedSession as any)._is_url_allowed('https://mail.example.com')
+    ).toBe(false);
+  });
+
+  it('does not expand scheme-qualified patterns to www hosts', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        prohibited_domains: ['https://example.com'],
+      }),
+    });
+
+    expect((session as any)._is_url_allowed('https://www.example.com')).toBe(
+      true
+    );
+  });
+
   it('blocks prohibited domains written with an equivalent trailing root label', () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({

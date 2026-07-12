@@ -5936,6 +5936,38 @@ export class BrowserSession {
     return protocol.toLowerCase() === 'https:';
   }
 
+  private _domainPatternMatchesUrl(url: string, pattern: string): boolean {
+    if (match_url_with_domain_pattern(url, pattern, true)) {
+      return true;
+    }
+
+    // Browser domain policy treats a bare, simple root domain as covering its
+    // conventional www host too. Keep this policy-specific behavior out of the
+    // generic matcher used by action and sensitive-data domain filters.
+    const normalizedPattern = canonicalizeDomainHostname(pattern);
+    if (
+      !normalizedPattern ||
+      pattern.includes('://') ||
+      pattern.includes('*') ||
+      pattern.includes(':') ||
+      pattern.includes('/') ||
+      normalizedPattern.split('.').length !== 2
+    ) {
+      return false;
+    }
+
+    try {
+      const parsed = new URL(url);
+      return (
+        parsed.protocol.toLowerCase() === 'https:' &&
+        canonicalizeDomainHostname(parsed.hostname) ===
+          `www.${normalizedPattern}`
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private _domainCollectionHasEntries(
     value: string[] | Set<string> | null | undefined
   ): boolean {
@@ -6356,7 +6388,7 @@ export class BrowserSession {
       } else {
         for (const prohibitedDomain of prohibitedDomains) {
           try {
-            if (match_url_with_domain_pattern(url, prohibitedDomain, true)) {
+            if (this._domainPatternMatchesUrl(url, prohibitedDomain)) {
               return 'in_prohibited_domains';
             }
           } catch {
@@ -6381,7 +6413,7 @@ export class BrowserSession {
       } else {
         for (const allowedDomain of allowedDomains) {
           try {
-            if (match_url_with_domain_pattern(url, allowedDomain, true)) {
+            if (this._domainPatternMatchesUrl(url, allowedDomain)) {
               return null;
             }
           } catch {
