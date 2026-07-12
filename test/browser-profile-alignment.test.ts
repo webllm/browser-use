@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import fs from 'node:fs';
 import https from 'node:https';
 import os from 'node:os';
@@ -112,19 +113,17 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
         }
       ) => void
     ) => {
-      const response = new EventEmitter() as EventEmitter & {
+      const response = new PassThrough() as PassThrough & {
         statusCode: number;
         headers: Record<string, string>;
         resume: () => void;
       };
       response.statusCode = 200;
       response.headers = {};
-      response.resume = vi.fn();
 
       queueMicrotask(() => {
         callback(response);
-        response.emit('data', Buffer.from('fake-crx'));
-        response.emit('end');
+        response.end(Buffer.from('fake-crx'));
       });
 
       return new EventEmitter();

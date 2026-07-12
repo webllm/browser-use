@@ -1,10 +1,8 @@
 import fs from 'node:fs';
-import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
 import { randomUUID } from 'node:crypto';
-import AdmZip from 'adm-zip';
 import type {
   ClientCertificate,
   Geolocation,
@@ -18,6 +16,11 @@ import { observe_debug } from '../observability.js';
 import { createLogger } from '../logging-config.js';
 import { log_pretty_path, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
+import {
+  assertExtensionContentLength,
+  extractExtensionArchive,
+  writeLimitedExtensionStream,
+} from './extension-security.js';
 
 const logger = createLogger('browser_use.browser.profile');
 
@@ -1012,19 +1015,34 @@ export class BrowserProfile {
   ): Promise<void> {
     const maxRedirects = 5;
     return new Promise((resolve, reject) => {
-      https
-        .get(url, (response) => {
+      let request: ReturnType<typeof https.get>;
+      try {
+        request = https.get(url, (response) => {
           const { statusCode, headers } = response;
           if (
             statusCode &&
             statusCode >= 300 &&
             statusCode < 400 &&
-            headers.location &&
-            redirectCount < maxRedirects
+            headers.location
           ) {
             response.resume();
+            if (redirectCount >= maxRedirects) {
+              reject(new Error('Too many extension download redirects'));
+              return;
+            }
+
+            let redirectUrl: URL;
+            try {
+              redirectUrl = new URL(headers.location, url);
+              if (redirectUrl.protocol !== 'https:') {
+                throw new Error('Extension redirects must use HTTPS');
+              }
+            } catch (error) {
+              reject(error);
+              return;
+            }
             this.downloadExtension(
-              headers.location,
+              redirectUrl.toString(),
               outputPath,
               redirectCount + 1
             )
@@ -1033,7 +1051,8 @@ export class BrowserProfile {
             return;
           }
 
-          if (!statusCode || statusCode >= 400) {
+          if (!statusCode || statusCode < 200 || statusCode >= 300) {
+            response.resume();
             reject(
               new Error(
                 `Failed to download extension (status ${statusCode ?? 'unknown'})`
@@ -1042,66 +1061,38 @@ export class BrowserProfile {
             return;
           }
 
-          const chunks: Buffer[] = [];
-          response.on('data', (chunk) => chunks.push(chunk));
-          response.on('end', async () => {
-            try {
-              await fsp.writeFile(outputPath, Buffer.concat(chunks), {
-                mode: 0o600,
-              });
-              chmodPrivatePath(outputPath, 0o600);
-              resolve();
-            } catch (error) {
-              reject(error);
-            }
-          });
-        })
-        .on('error', reject);
+          try {
+            assertExtensionContentLength(headers['content-length']);
+          } catch (error) {
+            response.resume();
+            reject(error);
+            return;
+          }
+
+          writeLimitedExtensionStream(response, outputPath)
+            .then(resolve)
+            .catch(reject);
+        });
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      request.setTimeout?.(30_000, () => {
+        request.destroy(new Error('Extension download timed out'));
+      });
+      request.on('error', reject);
     });
   }
 
   private async extractExtension(crxPath: string, extractDir: string) {
-    if (fs.existsSync(extractDir)) {
-      await fsp.rm(extractDir, { recursive: true, force: true });
-    }
-    createPrivateDirectory(extractDir);
-
-    const buffer = await fsp.readFile(crxPath);
-    try {
-      const zip = new AdmZip(buffer);
-      zip.extractAllTo(extractDir, true);
-    } catch {
-      const zipBuffer = this.stripCrxHeader(buffer);
-      const zip = new AdmZip(zipBuffer);
-      zip.extractAllTo(extractDir, true);
-    }
+    await extractExtensionArchive(crxPath, extractDir, {
+      replaceExisting: true,
+    });
 
     if (!fs.existsSync(path.join(extractDir, 'manifest.json'))) {
       throw new Error('No manifest.json found in extension');
     }
-  }
-
-  private stripCrxHeader(buffer: Buffer) {
-    const magic = buffer.subarray(0, 4).toString();
-    if (magic !== 'Cr24') {
-      throw new Error('Invalid CRX file format');
-    }
-
-    const version = buffer.readUInt32LE(4);
-    if (version === 2) {
-      const pubkeyLen = buffer.readUInt32LE(8);
-      const sigLen = buffer.readUInt32LE(12);
-      const offset = 16 + pubkeyLen + sigLen;
-      return buffer.subarray(offset);
-    }
-
-    if (version === 3) {
-      const headerLen = buffer.readUInt32LE(8);
-      const offset = 12 + headerLen;
-      return buffer.subarray(offset);
-    }
-
-    throw new Error(`Unsupported CRX version: ${version}`);
   }
 
   public async getArgs() {

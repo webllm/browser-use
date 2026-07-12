@@ -7,12 +7,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { pipeline } from 'node:stream/promises';
-import { createWriteStream, createReadStream } from 'node:fs';
 import { Readable } from 'node:stream';
-// @ts-ignore - extract-zip types may not be available
-import extract from 'extract-zip';
 import { createLogger } from '../logging-config.js';
+import {
+  assertExtensionContentLength,
+  extractExtensionArchive,
+  redactExtensionUrl,
+  writeLimitedExtensionStream,
+} from './extension-security.js';
 
 const logger = createLogger('browser_use.extensions');
 
@@ -31,9 +33,6 @@ const createPrivateDirectory = (dirPath: string) => {
   fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
   chmodPrivatePath(dirPath, 0o700);
 };
-
-const createPrivateWriteStream = (filePath: string) =>
-  createWriteStream(filePath, { mode: 0o600 });
 
 export interface BrowserExtensionDescriptor {
   name: string;
@@ -86,29 +85,39 @@ export function getExtensionId(unpackedPath: string): string | null {
  * Download CRX file from Chrome Web Store
  */
 async function downloadCrx(crxUrl: string, crxPath: string): Promise<boolean> {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 30_000);
   try {
-    logger.info(`[🛠️] Downloading extension from ${crxUrl}...`);
+    logger.info(
+      `[🛠️] Downloading extension from ${redactExtensionUrl(crxUrl)}...`
+    );
 
-    const response = await fetch(crxUrl);
+    const response = await fetch(crxUrl, {
+      signal: abortController.signal,
+    });
     if (!response.ok || !response.body) {
       logger.warning(
         `[⚠️] Failed to download extension: ${response.statusText}`
       );
       return false;
     }
+    assertExtensionContentLength(response.headers?.get('content-length'));
 
     const dir = path.dirname(crxPath);
     createPrivateDirectory(dir);
 
-    const fileStream = createPrivateWriteStream(crxPath);
-    await pipeline(Readable.fromWeb(response.body as any), fileStream);
-    chmodPrivatePath(crxPath, 0o600);
+    await writeLimitedExtensionStream(
+      Readable.fromWeb(response.body as any),
+      crxPath
+    );
 
     logger.info(`[✅] Downloaded to ${crxPath}`);
     return true;
   } catch (error) {
     logger.error(`[❌] Download failed: ${(error as Error).message}`);
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -120,10 +129,7 @@ async function unpackCrx(
   unpackedPath: string
 ): Promise<boolean> {
   try {
-    createPrivateDirectory(unpackedPath);
-
-    // Extract zip file (CRX is essentially a ZIP with extra header)
-    await extract(crxPath, { dir: path.resolve(unpackedPath) });
+    await extractExtensionArchive(crxPath, unpackedPath);
 
     // Verify manifest exists
     const manifestPath = path.join(unpackedPath, 'manifest.json');
