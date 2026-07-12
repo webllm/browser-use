@@ -124,6 +124,7 @@ export class CloudSkillService implements SkillService {
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),
         ...(init.headers ?? {}),
       },
+      redirect: 'error',
     });
 
     let payload: unknown;
