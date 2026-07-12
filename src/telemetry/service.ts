@@ -44,7 +44,9 @@ export class ProductTelemetry {
         {
           host: 'https://eu.i.posthog.com',
           disableGeoip: false,
-          enableExceptionAutocapture: true,
+          // Raw exception messages/stacks can contain tasks, URLs, and secrets.
+          // Only send the explicitly structured and redacted events below.
+          enableExceptionAutocapture: false,
         }
       );
     } catch (error) {

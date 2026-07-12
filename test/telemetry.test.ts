@@ -16,10 +16,12 @@ import os from 'node:os';
 // Mock PostHog
 vi.mock('posthog-node', () => {
   return {
-    PostHog: vi.fn().mockImplementation(() => ({
-      capture: vi.fn(),
-      shutdown: vi.fn().mockResolvedValue(undefined),
-    })),
+    PostHog: vi.fn().mockImplementation(function MockPostHog() {
+      return {
+        capture: vi.fn(),
+        shutdown: vi.fn().mockResolvedValue(undefined),
+      };
+    }),
   };
 });
 
@@ -413,6 +415,39 @@ describe('Telemetry User ID', () => {
 });
 
 describe('Telemetry Configuration', () => {
+  it('does not enable raw exception autocapture', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-test-'));
+    const previousConfigDir = process.env.BROWSER_USE_CONFIG_DIR;
+    const previousTelemetry = process.env.ANONYMIZED_TELEMETRY;
+
+    try {
+      process.env.BROWSER_USE_CONFIG_DIR = tempDir;
+      process.env.ANONYMIZED_TELEMETRY = 'true';
+      vi.resetModules();
+      const { PostHog } = await import('posthog-node');
+      vi.mocked(PostHog).mockClear();
+
+      await import('../src/telemetry/service.js');
+
+      expect(PostHog).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ enableExceptionAutocapture: false })
+      );
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.BROWSER_USE_CONFIG_DIR;
+      } else {
+        process.env.BROWSER_USE_CONFIG_DIR = previousConfigDir;
+      }
+      if (previousTelemetry === undefined) {
+        delete process.env.ANONYMIZED_TELEMETRY;
+      } else {
+        process.env.ANONYMIZED_TELEMETRY = previousTelemetry;
+      }
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('respects telemetry disabled flag', () => {
     const config = {
       telemetryDisabled: true,
