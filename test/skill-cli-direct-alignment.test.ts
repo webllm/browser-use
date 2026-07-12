@@ -77,6 +77,26 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('rejects unregistered commands before launching or connecting', async () => {
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const localLauncher = vi.fn();
+    const sessionFactory = vi.fn();
+
+    const exitCode = await run_direct_command(['not-a-command'], {
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      local_launcher: localLauncher,
+      session_factory: sessionFactory,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe('');
+    expect(stderr.read()).toContain('Unknown command: not-a-command');
+    expect(localLauncher).not.toHaveBeenCalled();
+    expect(sessionFactory).not.toHaveBeenCalled();
+  });
+
   it('launches a local browser on first open and persists direct-mode state', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

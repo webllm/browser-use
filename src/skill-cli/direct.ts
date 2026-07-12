@@ -20,6 +20,7 @@ import {
   getProcessCommandLine,
   type ProcessCommandLineReader,
 } from '../process-identity.js';
+import { formatDirectUsage, isDirectCommandName } from './direct-commands.js';
 import { readBoundedCliElementData } from './page-inspection.js';
 
 export interface DirectModeState {
@@ -426,43 +427,6 @@ const normalizeDirectUrl = (input: string) => {
   }
   return `https://${trimmed}`;
 };
-
-const formatDirectUsage = () => `Usage: browser-use-direct <command> [args]
-
-Commands:
-  open <url>              Navigate to URL
-  state                   Get current browser state
-  click <index>           Click element by DOM index
-  click <x> <y>           Click viewport coordinates
-  type <text>             Type into focused element
-  input <index> <text>    Click element and type text
-  screenshot [path] [--full]  Take viewport or full-page screenshot
-  scroll [up|down]        Scroll page
-  back                    Go back in history
-  forward                 Go forward in history
-  switch <tab>            Switch to tab index or target id
-  close-tab [tab]         Close a tab
-  keys <keys>             Send keyboard keys
-  select <index> <value>  Select dropdown option
-  wait selector <css>     Wait for a selector
-  wait text <text>        Wait for text
-  hover <index>           Hover element by DOM index
-  dblclick <index>        Double-click element by DOM index
-  rightclick <index>      Right-click element by DOM index
-  cookies <subcommand>    Manage cookies (get/set/clear/export/import)
-  get title               Get page title
-  get html [selector]     Get page HTML or a CSS selector
-  get text <index>        Get element text
-  get value <index>       Get element value
-  get attributes <index>  Get element attributes
-  get bbox <index>        Get element bounding box
-  extract <query>         Explain that extraction requires agent mode
-  html [selector]         Get page HTML or a CSS selector
-  eval <js>               Execute JavaScript
-  close                   Close the active direct-mode browser
-
-Flags:
-  --remote                Launch browser-use cloud browser`;
 
 const extractDirectModeArgs = (argv: string[]) => {
   let useRemote = false;
@@ -1076,6 +1040,11 @@ export const run_direct_command = async (
   ) {
     writeLine(environment.stdout, formatDirectUsage());
     return command ? 0 : 1;
+  }
+
+  if (!isDirectCommandName(command)) {
+    writeLine(environment.stderr, `Error: Unknown command: ${command}`);
+    return 1;
   }
 
   if (command === 'close') {

@@ -53,22 +53,33 @@ changed; run `state` again first.
 Pass each CLI token as one MCP `args` entry. With the shell, quote values that
 contain whitespace or shell metacharacters.
 
+<!-- BEGIN GENERATED DIRECT COMMANDS -->
 | Goal | Command and arguments |
 | --- | --- |
 | Navigate | `open <url>` |
 | Inspect interactive state | `state` |
-| Click an element | `click <index>` |
-| Click coordinates | `click <x> <y>` |
+| Click | `click <index>` or `click <x> <y>` |
 | Replace an input value | `input <index> <text>` |
-| Type into the focused element | `type <text>` |
+| Type into focused element | `type <text>` |
 | Send keys | `keys <key-sequence>` |
-| Scroll | `scroll up` or `scroll down` |
-| Wait for UI | `wait selector <css>` or `wait text <text>` |
-| Read a value | `get title`, `get text <index>`, `get value <index>` |
-| Read markup | `get html [selector]` or `html [selector]` |
+| Capture a screenshot | `screenshot [path] [--full]` |
+| Scroll | `scroll [up\|down\|left\|right]` |
+| Go back | `back` |
+| Go forward | `forward` |
+| Switch tabs | `switch <tab>` |
+| Close a tab | `close-tab [tab]` |
+| Select an option | `select <index> <value>` |
+| Wait for UI | `wait selector <css> [timeout]` or `wait text <text>` |
+| Hover an element | `hover <index>` |
+| Double-click an element | `dblclick <index>` |
+| Right-click an element | `rightclick <index>` |
+| Manage cookies | `cookies get [url\|--url <url>]` or `cookies set <name> <value>` or `cookies clear [--url <url>]` or `cookies export <file> [--url <url>]` or `cookies import <file>` |
+| Read page or element data | `get title` or `get html [selector]` or `get text <index>` or `get value <index>` or `get attributes <index>` or `get bbox <index>` |
+| Request extraction handoff | `extract <query>` |
+| Read markup | `html [selector]` |
 | Inspect page JavaScript state | `eval <javascript>` |
-| Manage tabs | `switch <tab>` or `close-tab [tab]` |
-| Close the persistent browser | `close` |
+| Close the browser | `close` |
+<!-- END GENERATED DIRECT COMMANDS -->
 
 Prefer element indexes from `state` over brittle selectors. Use coordinates
 when the relevant control is visual, canvas-based, inside a complex frame, or
