@@ -35,20 +35,20 @@ export const redactSensitiveDataFromString = (
     return value;
   }
 
-  const placeholders: Record<string, string> = {};
+  const placeholders: Array<[key: string, secret: string]> = [];
   for (const [keyOrDomain, content] of Object.entries(sensitive_data)) {
     if (typeof content === 'string' && content) {
-      placeholders[keyOrDomain] = content;
+      placeholders.push([keyOrDomain, content]);
     } else if (content && typeof content === 'object') {
       for (const [key, val] of Object.entries(content)) {
         if (val) {
-          placeholders[key] = val;
+          placeholders.push([key, val]);
         }
       }
     }
   }
 
-  const entries = Object.entries(placeholders).sort(
+  const entries = placeholders.sort(
     ([, left], [, right]) => right.length - left.length
   );
   if (!entries.length) {

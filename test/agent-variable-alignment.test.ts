@@ -9,6 +9,7 @@ import {
   AgentHistory,
   AgentHistoryList,
   AgentOutput,
+  redactSensitiveDataFromString,
 } from '../src/agent/views.js';
 import { BrowserStateHistory } from '../src/browser/views.js';
 import { DOMHistoryElement } from '../src/dom/history-tree-processor/view.js';
@@ -204,6 +205,20 @@ describe('Agent variable alignment', () => {
     }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('redacts every domain-scoped secret when placeholder names repeat', () => {
+    const redacted = redactSensitiveDataFromString(
+      'first=alpha-secret second=beta-secret',
+      {
+        'a.example': { password: 'alpha-secret' },
+        'b.example': { password: 'beta-secret' },
+      }
+    );
+
+    expect(redacted).toBe(
+      'first=<secret>password</secret> second=<secret>password</secret>'
+    );
   });
 
   it('omits usage from serialized history for python parity', () => {
