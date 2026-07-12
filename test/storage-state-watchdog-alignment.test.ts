@@ -727,7 +727,7 @@ describe('storage state watchdog alignment', () => {
     }
   });
 
-  it('merges existing storage state entries when saving', async () => {
+  it('replaces stale authentication state when saving after logout', async () => {
     const { tempDir, storagePath } = createTempStoragePath();
     try {
       fs.writeFileSync(
@@ -736,8 +736,8 @@ describe('storage state watchdog alignment', () => {
           {
             cookies: [
               {
-                name: 'old',
-                value: '1',
+                name: 'session',
+                value: 'stale-auth-token',
                 domain: '.example.com',
                 path: '/',
               },
@@ -761,20 +761,8 @@ describe('storage state watchdog alignment', () => {
       });
       session.browser_context = {
         storageState: vi.fn(async () => ({
-          cookies: [
-            {
-              name: 'new',
-              value: '2',
-              domain: '.example.com',
-              path: '/',
-            },
-          ],
-          origins: [
-            {
-              origin: 'https://fresh.example.com',
-              localStorage: [{ name: 'b', value: '2' }],
-            },
-          ],
+          cookies: [],
+          origins: [],
         })),
       } as any;
       session.attach_watchdog(
@@ -783,15 +771,8 @@ describe('storage state watchdog alignment', () => {
 
       await session.event_bus.dispatch_or_throw(new SaveStorageStateEvent());
 
-      const merged = JSON.parse(fs.readFileSync(storagePath, 'utf-8'));
-      expect(merged.cookies).toHaveLength(2);
-      expect(merged.origins).toHaveLength(2);
-      expect(merged.cookies.some((cookie: any) => cookie.name === 'old')).toBe(
-        true
-      );
-      expect(merged.cookies.some((cookie: any) => cookie.name === 'new')).toBe(
-        true
-      );
+      const saved = JSON.parse(fs.readFileSync(storagePath, 'utf-8'));
+      expect(saved).toEqual({ cookies: [], origins: [] });
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
