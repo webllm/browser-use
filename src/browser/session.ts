@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { createLogger } from '../logging-config.js';
 import { match_url_with_domain_pattern, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
+import { getMaxAutoDownloadBytes } from './download-limits.js';
 import { getProcessCommandLine } from '../process-identity.js';
 import {
   EventBus,
@@ -6184,15 +6185,17 @@ export class BrowserSession {
       const redirectMode: RequestRedirect = this._has_url_access_restrictions()
         ? 'error'
         : 'follow';
+      const maxBytes = getMaxAutoDownloadBytes();
       let downloadResult: {
-        data: number[];
+        data?: number[];
+        dataBase64?: string;
         fromCache: boolean;
         responseSize: number;
         error?: string;
       } | null = null;
       try {
         downloadResult = await page.evaluate(
-          async ({ pdfUrl, redirectMode }) => {
+          async ({ pdfUrl, redirectMode, maxBytes }) => {
             try {
               const response = await fetch(pdfUrl, {
                 cache: 'force-cache',
@@ -6202,22 +6205,71 @@ export class BrowserSession {
                 throw new Error(`HTTP error! status: ${response.status}`);
               }
 
-              const blob = await response.blob();
-              const arrayBuffer = await blob.arrayBuffer();
-              const uint8Array = new Uint8Array(arrayBuffer);
+              const contentLength = Number(
+                response.headers.get('content-length') ?? ''
+              );
+              if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+                throw new Error(
+                  `PDF exceeds maximum auto-download size of ${maxBytes} bytes`
+                );
+              }
+
+              const chunks: Uint8Array[] = [];
+              let responseSize = 0;
+              if (response.body) {
+                const reader = response.body.getReader();
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (!value) continue;
+                  responseSize += value.byteLength;
+                  if (responseSize > maxBytes) {
+                    await reader.cancel();
+                    throw new Error(
+                      `PDF exceeds maximum auto-download size of ${maxBytes} bytes`
+                    );
+                  }
+                  chunks.push(value);
+                }
+              } else {
+                const value = new Uint8Array(await response.arrayBuffer());
+                responseSize = value.byteLength;
+                if (responseSize > maxBytes) {
+                  throw new Error(
+                    `PDF exceeds maximum auto-download size of ${maxBytes} bytes`
+                  );
+                }
+                chunks.push(value);
+              }
+
+              const bytes = new Uint8Array(responseSize);
+              let byteOffset = 0;
+              for (const chunk of chunks) {
+                bytes.set(chunk, byteOffset);
+                byteOffset += chunk.byteLength;
+              }
+              const binaryChunks: string[] = [];
+              for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+                binaryChunks.push(
+                  String.fromCharCode(
+                    ...bytes.subarray(offset, offset + 0x8000)
+                  )
+                );
+              }
+              const dataBase64 = btoa(binaryChunks.join(''));
               const cacheHeader = response.headers.get('x-cache') || '';
               const fromCache =
                 response.headers.has('age') ||
                 cacheHeader.toLowerCase().includes('hit');
 
               return {
-                data: Array.from(uint8Array),
+                dataBase64,
                 fromCache,
-                responseSize: uint8Array.length,
+                responseSize,
               };
             } catch (error) {
               return {
-                data: [],
+                dataBase64: '',
                 fromCache: false,
                 responseSize: 0,
                 error:
@@ -6227,7 +6279,7 @@ export class BrowserSession {
               };
             }
           },
-          { pdfUrl: url, redirectMode }
+          { pdfUrl: url, redirectMode, maxBytes }
         );
       } finally {
         await this.validate_page_after_action(page);
@@ -6240,13 +6292,51 @@ export class BrowserSession {
         return null;
       }
 
-      if (
-        !downloadResult ||
-        !Array.isArray(downloadResult.data) ||
-        downloadResult.data.length === 0
-      ) {
+      if (!downloadResult) {
         this.logger.warning(
           `⚠️ No data received when downloading PDF from ${logUrl}`
+        );
+        return null;
+      }
+
+      let pdfBuffer: Buffer;
+      if (typeof downloadResult.dataBase64 === 'string') {
+        const normalizedBase64 = downloadResult.dataBase64.trim();
+        const padding = normalizedBase64.endsWith('==')
+          ? 2
+          : normalizedBase64.endsWith('=')
+            ? 1
+            : 0;
+        const estimatedBytes =
+          Math.floor((normalizedBase64.length * 3) / 4) - padding;
+        if (!normalizedBase64 || estimatedBytes > maxBytes) {
+          this.logger.warning(
+            `⚠️ Refusing oversized PDF auto-download from ${logUrl}`
+          );
+          return null;
+        }
+        pdfBuffer = Buffer.from(normalizedBase64, 'base64');
+      } else if (Array.isArray(downloadResult.data)) {
+        if (
+          downloadResult.data.length === 0 ||
+          downloadResult.data.length > maxBytes
+        ) {
+          this.logger.warning(
+            `⚠️ Refusing oversized PDF auto-download from ${logUrl}`
+          );
+          return null;
+        }
+        pdfBuffer = Buffer.from(downloadResult.data);
+      } else {
+        this.logger.warning(
+          `⚠️ No data received when downloading PDF from ${logUrl}`
+        );
+        return null;
+      }
+
+      if (pdfBuffer.length === 0 || pdfBuffer.length > maxBytes) {
+        this.logger.warning(
+          `⚠️ Refusing oversized PDF auto-download from ${logUrl}`
         );
         return null;
       }
@@ -6258,11 +6348,7 @@ export class BrowserSession {
       );
       const downloadPath = path.join(downloadsPath, uniqueFilename);
 
-      await fs.promises.writeFile(
-        downloadPath,
-        Buffer.from(downloadResult.data),
-        { mode: 0o600 }
-      );
+      await fs.promises.writeFile(downloadPath, pdfBuffer, { mode: 0o600 });
       chmodPrivateFileBestEffort(downloadPath);
       this.add_downloaded_file(downloadPath);
 

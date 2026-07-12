@@ -59,6 +59,7 @@ vi.mock('../src/telemetry/service.js', () => ({
 // Import after mocks
 import { BrowserSession, systemChrome } from '../src/browser/session.js';
 import { BrowserProfile } from '../src/browser/profile.js';
+import { DEFAULT_MAX_AUTO_DOWNLOAD_BYTES } from '../src/browser/download-limits.js';
 import {
   DownloadProgressEvent,
   TabCreatedEvent,
@@ -4036,6 +4037,7 @@ describe('BrowserSession PDF Auto Download', () => {
         expect(evaluate.mock.calls[0]?.[1]).toEqual({
           pdfUrl: rawUrl,
           redirectMode: 'follow',
+          maxBytes: DEFAULT_MAX_AUTO_DOWNLOAD_BYTES,
         });
         const logs = infoSpy.mock.calls.flat().join('\n');
         expect(logs).toContain(
@@ -4122,6 +4124,43 @@ describe('BrowserSession PDF Auto Download', () => {
         cache: 'force-cache',
         redirect: 'error',
       });
+    } finally {
+      fetchSpy.mockRestore();
+      fs.rmSync(downloadsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized PDF responses before reading their bodies', async () => {
+    const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pdf-'));
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Uint8Array(), {
+        status: 200,
+        headers: {
+          'content-length': String(DEFAULT_MAX_AUTO_DOWNLOAD_BYTES + 1),
+        },
+      })
+    );
+    try {
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({
+          downloads_path: downloadsDir,
+        }),
+      });
+      const pdfUrl = 'https://example.com/oversized.pdf';
+      const fakePage = {
+        url: () => pdfUrl,
+        evaluate: vi.fn(async (callback: any, argument: unknown) =>
+          callback(argument)
+        ),
+      } as any;
+
+      const downloadedPath = await (
+        session as any
+      )._auto_download_pdf_if_needed(fakePage);
+
+      expect(downloadedPath).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fs.readdirSync(downloadsDir)).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
       fs.rmSync(downloadsDir, { recursive: true, force: true });

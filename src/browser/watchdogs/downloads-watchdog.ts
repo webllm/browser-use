@@ -13,6 +13,7 @@ import {
   TabCreatedEvent,
 } from '../events.js';
 import { BaseWatchdog } from './base.js';
+import { getMaxAutoDownloadBytes } from '../download-limits.js';
 
 type CDPSessionLike = {
   send?: (method: string, params?: Record<string, unknown>) => Promise<any>;
@@ -570,6 +571,14 @@ export class DownloadsWatchdog extends BaseWatchdog {
       return;
     }
 
+    const maxBytes = getMaxAutoDownloadBytes();
+    if (encodedDataLength > maxBytes) {
+      this.browser_session.logger.warning(
+        `[DownloadsWatchdog] Refusing PDF auto-download larger than ${maxBytes} bytes`
+      );
+      return;
+    }
+
     try {
       const responseBody = await this._cdpSession.send(
         'Network.getResponseBody',
@@ -580,6 +589,16 @@ export class DownloadsWatchdog extends BaseWatchdog {
       const body =
         typeof responseBody?.body === 'string' ? responseBody.body : '';
       if (!body) {
+        return;
+      }
+
+      const estimatedBodySize = responseBody?.base64Encoded
+        ? Math.floor((body.trim().length * 3) / 4)
+        : Buffer.byteLength(body, 'utf8');
+      if (estimatedBodySize > maxBytes) {
+        this.browser_session.logger.warning(
+          `[DownloadsWatchdog] Refusing PDF auto-download larger than ${maxBytes} bytes`
+        );
         return;
       }
 
@@ -598,6 +617,12 @@ export class DownloadsWatchdog extends BaseWatchdog {
       const content = responseBody?.base64Encoded
         ? Buffer.from(body, 'base64')
         : Buffer.from(body, 'utf8');
+      if (content.length === 0 || content.length > maxBytes) {
+        this.browser_session.logger.warning(
+          `[DownloadsWatchdog] Refusing PDF auto-download larger than ${maxBytes} bytes`
+        );
+        return;
+      }
       fs.writeFileSync(filePath, content, { mode: 0o600 });
       chmodPrivatePath(filePath, 0o600);
 
