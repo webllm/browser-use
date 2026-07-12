@@ -5,10 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
 import { isMainModule } from '../entrypoint.js';
+import {
+  getProcessCommandLine,
+  type ProcessCommandLineReader,
+} from './process-identity.js';
 
 export interface DirectModeState {
   mode?: 'local' | 'remote';
@@ -288,9 +292,7 @@ export interface DirectCliEnvironment {
     owns_user_data_dir?: boolean | null;
   }>;
   kill_process?: (pid: number) => void | Promise<void>;
-  get_process_command_line?: (
-    pid: number
-  ) => string | null | Promise<string | null>;
+  get_process_command_line?: ProcessCommandLineReader;
 }
 
 const DEFAULT_STDOUT: StreamLike = process.stdout;
@@ -334,50 +336,6 @@ export const save_direct_state = (
 
 export const clear_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
   fs.rmSync(state_file, { force: true });
-};
-
-const defaultGetProcessCommandLine = (pid: number): string | null => {
-  if (!Number.isSafeInteger(pid) || pid <= 0) {
-    return null;
-  }
-
-  if (process.platform === 'linux') {
-    try {
-      const commandLine = fs
-        .readFileSync(`/proc/${pid}/cmdline`, 'utf8')
-        .replace(/\0/g, ' ')
-        .trim();
-      return commandLine || null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (process.platform === 'win32') {
-    const result = spawnSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}').CommandLine`,
-      ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    if (result.status !== 0) {
-      return null;
-    }
-    return result.stdout.trim() || null;
-  }
-
-  const result = spawnSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  if (result.status !== 0) {
-    return null;
-  }
-  return result.stdout.trim() || null;
 };
 
 const isOwnedDirectBrowserProcess = async (
@@ -989,7 +947,7 @@ export const run_direct_command = async (
         process.kill(pid, 'SIGTERM');
       }),
     get_process_command_line:
-      options.get_process_command_line ?? defaultGetProcessCommandLine,
+      options.get_process_command_line ?? getProcessCommandLine,
   };
 
   const { useRemote, args } = extractDirectModeArgs(argv);

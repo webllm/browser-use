@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { getProcessCommandLine } from './process-identity.js';
 
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
@@ -26,10 +27,23 @@ const findSystemBinary = (binary: string) => {
   );
 };
 
+const parseCommandLine = (commandLine: string) =>
+  (commandLine.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((arg) => {
+    if (
+      arg.length >= 2 &&
+      ((arg.startsWith('"') && arg.endsWith('"')) ||
+        (arg.startsWith("'") && arg.endsWith("'")))
+    ) {
+      return arg.slice(1, -1);
+    }
+    return arg;
+  });
+
 type TunnelInfo = {
   port: number;
   pid: number;
   url: string;
+  binary_path: string;
 };
 
 export type TunnelStatus = {
@@ -64,6 +78,7 @@ export interface TunnelManagerOptions {
   sleep_impl?: (ms: number) => Promise<void>;
   is_process_alive?: (pid: number) => boolean;
   kill_process?: (pid: number) => Promise<boolean>;
+  get_process_command_line?: (pid: number) => string | null;
 }
 
 export class TunnelManager {
@@ -73,6 +88,9 @@ export class TunnelManager {
   private readonly sleep_impl: (ms: number) => Promise<void>;
   private readonly is_process_alive_impl: (pid: number) => boolean;
   private readonly kill_process_impl: (pid: number) => Promise<boolean>;
+  private readonly get_process_command_line_impl: (
+    pid: number
+  ) => string | null;
   private binary_path: string | null = null;
 
   constructor(options: TunnelManagerOptions = {}) {
@@ -83,6 +101,8 @@ export class TunnelManager {
     this.is_process_alive_impl =
       options.is_process_alive ?? default_is_process_alive;
     this.kill_process_impl = options.kill_process ?? default_kill_process;
+    this.get_process_command_line_impl =
+      options.get_process_command_line ?? getProcessCommandLine;
   }
 
   private get_tunnel_file(port: number) {
@@ -100,11 +120,16 @@ export class TunnelManager {
     }
   }
 
-  private save_tunnel_info(port: number, pid: number, url: string) {
+  private save_tunnel_info(
+    port: number,
+    pid: number,
+    url: string,
+    binaryPath: string
+  ) {
     this.ensure_tunnel_dir();
     fs.writeFileSync(
       this.get_tunnel_file(port),
-      JSON.stringify({ port, pid, url }),
+      JSON.stringify({ port, pid, url, binary_path: binaryPath }),
       { encoding: 'utf-8', mode: 0o600 }
     );
     if (process.platform !== 'win32') {
@@ -124,29 +149,80 @@ export class TunnelManager {
       ) as Partial<TunnelInfo> | null;
       if (
         !parsed ||
-        typeof parsed.port !== 'number' ||
+        parsed.port !== port ||
         typeof parsed.pid !== 'number' ||
-        typeof parsed.url !== 'string'
+        !Number.isSafeInteger(parsed.pid) ||
+        parsed.pid <= 0 ||
+        typeof parsed.url !== 'string' ||
+        typeof parsed.binary_path !== 'string' ||
+        parsed.binary_path.trim().length === 0
       ) {
         fs.rmSync(filePath, { force: true });
         return null;
       }
 
-      if (!this.is_process_alive_impl(parsed.pid)) {
+      const info: TunnelInfo = {
+        port: parsed.port,
+        pid: parsed.pid,
+        url: parsed.url,
+        binary_path: parsed.binary_path,
+      };
+
+      if (
+        !this.is_process_alive_impl(info.pid) ||
+        !this.is_owned_tunnel_process(info)
+      ) {
         fs.rmSync(filePath, { force: true });
         fs.rmSync(this.get_tunnel_log_file(port), { force: true });
         return null;
       }
 
-      return {
-        port: parsed.port,
-        pid: parsed.pid,
-        url: parsed.url,
-      };
+      return info;
     } catch {
       fs.rmSync(filePath, { force: true });
       return null;
     }
+  }
+
+  private is_owned_tunnel_process(info: TunnelInfo) {
+    const commandLine = this.get_process_command_line_impl(info.pid);
+    if (!commandLine) {
+      return false;
+    }
+
+    const args = parseCommandLine(commandLine);
+    if (args.length < 4) {
+      return false;
+    }
+
+    const normalizeExecutable = (value: string) => {
+      const normalized = path.normalize(value);
+      return process.platform === 'win32'
+        ? normalized.toLowerCase()
+        : normalized;
+    };
+    if (
+      normalizeExecutable(args[0]!) !==
+      normalizeExecutable(info.binary_path.trim())
+    ) {
+      return false;
+    }
+
+    const tunnelIndex = args.indexOf('tunnel', 1);
+    if (tunnelIndex < 1) {
+      return false;
+    }
+
+    const expectedUrl = `http://localhost:${info.port}`;
+    for (let index = tunnelIndex + 1; index < args.length; index += 1) {
+      if (args[index] === '--url' && args[index + 1] === expectedUrl) {
+        return true;
+      }
+      if (args[index] === `--url=${expectedUrl}`) {
+        return true;
+      }
+    }
+    return false;
   }
 
   get_binary_path() {
@@ -237,7 +313,7 @@ export class TunnelManager {
           : '';
         const match = content.match(TUNNEL_URL_PATTERN);
         if (match?.[1] && typeof child.pid === 'number') {
-          this.save_tunnel_info(port, child.pid, match[1]);
+          this.save_tunnel_info(port, child.pid, match[1], binaryPath);
           return { url: match[1], port };
         }
 

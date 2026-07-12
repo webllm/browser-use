@@ -162,6 +162,8 @@ describe('skill-cli tunnel alignment', () => {
         binary_resolver: () => '/usr/bin/cloudflared',
         spawn_impl: spawnImpl as any,
         is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
         sleep_impl: vi.fn(async () => {}),
       });
 
@@ -171,12 +173,100 @@ describe('skill-cli tunnel alignment', () => {
       });
       expect(fs.existsSync(infoPath)).toBe(true);
       expect(fs.existsSync(logPath)).toBe(true);
+      expect(JSON.parse(fs.readFileSync(infoPath, 'utf8'))).toMatchObject({
+        port: 3000,
+        pid: 4321,
+        binary_path: '/usr/bin/cloudflared',
+      });
+      expect(manager.list_tunnels()).toEqual({
+        tunnels: [{ port: 3000, url: 'https://demo.trycloudflare.com' }],
+        count: 1,
+      });
 
       if (process.platform !== 'win32') {
         expect(fs.statSync(tunnelDir).mode & 0o777).toBe(0o700);
         expect(fs.statSync(infoPath).mode & 0o777).toBe(0o600);
         expect(fs.statSync(logPath).mode & 0o777).toBe(0o600);
       }
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops a persisted tunnel only when its process signature matches', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const logPath = path.join(tunnelDir, '3000.log');
+    const binaryPath = '/opt/Cloudflare Bin/cloudflared';
+    const killProcessSpy = vi.fn(async () => true);
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({
+        port: 3000,
+        pid: 4321,
+        url: 'https://demo.trycloudflare.com',
+        binary_path: binaryPath,
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(logPath, 'tunnel log', 'utf8');
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          `"${binaryPath}" tunnel --url http://localhost:3000`,
+        kill_process: killProcessSpy,
+      });
+
+      await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+        stopped: 3000,
+        url: 'https://demo.trycloudflare.com',
+      });
+      expect(killProcessSpy).toHaveBeenCalledWith(4321);
+      expect(fs.existsSync(infoPath)).toBe(false);
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not terminate a reused PID with a different process signature', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const logPath = path.join(tunnelDir, '3000.log');
+    const killProcessSpy = vi.fn(async () => true);
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({
+        port: 3000,
+        pid: 4321,
+        url: 'https://stale.trycloudflare.com',
+        binary_path: '/usr/bin/cloudflared',
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(logPath, 'stale tunnel log', 'utf8');
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        is_process_alive: () => true,
+        get_process_command_line: () => '/usr/bin/sleep 30',
+        kill_process: killProcessSpy,
+      });
+
+      await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+        error: 'No tunnel running on port 3000',
+      });
+      expect(killProcessSpy).not.toHaveBeenCalled();
+      expect(fs.existsSync(infoPath)).toBe(false);
+      expect(fs.existsSync(logPath)).toBe(false);
     } finally {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
