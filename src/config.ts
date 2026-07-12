@@ -26,58 +26,69 @@ const string_to_bool = (
 
 let docker_cache: boolean | null = null;
 
+type ContainerDetectionOptions = {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  existsSync?: (target: string) => boolean;
+  readFileSync?: (target: string, encoding: BufferEncoding) => string;
+};
+
+const CONTAINER_CGROUP_MARKERS =
+  /(?:^|[/.-])(docker|containerd|kubepods|podman|libpod|lxc)(?:[/.-]|$)/i;
+
+export const detect_container_environment = (
+  options: ContainerDetectionOptions = {}
+): boolean => {
+  const platform = options.platform ?? process.platform;
+  if (platform !== 'linux') {
+    return false;
+  }
+
+  const env = options.env ?? process.env;
+  const existsSync = options.existsSync ?? fs.existsSync;
+  const readFileSync = options.readFileSync ?? fs.readFileSync;
+
+  const explicitContainer = String(env.container ?? '')
+    .trim()
+    .toLowerCase();
+  if (
+    explicitContainer &&
+    !['0', 'false', 'no', 'none'].includes(explicitContainer)
+  ) {
+    return true;
+  }
+  if (env.KUBERNETES_SERVICE_HOST) {
+    return true;
+  }
+
+  try {
+    if (existsSync('/.dockerenv') || existsSync('/run/.containerenv')) {
+      return true;
+    }
+  } catch {
+    // Continue with cgroup evidence.
+  }
+
+  for (const cgroupPath of ['/proc/1/cgroup', '/proc/self/cgroup']) {
+    try {
+      if (CONTAINER_CGROUP_MARKERS.test(readFileSync(cgroupPath, 'utf-8'))) {
+        return true;
+      }
+    } catch {
+      // Missing procfs entries are not container evidence.
+    }
+  }
+
+  return false;
+};
+
 export const is_running_in_docker = () => {
   if (docker_cache !== null) {
     return docker_cache;
   }
 
-  try {
-    if (fs.existsSync('/.dockerenv')) {
-      docker_cache = true;
-      return true;
-    }
-  } catch {
-    /* no-op */
-  }
-
-  try {
-    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf-8').toLowerCase();
-    if (cgroup.includes('docker') || cgroup.includes('kubepods')) {
-      docker_cache = true;
-      return true;
-    }
-  } catch {
-    /* no-op */
-  }
-
-  try {
-    const cmdline = fs.readFileSync('/proc/1/cmdline', 'utf-8').toLowerCase();
-    if (
-      cmdline.includes('py') ||
-      cmdline.includes('uv') ||
-      cmdline.includes('app')
-    ) {
-      docker_cache = true;
-      return true;
-    }
-  } catch {
-    /* no-op */
-  }
-
-  try {
-    const processes = fs
-      .readdirSync('/proc')
-      .filter((entry) => /^\d+$/.test(entry));
-    if (processes.length > 0 && processes.length < 10) {
-      docker_cache = true;
-      return true;
-    }
-  } catch {
-    /* no-op */
-  }
-
-  docker_cache = false;
-  return false;
+  docker_cache = detect_container_environment();
+  return docker_cache;
 };
 
 const chmod_private = (target: string, mode: number) => {
