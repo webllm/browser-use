@@ -176,6 +176,75 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('switches an existing local session when remote mode is explicit', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const killProcessSpy = vi.fn(async () => {});
+    const createBrowserSpy = vi.fn(async () => ({
+      id: 'remote-browser',
+      cdpUrl: 'wss://cloud.example/devtools/browser/1',
+    }));
+    const navigateSpy = vi.fn(async () => {});
+    const sessionFactory = vi.fn(() => ({
+      start: vi.fn(async () => {}),
+      navigate_to: navigateSpy,
+      get_current_page: vi.fn(async () => ({
+        url: () => 'https://example.com',
+      })),
+      event_bus: { stop: vi.fn(async () => {}) },
+      detach_all_watchdogs: vi.fn(),
+    }));
+
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        browser_pid: 321,
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(
+        ['--remote', 'open', 'example.com'],
+        {
+          state_file: stateFile,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          kill_process: killProcessSpy,
+          cloud_client_factory: () =>
+            ({
+              create_browser: createBrowserSpy,
+              stop_browser: vi.fn(async () => {}),
+            }) as any,
+          session_factory: sessionFactory as any,
+        }
+      );
+
+      expect(exitCode).toBe(0);
+      expect(killProcessSpy).toHaveBeenCalledWith(321);
+      expect(createBrowserSpy).toHaveBeenCalledTimes(1);
+      expect(sessionFactory).toHaveBeenCalledTimes(1);
+      expect(sessionFactory).toHaveBeenCalledWith({
+        cdp_url: 'wss://cloud.example/devtools/browser/1',
+      });
+      expect(navigateSpy).toHaveBeenCalledWith('https://example.com');
+      expect(load_direct_state(stateFile)).toMatchObject({
+        mode: 'remote',
+        cdp_url: 'wss://cloud.example/devtools/browser/1',
+        session_id: 'remote-browser',
+      });
+      expect(stderr.read()).toBe('');
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('removes ephemeral local profiles when direct launch fails before connect', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

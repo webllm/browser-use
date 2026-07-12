@@ -809,6 +809,12 @@ const connectDirectSession = async (
     cleanupOwnedDirectUserDataDir(currentState);
   };
 
+  if (useRemote && state.cdp_url && state.mode !== 'remote') {
+    await cleanupDisconnectedState(state);
+    clear_direct_state(environment.state_file);
+    state = {};
+  }
+
   if (state.cdp_url) {
     try {
       const session = await connectWithState(state);
