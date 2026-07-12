@@ -814,6 +814,24 @@ const killOwnedDirectBrowserProcess = async (
   }
 };
 
+const defaultKillDirectBrowserProcess = async (pid: number) => {
+  process.kill(pid, 'SIGTERM');
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        return;
+      }
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Browser process ${pid} did not exit after SIGTERM`);
+};
+
 const connectDirectSession = async (
   useRemote: boolean,
   environment: Required<DirectCliEnvironment>
@@ -956,11 +974,7 @@ export const run_direct_command = async (
     cloud_client_factory:
       options.cloud_client_factory ?? (() => new CloudBrowserClient()),
     local_launcher: options.local_launcher ?? defaultLocalLauncher,
-    kill_process:
-      options.kill_process ??
-      ((pid: number) => {
-        process.kill(pid, 'SIGTERM');
-      }),
+    kill_process: options.kill_process ?? defaultKillDirectBrowserProcess,
     get_process_command_line:
       options.get_process_command_line ?? getProcessCommandLine,
   };

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import {
   clear_direct_state,
@@ -509,6 +510,86 @@ describe('skill-cli direct alignment', () => {
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'retains local state when the default termination signal is ignored',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const stateFile = path.join(tempDir, 'state.json');
+      const userDataDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const stdout = createWritable();
+      const stderr = createWritable();
+      const launchToken = `owned-${Date.now()}`;
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)",
+          '--',
+          `--browser-use-direct-token=${launchToken}`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      );
+
+      if (child.pid == null) {
+        throw new Error('Failed to spawn termination test process');
+      }
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(
+          () => reject(new Error('Termination test process did not start')),
+          2_000
+        );
+        child.stdout.once('data', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        child.once('error', (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      });
+
+      save_direct_state(
+        {
+          mode: 'local',
+          cdp_url: 'http://127.0.0.1:9222',
+          browser_pid: child.pid,
+          browser_launch_token: launchToken,
+          user_data_dir: userDataDir,
+          owns_user_data_dir: true,
+        },
+        stateFile
+      );
+
+      try {
+        const exitCode = await run_direct_command(['close'], {
+          state_file: stateFile,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+        });
+
+        expect(exitCode).toBe(1);
+        expect(stdout.read()).not.toContain('Browser closed');
+        expect(stderr.read()).toContain('state was retained for retry');
+        expect(fs.existsSync(stateFile)).toBe(true);
+        expect(fs.existsSync(userDataDir)).toBe(true);
+      } finally {
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          // The child may already have exited during cleanup.
+        }
+        clear_direct_state(stateFile);
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      }
+    },
+    10_000
+  );
 
   it('does not terminate a reused PID whose launch marker does not match', async () => {
     const tempDir = fs.mkdtempSync(
