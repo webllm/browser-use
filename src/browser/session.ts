@@ -448,6 +448,11 @@ interface RecentBrowserEvent {
   tab_id?: string;
 }
 
+interface PageLoadingStatuses {
+  document: string | null;
+  network: string | null;
+}
+
 export class BrowserSession {
   readonly id: string;
   readonly browser_profile: BrowserProfile;
@@ -479,6 +484,7 @@ export class BrowserSession {
   private _autoDownloadPdfs = true;
   private tabPages = new Map<number, Page | null>();
   private currentPageLoadingStatus: string | null = null;
+  private pageLoadingStatuses = new WeakMap<Page, PageLoadingStatuses>();
   private _subprocess: ChildProcess | null = null;
   private _childProcesses: Set<number> = new Set();
   private _browserLaunchToken: string | null = null;
@@ -970,14 +976,18 @@ export class BrowserSession {
           now - lastActivity >=
             (this.browser_profile.wait_for_network_idle_page_load_time ?? 0.5)
         ) {
-          this.currentPageLoadingStatus = null;
+          this._setPageLoadingStatus(page, 'network', null);
           break;
         }
         if (
           now - startTime >
           (this.browser_profile.maximum_wait_page_load_time ?? 5)
         ) {
-          this.currentPageLoadingStatus = `Page loading was aborted after ${this.browser_profile.maximum_wait_page_load_time ?? 5}s with ${pendingRequests.size} pending network requests. You may want to use the wait action to allow more time for the page to fully load.`;
+          this._setPageLoadingStatus(
+            page,
+            'network',
+            `Page loading was aborted after ${this.browser_profile.maximum_wait_page_load_time ?? 5}s with ${pendingRequests.size} pending network requests. You may want to use the wait action to allow more time for the page to fully load.`
+          );
           break;
         }
       }
@@ -993,6 +1003,48 @@ export class BrowserSession {
         page.off('response', onResponse);
       }
     } else {
+      this._setPageLoadingStatus(page, 'network', null);
+    }
+  }
+
+  private _getPageLoadingStatus(page: Page | null): string | null {
+    if (!page) {
+      return null;
+    }
+    const statuses = this.pageLoadingStatuses.get(page);
+    if (!statuses) {
+      return null;
+    }
+    const messages = [statuses.document, statuses.network].filter(
+      (message): message is string => Boolean(message)
+    );
+    return messages.length > 0 ? messages.join(' ') : null;
+  }
+
+  private _setPageLoadingStatus(
+    page: Page,
+    kind: keyof PageLoadingStatuses,
+    status: string | null
+  ) {
+    const statuses = this.pageLoadingStatuses.get(page) ?? {
+      document: null,
+      network: null,
+    };
+    statuses[kind] = status;
+    this.pageLoadingStatuses.set(page, statuses);
+    if (page === this.agent_current_page) {
+      this.currentPageLoadingStatus = this._getPageLoadingStatus(page);
+    }
+  }
+
+  private _resetPageLoadingStatus(page: Page | null) {
+    if (page) {
+      this.pageLoadingStatuses.set(page, {
+        document: null,
+        network: null,
+      });
+    }
+    if (page === this.agent_current_page) {
       this.currentPageLoadingStatus = null;
     }
   }
@@ -1005,6 +1057,7 @@ export class BrowserSession {
     }
     this._attachDialogHandler(page);
     this.agent_current_page = page ?? null;
+    this.currentPageLoadingStatus = this._getPageLoadingStatus(page);
   }
 
   private async _syncCurrentTabFromPage(page: Page | null) {
@@ -2236,6 +2289,7 @@ export class BrowserSession {
     this._detachRemoteDisconnectHandler();
     this.cachedBrowserState = null;
     this.currentPageLoadingStatus = null;
+    this.pageLoadingStatuses = new WeakMap<Page, PageLoadingStatuses>();
     this.browser = null;
     this.browser_context = null;
     this.agent_current_page = null;
@@ -3092,8 +3146,9 @@ export class BrowserSession {
     this._recordRecentEvent('navigation_started', { url: normalized });
     const page = await this._withAbort(this.get_current_page(), signal);
     if (page?.goto) {
+      const previousPageUrl = page.url();
       try {
-        this.currentPageLoadingStatus = null;
+        this._resetPageLoadingStatus(page);
         const gotoOptions: Record<string, unknown> = {
           waitUntil,
         };
@@ -3114,7 +3169,9 @@ export class BrowserSession {
           throw error;
         }
         completedUrl = normalize_url(finalUrl);
-        await this._waitForStableNetwork(page, signal);
+        if (!this._isSameDocumentNavigation(previousPageUrl, finalUrl)) {
+          await this._waitForStableNetwork(page, signal);
+        }
         const settledUrl = page.url();
         try {
           this._assert_url_allowed(settledUrl);
@@ -3206,7 +3263,7 @@ export class BrowserSession {
           signal
         )) ?? null;
       if (page) {
-        this.currentPageLoadingStatus = null;
+        this._resetPageLoadingStatus(page);
         const gotoOptions: Record<string, unknown> = {
           waitUntil,
         };
@@ -3301,7 +3358,6 @@ export class BrowserSession {
     ) {
       this.historyStack.push(completedUrl);
     }
-    this.currentPageLoadingStatus = null;
     if (!this.human_current_page) {
       this.human_current_page = page;
     }
@@ -3447,7 +3503,6 @@ export class BrowserSession {
     const tab = this._tabs[this.currentTabIndex] ?? null;
     const current = tab ? (this.tabPages.get(tab.page_id) ?? null) : null;
     this._setActivePage(current);
-    this.currentPageLoadingStatus = null;
     this.cachedBrowserState = null;
     if (this._tabs.length) {
       const tab = this._tabs[this.currentTabIndex];
@@ -4307,8 +4362,12 @@ export class BrowserSession {
     await this.validate_page_after_action(page, signal);
     const previousUrl = this.currentUrl;
     try {
+      this._resetPageLoadingStatus(page);
       await this._withAbort(page.goBack(), signal);
-      await this._waitForStableNetwork(page, signal);
+      const navigatedUrl = page.url();
+      if (!this._isSameDocumentNavigation(previousUrl, navigatedUrl)) {
+        await this._waitForStableNetwork(page, signal);
+      }
       await this._assert_page_url_allowed_or_rollback(page);
     } catch (error) {
       if (this._isAbortError(error)) {
@@ -4765,11 +4824,45 @@ export class BrowserSession {
         page.waitForLoadState('domcontentloaded', { timeout }),
         signal
       );
+      this._setPageLoadingStatus(page, 'document', null);
     } catch (error) {
       if (this._isAbortError(error)) {
         throw error;
       }
-      this.logger.debug(`waitForLoadState failed: ${(error as Error).message}`);
+      const rawMessage = (error as Error).message || 'Unknown readiness error';
+      const timeoutLike =
+        (error as Error).name === 'TimeoutError' ||
+        /timed?\s*out|timeout/i.test(rawMessage);
+      const duration =
+        timeout >= 1000
+          ? `${Number((timeout / 1000).toFixed(2))}s`
+          : `${Math.max(0, timeout)}ms`;
+      const loadingStatus = timeoutLike
+        ? `Page readiness wait timed out after ${duration} while waiting for DOMContentLoaded. The page may still be usable; use the wait action to allow more time.`
+        : `Page readiness check failed while waiting for DOMContentLoaded: ${boundBrowserStateText(
+            BrowserSession._redact_urls_in_text(rawMessage),
+            MAX_BROWSER_STATE_MESSAGE_CHARS
+          )}`;
+      this._setPageLoadingStatus(page, 'document', loadingStatus);
+      this.logger.debug(`waitForLoadState failed: ${rawMessage}`);
+    }
+  }
+
+  private _isSameDocumentNavigation(
+    previousUrl: string,
+    nextUrl: string
+  ): boolean {
+    if (!previousUrl || !nextUrl || previousUrl === nextUrl) {
+      return false;
+    }
+    try {
+      const previous = new URL(previousUrl);
+      const next = new URL(nextUrl);
+      previous.hash = '';
+      next.hash = '';
+      return previous.href === next.href;
+    } catch {
+      return false;
     }
   }
 
@@ -5415,9 +5508,14 @@ export class BrowserSession {
       return;
     }
     await this.validate_page_after_action(page);
+    const previousUrl = page.url();
     try {
+      this._resetPageLoadingStatus(page);
       await page.goForward({ timeout: 10000, waitUntil: 'load' });
-      await this._waitForStableNetwork(page);
+      const navigatedUrl = page.url();
+      if (!this._isSameDocumentNavigation(previousUrl, navigatedUrl)) {
+        await this._waitForStableNetwork(page);
+      }
     } catch (error) {
       if (error instanceof URLNotAllowedError) {
         throw error;
@@ -5451,7 +5549,7 @@ export class BrowserSession {
     }
     await this.validate_page_after_action(page);
     try {
-      this.currentPageLoadingStatus = null;
+      this._resetPageLoadingStatus(page);
       await page.reload({ waitUntil: 'domcontentloaded' });
       await this._waitForStableNetwork(page);
     } catch (error) {

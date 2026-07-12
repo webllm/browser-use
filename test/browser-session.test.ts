@@ -1639,6 +1639,130 @@ esac
     );
   });
 
+  it('skips the network readiness budget for same-document navigation', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+
+    let pageUrl = 'https://example.com/page#first';
+    const fakePage = {
+      goto: vi.fn(async (url: string) => {
+        pageUrl = url;
+      }),
+      url: vi.fn(() => pageUrl),
+      title: vi.fn(async () => 'Anchored Page'),
+    } as any;
+    const waitForStableNetwork = vi.spyOn(
+      session as any,
+      '_waitForStableNetwork'
+    );
+
+    session.update_current_page(fakePage, 'Anchored Page', pageUrl);
+    (session as any).initialized = true;
+
+    await session.navigate_to('https://example.com/page#second');
+
+    expect(waitForStableNetwork).not.toHaveBeenCalled();
+    expect(session.active_tab?.url).toBe('https://example.com/page#second');
+  });
+
+  it('keeps a background page readiness timeout isolated from active-page navigation', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+
+    let activeUrl = 'https://example.com/active';
+    const activePage = {
+      goto: vi.fn(async (url: string) => {
+        activeUrl = url;
+      }),
+      url: vi.fn(() => activeUrl),
+      title: vi.fn(async () => 'Active Page'),
+    } as any;
+    const timeoutError = new Error('Timeout 25ms exceeded');
+    timeoutError.name = 'TimeoutError';
+    const backgroundPage = {
+      waitForLoadState: vi.fn(async () => {
+        throw timeoutError;
+      }),
+    } as any;
+
+    session.update_current_page(activePage, 'Active Page', activeUrl);
+    (session as any).initialized = true;
+
+    await (session as any)._waitForLoad(backgroundPage, 25);
+    await session.navigate_to('https://example.com/active-next');
+
+    expect((session as any).currentPageLoadingStatus).toBeNull();
+    expect((session as any)._getPageLoadingStatus(backgroundPage)).toContain(
+      'timed out after 25ms'
+    );
+    expect((session as any)._getPageLoadingStatus(activePage)).toBeNull();
+  });
+
+  it('exposes DOM readiness timeouts through loading_status', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const timeoutError = new Error('Timeout 50ms exceeded');
+    timeoutError.name = 'TimeoutError';
+    const fakePage = {
+      url: vi.fn(() => 'about:blank'),
+      title: vi.fn(async () => 'Blank'),
+      waitForLoadState: vi.fn(async () => {
+        throw timeoutError;
+      }),
+    } as any;
+
+    session.update_current_page(fakePage, 'Blank', 'about:blank');
+    (session as any).initialized = true;
+    vi.spyOn(session, 'take_screenshot').mockResolvedValue(null);
+
+    await (session as any)._waitForLoad(fakePage, 50);
+    const state = await session.get_minimal_state_summary();
+
+    expect(state.loading_status).toContain('timed out after 50ms');
+    expect(state.loading_status).toContain('DOMContentLoaded');
+  });
+
+  it('exposes stalled resource waits through loading_status', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        maximum_wait_page_load_time: 0,
+      }),
+    });
+    const stalledRequest = {
+      resourceType: vi.fn(() => 'document'),
+      url: vi.fn(() => 'https://example.com/stalled.js'),
+      headers: vi.fn(() => ({})),
+    };
+    const fakePage = {
+      url: vi.fn(() => 'https://example.com/stalled'),
+      title: vi.fn(async () => 'Stalled Page'),
+      on: vi.fn((event: string, listener: (value: unknown) => void) => {
+        if (event === 'request') {
+          listener(stalledRequest);
+        }
+      }),
+      off: vi.fn(),
+    } as any;
+
+    session.update_current_page(
+      fakePage,
+      'Stalled Page',
+      'https://example.com/stalled'
+    );
+    (session as any).initialized = true;
+    vi.spyOn(session, 'take_screenshot').mockResolvedValue(null);
+
+    await (session as any)._waitForStableNetwork(fakePage);
+    const state = await session.get_minimal_state_summary();
+
+    expect(state.loading_status).toContain('with 1 pending network requests');
+    expect(state.loading_status).toContain('use the wait action');
+    expect(fakePage.off).toHaveBeenCalledTimes(2);
+  });
+
   it('rolls back same-tab redirects to disallowed final URLs', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({
