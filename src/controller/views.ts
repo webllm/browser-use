@@ -157,12 +157,12 @@ export type ExtractStructuredDataAction = z.infer<
 >;
 
 export const SearchPageActionSchema = z.object({
-  pattern: z.string(),
+  pattern: z.string().min(1).max(1000),
   regex: z.boolean().default(false),
   case_sensitive: z.boolean().default(false),
-  context_chars: z.number().int().default(150),
-  css_scope: z.string().optional(),
-  max_results: z.number().int().default(25),
+  context_chars: z.number().int().min(0).max(2000).default(150),
+  css_scope: z.string().min(1).max(2048).optional(),
+  max_results: z.number().int().min(1).max(100).default(25),
 });
 export type SearchPageAction = z.infer<typeof SearchPageActionSchema>;
 

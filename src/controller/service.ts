@@ -1,5 +1,6 @@
 import fs, { promises as fsp } from 'node:fs';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { validate as validateJsonSchema } from '@cfworker/json-schema';
 import { z } from 'zod';
 import { ActionResult } from '../agent/views.js';
@@ -88,6 +89,14 @@ const MAX_WAIT_SECONDS = 30;
 const MAX_EVALUATE_RESULT_CHARS = 20_000;
 const MAX_EVALUATE_IMAGE_CHARS = 5 * 1024 * 1024;
 const MAX_EVALUATE_IMAGES = 4;
+const MAX_SEARCH_SOURCE_CHARS = 1_000_000;
+const MAX_SEARCH_TEXT_NODES = 100_000;
+const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_CONTEXT_CHARS = 2_000;
+const MAX_SEARCH_MATCH_CHARS = 4_096;
+const MAX_SEARCH_SNIPPET_CHARS = 8_192;
+const MAX_SEARCH_SCANNED_MATCHES = 100_000;
+const SEARCH_REGEX_TIMEOUT_MS = 500;
 const MAX_FIND_ELEMENTS_RESULTS = 100;
 const MAX_FIND_ATTRIBUTES = 32;
 const MAX_FIND_ELEMENT_TEXT_CHARS = 4_096;
@@ -176,6 +185,190 @@ const throwIfAborted = (signal?: AbortSignal | null) => {
   if (signal?.aborted) {
     throw createAbortError(signal.reason);
   }
+};
+
+type PageSearchMatch = {
+  position: number;
+  match: string;
+  snippet: string;
+};
+
+type PageSearchResult = {
+  error?: string;
+  matches: PageSearchMatch[];
+  total: number;
+  truncated: boolean;
+  contentTruncated?: boolean;
+};
+
+const searchLiteralText = (
+  sourceText: string,
+  pattern: string,
+  caseSensitive: boolean,
+  contextChars: number,
+  maxResults: number
+): PageSearchResult => {
+  const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matcher = new RegExp(escapedPattern, caseSensitive ? 'g' : 'gi');
+  const matches: PageSearchMatch[] = [];
+  let total = 0;
+  let scanTruncated = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = matcher.exec(sourceText)) !== null) {
+    const position = match.index;
+    total += 1;
+    if (matches.length < maxResults) {
+      const matchedText = match[0];
+      const matchEnd = position + matchedText.length;
+      const start = Math.max(0, position - contextChars);
+      const end = Math.min(sourceText.length, matchEnd + contextChars);
+      matches.push({
+        position,
+        match: matchedText.slice(0, MAX_SEARCH_MATCH_CHARS),
+        snippet: sourceText
+          .slice(start, end)
+          .slice(0, MAX_SEARCH_SNIPPET_CHARS),
+      });
+    }
+    if (total >= MAX_SEARCH_SCANNED_MATCHES) {
+      scanTruncated = true;
+      break;
+    }
+    if (match[0].length === 0) matcher.lastIndex += 1;
+  }
+
+  return {
+    matches,
+    total,
+    truncated: scanTruncated || total > matches.length,
+  };
+};
+
+const searchRegexInWorker = (
+  sourceText: string,
+  pattern: string,
+  caseSensitive: boolean,
+  contextChars: number,
+  maxResults: number,
+  signal?: AbortSignal | null
+): Promise<PageSearchResult> => {
+  throwIfAborted(signal);
+  const workerSource = `
+    const { parentPort, workerData } = require('node:worker_threads');
+    const {
+      sourceText,
+      pattern,
+      caseSensitive,
+      contextChars,
+      maxResults,
+      maxMatchChars,
+      maxSnippetChars,
+      maxScannedMatches,
+    } = workerData;
+    try {
+      const matcher = new RegExp(pattern, caseSensitive ? 'g' : 'gi');
+      const matches = [];
+      let total = 0;
+      let scanTruncated = false;
+      let contentTruncated = false;
+      let match;
+      while ((match = matcher.exec(sourceText)) !== null) {
+        total += 1;
+        if (matches.length < maxResults) {
+          const rawMatch = match[0];
+          const boundedMatch = rawMatch.slice(0, maxMatchChars);
+          const start = Math.max(0, match.index - contextChars);
+          const visibleMatchEnd = match.index + boundedMatch.length;
+          const end = Math.min(sourceText.length, visibleMatchEnd + contextChars);
+          const rawSnippet = sourceText.slice(start, end);
+          const snippet = rawSnippet.slice(0, maxSnippetChars);
+          if (boundedMatch.length < rawMatch.length || snippet.length < rawSnippet.length) {
+            contentTruncated = true;
+          }
+          matches.push({ position: match.index, match: boundedMatch, snippet });
+        }
+        if (total >= maxScannedMatches) {
+          scanTruncated = true;
+          break;
+        }
+        if (match[0].length === 0) matcher.lastIndex += 1;
+      }
+      parentPort.postMessage({
+        matches,
+        total,
+        truncated: scanTruncated || total > matches.length,
+        contentTruncated,
+      });
+    } catch (error) {
+      parentPort.postMessage({
+        error: 'Invalid regex pattern: ' + String(error).slice(0, 500),
+        matches: [],
+        total: 0,
+        truncated: false,
+      });
+    }
+  `;
+
+  return new Promise<PageSearchResult>((resolve, reject) => {
+    const worker = new Worker(workerSource, {
+      eval: true,
+      workerData: {
+        sourceText,
+        pattern,
+        caseSensitive,
+        contextChars,
+        maxResults,
+        maxMatchChars: MAX_SEARCH_MATCH_CHARS,
+        maxSnippetChars: MAX_SEARCH_SNIPPET_CHARS,
+        maxScannedMatches: MAX_SEARCH_SCANNED_MATCHES,
+      },
+    });
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (result: PageSearchResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void worker.terminate();
+      resolve(result);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void worker.terminate();
+      reject(error);
+    };
+    const onAbort = () => fail(createAbortError(signal?.reason));
+    const timeout = setTimeout(() => {
+      finish({
+        error: `Regular expression search exceeded the ${SEARCH_REGEX_TIMEOUT_MS}ms safety limit.`,
+        matches: [],
+        total: 0,
+        truncated: true,
+      });
+    }, SEARCH_REGEX_TIMEOUT_MS);
+
+    worker.once('message', (result: PageSearchResult) => finish(result));
+    worker.once('error', (error: unknown) =>
+      finish({
+        error: `Regular expression search failed: ${String(
+          error instanceof Error ? error.message : error
+        ).slice(0, 500)}`,
+        matches: [],
+        total: 0,
+        truncated: false,
+      })
+    );
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 };
 
 const waitWithSignal = async (
@@ -1803,128 +1996,131 @@ You will be given a query and the markdown of a webpage that has been filtered t
         throw new BrowserError('No active page for search_page.');
       }
 
-      type SearchPageResult = {
+      type SearchPageSource = {
         error?: string;
-        matches?: Array<{
-          position: number;
-          match: string;
-          snippet: string;
-        }>;
-        total?: number;
+        sourceText?: string;
         truncated?: boolean;
       };
-      let searchResult: SearchPageResult | null = null;
+      let pageSource: SearchPageSource | null = null;
       await validateBrowserPageAfterAction(browser_session, page, signal);
       try {
-        searchResult = (await page.evaluate(
+        pageSource = (await page.evaluate(
           ({
-            pattern,
-            regex,
-            caseSensitive,
-            contextChars,
             cssScope,
-            maxResults,
+            maxSourceChars,
+            maxTextNodes,
           }: {
-            pattern: string;
-            regex: boolean;
-            caseSensitive: boolean;
-            contextChars: number;
             cssScope: string | null;
-            maxResults: number;
+            maxSourceChars: number;
+            maxTextNodes: number;
           }) => {
-            const sourceNode = cssScope
-              ? document.querySelector(cssScope)
-              : document.body;
+            let sourceNode: Element | null;
+            try {
+              sourceNode = cssScope
+                ? document.querySelector(cssScope)
+                : document.body;
+            } catch (error: unknown) {
+              return {
+                error: `Invalid CSS scope: ${String(error).slice(0, 500)}`,
+                sourceText: '',
+                truncated: false,
+              };
+            }
             if (!sourceNode) {
               return {
                 error: `CSS scope not found: ${cssScope}`,
-                matches: [],
-                total: 0,
+                sourceText: '',
+                truncated: false,
               };
             }
-            const sourceText =
-              (sourceNode as HTMLElement).innerText ||
-              sourceNode.textContent ||
-              '';
-            if (!sourceText.trim()) {
-              return {
-                matches: [],
-                total: 0,
-              };
-            }
-
-            const safePattern = regex
-              ? pattern
-              : pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const flags = caseSensitive ? 'g' : 'gi';
-
-            let matcher: RegExp;
-            try {
-              matcher = new RegExp(safePattern, flags);
-            } catch (error: unknown) {
-              return {
-                error: `Invalid regex pattern: ${String(error)}`,
-                matches: [],
-                total: 0,
-              };
-            }
-
-            const matches: Array<{
-              position: number;
-              match: string;
-              snippet: string;
-            }> = [];
-            let foundTotal = 0;
-            let m: RegExpExecArray | null;
-            while ((m = matcher.exec(sourceText)) !== null) {
-              foundTotal += 1;
-              if (matches.length < Math.max(1, maxResults)) {
-                const start = Math.max(0, m.index - Math.max(0, contextChars));
-                const end = Math.min(
-                  sourceText.length,
-                  m.index + m[0].length + Math.max(0, contextChars)
-                );
-                matches.push({
-                  position: m.index,
-                  match: m[0],
-                  snippet: sourceText.slice(start, end),
-                });
+            const chunks: string[] = [];
+            let remaining = Math.max(0, maxSourceChars);
+            let visited = 0;
+            let truncated = false;
+            const walker = document.createTreeWalker(
+              sourceNode,
+              NodeFilter.SHOW_TEXT
+            );
+            let node = walker.nextNode();
+            while (node && remaining > 0 && visited < maxTextNodes) {
+              visited += 1;
+              const parentName = node.parentElement?.tagName?.toLowerCase();
+              if (
+                !['script', 'style', 'noscript', 'template'].includes(
+                  parentName ?? ''
+                )
+              ) {
+                const raw = node.nodeValue ?? '';
+                const piece = raw.slice(0, remaining);
+                if (piece) {
+                  chunks.push(piece);
+                  remaining -= piece.length;
+                  if (remaining > 0) {
+                    chunks.push('\n');
+                    remaining -= 1;
+                  }
+                }
+                if (piece.length < raw.length) truncated = true;
               }
-              if (m[0].length === 0) {
-                matcher.lastIndex += 1;
-              }
+              node = walker.nextNode();
             }
-
-            return {
-              matches,
-              total: foundTotal,
-              truncated: foundTotal > matches.length,
-            };
+            if (node) truncated = true;
+            return { sourceText: chunks.join(''), truncated };
           },
           {
-            pattern: params.pattern,
-            regex: params.regex,
-            caseSensitive: params.case_sensitive,
-            contextChars: params.context_chars,
             cssScope: params.css_scope ?? null,
-            maxResults: params.max_results,
+            maxSourceChars: MAX_SEARCH_SOURCE_CHARS,
+            maxTextNodes: MAX_SEARCH_TEXT_NODES,
           }
-        )) as SearchPageResult | null;
+        )) as SearchPageSource | null;
       } finally {
         await validateBrowserPageAfterAction(browser_session, page, signal);
       }
 
-      if (!searchResult) {
+      if (!pageSource) {
         return new ActionResult({ error: 'search_page returned no result' });
       }
+      if (pageSource.error) {
+        return new ActionResult({
+          error: `search_page: ${pageSource.error.slice(0, 1_000)}`,
+        });
+      }
+
+      const rawSourceText =
+        typeof pageSource.sourceText === 'string' ? pageSource.sourceText : '';
+      const sourceText = rawSourceText.slice(0, MAX_SEARCH_SOURCE_CHARS);
+      const sourceTruncated =
+        pageSource.truncated === true ||
+        sourceText.length < rawSourceText.length;
+      const contextChars = Math.min(
+        params.context_chars,
+        MAX_SEARCH_CONTEXT_CHARS
+      );
+      const maxResults = Math.min(params.max_results, MAX_SEARCH_RESULTS);
+      const searchResult = params.regex
+        ? await searchRegexInWorker(
+            sourceText,
+            params.pattern,
+            params.case_sensitive,
+            contextChars,
+            maxResults,
+            signal
+          )
+        : searchLiteralText(
+            sourceText,
+            params.pattern,
+            params.case_sensitive,
+            contextChars,
+            maxResults
+          );
       if (searchResult.error) {
         return new ActionResult({
           error: `search_page: ${searchResult.error}`,
         });
       }
 
-      const total = searchResult.total ?? 0;
-      const matches = searchResult.matches ?? [];
+      const total = searchResult.total;
+      const matches = searchResult.matches;
       if (total === 0 || !matches.length) {
         const noMatchMessage = `No matches found for "${params.pattern}".`;
         return new ActionResult({
@@ -1947,6 +2143,9 @@ You will be given a query and the markdown of a webpage that has been filtered t
         lines.push(
           `... showing first ${matches.length} matches (increase max_results to see more).`
         );
+      }
+      if (sourceTruncated || searchResult.contentTruncated) {
+        lines.push('... page text or match content was truncated for safety.');
       }
 
       const memory = `Searched page for "${params.pattern}": ${total} match${total === 1 ? '' : 'es'} found.`;

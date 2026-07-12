@@ -2482,11 +2482,8 @@ describe('Regression Coverage', () => {
     const controller = new Controller();
     const page = {
       evaluate: vi.fn(async () => ({
-        total: 2,
-        matches: [
-          { position: 12, match: 'price', snippet: 'The current price is $19' },
-          { position: 87, match: 'price', snippet: 'Lowest price this month' },
-        ],
+        sourceText:
+          'The current price is $19. Some filler. Lowest price this month.',
         truncated: false,
       })),
       url: vi.fn(() => 'https://example.com'),
@@ -2509,6 +2506,30 @@ describe('Regression Coverage', () => {
     expect(result.long_term_memory).toBe(
       'Searched page for "price": 2 matches found.'
     );
+  });
+
+  it('search_page terminates catastrophic regular expressions', async () => {
+    const controller = new Controller();
+    const page = {
+      evaluate: vi.fn(async () => ({
+        sourceText: `${'a'.repeat(100_000)}!`,
+        truncated: false,
+      })),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+    };
+
+    const startedAt = Date.now();
+    const result = await controller.registry.execute_action(
+      'search_page',
+      { pattern: '(a+)+$', regex: true },
+      { browser_session: browserSession as any }
+    );
+
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(result.error).toContain('500ms safety limit');
   });
 
   it('search_page blocks disallowed current pages before reading text', async () => {
