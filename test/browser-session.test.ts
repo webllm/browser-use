@@ -795,6 +795,49 @@ esac
     expect((session as any)._normalizePid(Number.NaN)).toBeNull();
   });
 
+  it('does not terminate a browser PID whose launch marker does not match', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    session.browser_pid = 12345;
+    (session as any)._browserLaunchToken = 'owned-browser';
+    (session as any)._getProcessCommandLine = vi.fn(() => '/usr/bin/sleep 30');
+    const killSpy = vi.spyOn(process, 'kill');
+
+    try {
+      await (session as any)._terminateBrowserProcess();
+      expect(killSpy).not.toHaveBeenCalled();
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it('rechecks browser ownership before escalating to SIGKILL', async () => {
+    vi.useFakeTimers();
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    session.browser_pid = 12345;
+    (session as any)._browserLaunchToken = 'owned-browser';
+    (session as any)._getProcessCommandLine = vi
+      .fn()
+      .mockReturnValueOnce('chrome --browser-use-session-token=owned-browser')
+      .mockReturnValueOnce(null);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+
+    try {
+      const termination = (session as any)._terminateBrowserProcess();
+      await vi.runAllTimersAsync();
+      await termination;
+      expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM');
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, 'SIGKILL');
+      expect(killSpy).not.toHaveBeenCalledWith(12345, 'SIGKILL');
+    } finally {
+      killSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('skips invalid tracked pids when killing child processes', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({}),
@@ -3712,6 +3755,12 @@ esac
     expect(secondLaunchOptions?.chromiumSandbox).toBe(false);
     expect(Array.isArray(secondLaunchOptions?.args)).toBe(true);
     expect(secondLaunchOptions?.args as string[]).toContain('--no-sandbox');
+    const firstLaunchArgs = launch.mock.calls[0]?.[0]?.args as string[];
+    const firstLaunchToken = firstLaunchArgs.find((arg) =>
+      arg.startsWith('--browser-use-session-token=')
+    );
+    expect(firstLaunchToken).toBeTruthy();
+    expect(secondLaunchOptions?.args as string[]).toContain(firstLaunchToken);
 
     await session.stop();
   });

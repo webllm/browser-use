@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { getProcessCommandLine } from './process-identity.js';
+import { getProcessCommandLine } from '../process-identity.js';
 
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isIP } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import {
   spawn,
   execFile,
@@ -12,6 +13,7 @@ import { promisify } from 'node:util';
 import { createLogger } from '../logging-config.js';
 import { match_url_with_domain_pattern, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
+import { getProcessCommandLine } from '../process-identity.js';
 import {
   EventBus,
   type EventDispatchOptions,
@@ -450,6 +452,7 @@ export class BrowserSession {
   private currentPageLoadingStatus: string | null = null;
   private _subprocess: ChildProcess | null = null;
   private _childProcesses: Set<number> = new Set();
+  private _browserLaunchToken: string | null = null;
   private attachedAgentId: string | null = null;
   private attachedSharedAgentIds: Set<string> = new Set();
   private _stoppingPromise: Promise<void> | null = null;
@@ -2417,11 +2420,29 @@ export class BrowserSession {
         } else {
           const launchOptions = this._toPlaywrightOptions(
             await this.browser_profile.kwargs_for_launch()
-          );
-          this.browser = await this._launchChromiumWithSandboxFallback(
-            playwright,
-            (launchOptions as Record<string, unknown>) ?? {}
-          );
+          ) as Record<string, unknown> | undefined;
+          const browserLaunchToken = randomUUID();
+          const rawLaunchArgs = Array.isArray(launchOptions?.args)
+            ? launchOptions.args.filter(
+                (arg): arg is string => typeof arg === 'string'
+              )
+            : [];
+          this._browserLaunchToken = browserLaunchToken;
+          try {
+            this.browser = await this._launchChromiumWithSandboxFallback(
+              playwright,
+              {
+                ...(launchOptions ?? {}),
+                args: [
+                  ...rawLaunchArgs,
+                  `--browser-use-session-token=${browserLaunchToken}`,
+                ],
+              }
+            );
+          } catch (error) {
+            this._browserLaunchToken = null;
+            throw error;
+          }
           this.ownsBrowserResources = true;
 
           const processGetter = (this.browser as any)?.process;
@@ -2668,6 +2689,7 @@ export class BrowserSession {
     this.agent_current_page = null;
     this.human_current_page = null;
     this.browser_pid = null;
+    this._browserLaunchToken = null;
     this.cdp_url = null;
     this.wss_url = null;
     this.playwright = null;
@@ -8054,6 +8076,22 @@ export class BrowserSession {
     return pid as number;
   }
 
+  private _getProcessCommandLine(pid: number): string | null {
+    return getProcessCommandLine(pid);
+  }
+
+  private _isOwnedBrowserProcess(pid: number): boolean {
+    const token = this._browserLaunchToken;
+    if (!token) {
+      return false;
+    }
+    return Boolean(
+      this._getProcessCommandLine(pid)?.includes(
+        `--browser-use-session-token=${token}`
+      )
+    );
+  }
+
   /**
    * Kill all child processes spawned by this browser session
    */
@@ -8102,6 +8140,13 @@ export class BrowserSession {
       return;
     }
 
+    if (!this._isOwnedBrowserProcess(browserPid)) {
+      this.logger.debug(
+        `Skipping termination for unverified browser process ${browserPid}`
+      );
+      return;
+    }
+
     try {
       this.logger.debug(`Terminating browser process ${browserPid}`);
 
@@ -8119,6 +8164,9 @@ export class BrowserSession {
           process.kill(-browserPid, 'SIGTERM');
           await new Promise((resolve) => setTimeout(resolve, 1000));
 
+          if (!this._isOwnedBrowserProcess(browserPid)) {
+            return;
+          }
           try {
             process.kill(-browserPid, 0);
             process.kill(-browserPid, 'SIGKILL');
@@ -8127,8 +8175,14 @@ export class BrowserSession {
           }
         } catch {
           try {
+            if (!this._isOwnedBrowserProcess(browserPid)) {
+              return;
+            }
             process.kill(browserPid, 'SIGTERM');
             await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!this._isOwnedBrowserProcess(browserPid)) {
+              return;
+            }
             process.kill(browserPid, 'SIGKILL');
           } catch {
             // Process doesn't exist

@@ -12,7 +12,7 @@ import { isMainModule } from '../entrypoint.js';
 import {
   getProcessCommandLine,
   type ProcessCommandLineReader,
-} from './process-identity.js';
+} from '../process-identity.js';
 
 export interface DirectModeState {
   mode?: 'local' | 'remote';
