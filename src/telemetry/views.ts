@@ -121,7 +121,7 @@ export class AgentTelemetryEvent
     this.use_vision = payload.use_vision;
     this.version = payload.version;
     this.source = payload.source;
-    this.cdp_url = payload.cdp_url;
+    this.cdp_url = redactNullableString(payload.cdp_url);
     this.agent_type = payload.agent_type;
     this.action_errors = redactSequence(payload.action_errors);
     this.action_history = summarizeActionHistory(payload.action_history);

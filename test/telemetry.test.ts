@@ -71,7 +71,7 @@ describe('Telemetry Events', () => {
         max_steps: 100,
         max_actions_per_step: 10,
         use_vision: true,
-        cdp_url: null,
+        cdp_url: 'wss://browser.example/session/secret-123?token=secret-123',
         agent_type: null,
         task: 'Navigate to example.com',
         action_errors: [],
@@ -92,6 +92,7 @@ describe('Telemetry Events', () => {
       expect(event.properties().version).toBe('1.0.0');
       expect(event.properties().model).toBe('gpt-4');
       expect(event.properties().success).toBe(true);
+      expect(event.properties().cdp_url).toBe('<redacted>');
       expect(typeof event.properties().is_docker).toBe('boolean');
     });
 
@@ -164,7 +165,7 @@ describe('Telemetry Events', () => {
         max_steps: 100,
         max_actions_per_step: 10,
         use_vision: false,
-        cdp_url: null,
+        cdp_url: 'wss://browser.example/session/secret-123?token=secret-123',
         agent_type: null,
         task: 'Login with password secret-123',
         action_errors: ['failed with secret-123'],
@@ -188,6 +189,7 @@ describe('Telemetry Events', () => {
       expect(event.properties().task).toBe('<redacted>');
       expect(event.properties().final_result_response).toBe('<redacted>');
       expect(event.properties().error_message).toBe('<redacted>');
+      expect(event.properties().cdp_url).toBe('<redacted>');
       expect(event.properties().urls_visited).toEqual(['<redacted>']);
       expect(event.properties().action_history).toEqual([
         [{ action: 'input_text' }],
