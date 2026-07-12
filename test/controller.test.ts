@@ -2141,6 +2141,62 @@ describe('Regression Coverage', () => {
     expect(result.extracted_content).toContain('United States');
   });
 
+  it('get_dropdown_options bounds custom event-bus messages', async () => {
+    const controller = new Controller();
+    const browserSession = {
+      dispatch_browser_event: vi.fn(async () => ({
+        event: {
+          event_result: {
+            message: 'x'.repeat(1_000_000),
+            long_term_memory: 'y'.repeat(1_000_000),
+          },
+        },
+      })),
+      get_dom_element_by_index: vi.fn(async () => ({
+        xpath: '/html/body/select',
+      })),
+    };
+
+    const result = await controller.registry.execute_action(
+      'get_dropdown_options',
+      { index: 1 },
+      { browser_session: browserSession as any }
+    );
+
+    expect(result.extracted_content?.length).toBe(256 * 1024);
+    expect(result.long_term_memory?.length).toBe(256 * 1024);
+  });
+
+  it('get_dropdown_options bounds fallback page payloads', async () => {
+    const controller = new Controller();
+    const page = {
+      evaluate: vi.fn(async () => ({
+        type: 'select',
+        options: Array.from({ length: 1_000 }, (_, index) => ({
+          index,
+          text: 'x'.repeat(10_000),
+          value: 'y'.repeat(10_000),
+        })),
+      })),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+      get_dom_element_by_index: vi.fn(async () => ({
+        xpath: '/html/body/select',
+      })),
+    };
+
+    const result = await controller.registry.execute_action(
+      'get_dropdown_options',
+      { index: 1 },
+      { browser_session: browserSession as any }
+    );
+
+    expect(result.extracted_content?.length).toBeLessThanOrEqual(256 * 1024);
+    expect(result.extracted_content).toContain('truncated for safety');
+  });
+
   it('select_dropdown_option dispatches SelectDropdownOptionEvent when browser event bus is available', async () => {
     const controller = new Controller();
     const dispatchSpy = vi.fn(

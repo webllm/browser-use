@@ -207,7 +207,7 @@ export type DropdownOptionsAction = z.infer<typeof DropdownOptionsActionSchema>;
 
 export const SelectDropdownActionSchema = z.object({
   index: z.number().int().min(1),
-  text: z.string(),
+  text: z.string().min(1).max(2048),
 });
 export type SelectDropdownAction = z.infer<typeof SelectDropdownActionSchema>;
 

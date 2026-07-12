@@ -23,6 +23,15 @@ import {
 } from '../browser/events.js';
 import { BrowserError } from '../browser/views.js';
 import {
+  boundDropdownMessage,
+  formatDropdownOptions,
+  MAX_DROPDOWN_FIELD_CHARS,
+  MAX_DROPDOWN_OPTIONS,
+  MAX_DROPDOWN_PAYLOAD_CHARS,
+  MAX_DROPDOWN_SCANNED_OPTIONS,
+  normalizeDropdownOptions,
+} from '../browser/dropdown-options.js';
+import {
   chunkMarkdownByStructure,
   extractCleanMarkdownFromHtml,
 } from '../dom/markdown-extractor.js';
@@ -3406,14 +3415,23 @@ You will be given a query and the markdown of a webpage that has been filtered t
     const registry = this.registry;
     const dropdownLogger = this.logger;
     const formatAvailableOptions = (
-      options: Array<{ index: number; text: string; value: string }>
-    ) =>
-      options
-        .map(
-          (opt) =>
-            `  - [${opt.index}] text=${JSON.stringify(opt.text)} value=${JSON.stringify(opt.value)}`
+      options: unknown,
+      alreadyTruncated = false
+    ) => {
+      const normalized = normalizeDropdownOptions(options, alreadyTruncated);
+      const formatted = formatDropdownOptions(
+        normalized.options,
+        normalized.truncated
+      ).text;
+      return formatted
+        .split('\n')
+        .map((line) =>
+          line.startsWith('...')
+            ? line
+            : `  - [${line.replace(': text=', '] text=')}`
         )
         .join('\n');
+    };
 
     type DropdownAction = z.infer<typeof DropdownOptionsActionSchema>;
     this.registry.action(
@@ -3444,15 +3462,17 @@ You will be given a query and the markdown of a webpage that has been filtered t
           | Record<string, string>
           | null
           | undefined;
-        const eventMessage =
+        const rawEventMessage =
           eventResult?.message ??
           eventResult?.short_term_memory ??
           eventResult?.formatted_options ??
           null;
+        const eventMessage = boundDropdownMessage(rawEventMessage);
         if (eventMessage) {
-          const memory =
+          const memory = boundDropdownMessage(
             eventResult?.long_term_memory ??
-            `Found dropdown options for index ${params.index}.`;
+              `Found dropdown options for index ${params.index}.`
+          );
           return new ActionResult({
             extracted_content: eventMessage,
             include_in_memory: true,
@@ -3478,7 +3498,17 @@ You will be given a query and the markdown of a webpage that has been filtered t
       let payload: any = null;
       try {
         payload = await page.evaluate(
-          ({ xpath }: { xpath: string }) => {
+          ({
+            xpath,
+            maxOptions,
+            maxFieldChars,
+            maxPayloadChars,
+          }: {
+            xpath: string;
+            maxOptions: number;
+            maxFieldChars: number;
+            maxPayloadChars: number;
+          }) => {
             const element = document.evaluate(
               xpath,
               document,
@@ -3487,15 +3517,58 @@ You will be given a query and the markdown of a webpage that has been filtered t
               null
             ).singleNodeValue as HTMLElement | null;
             if (!element) return null;
+
+            const options: Array<{
+              text: string;
+              value: string;
+              index: number;
+            }> = [];
+            let remainingChars = Math.max(0, maxPayloadChars);
+            let contentTruncated = false;
+            const take = (value: string) => {
+              const scanLimit = Math.min(
+                value.length,
+                maxFieldChars + 1,
+                remainingChars + 1
+              );
+              const scanned = value.slice(0, scanLimit).trim();
+              const allowed = Math.max(
+                0,
+                Math.min(maxFieldChars, remainingChars)
+              );
+              const bounded = scanned.slice(0, allowed);
+              remainingChars -= bounded.length;
+              if (scanLimit < value.length || bounded.length < scanned.length) {
+                contentTruncated = true;
+              }
+              return bounded;
+            };
+            const pushOption = (text: string, value: string, index: number) => {
+              if (remainingChars <= 0) {
+                contentTruncated = true;
+                return false;
+              }
+              options.push({ text: take(text), value: take(value), index });
+              return remainingChars > 0;
+            };
+
             if (element.tagName?.toLowerCase() === 'select') {
-              const options = Array.from(
-                (element as HTMLSelectElement).options
-              ).map((opt, index) => ({
-                text: opt.textContent?.trim() ?? '',
-                value: (opt.value ?? '').trim(),
-                index,
-              }));
-              return { type: 'select', options };
+              const source = (element as HTMLSelectElement).options;
+              const count = Math.min(source.length, maxOptions);
+              for (let index = 0; index < count; index += 1) {
+                const opt = source.item(index);
+                if (!opt) continue;
+                if (
+                  !pushOption(opt.textContent ?? '', opt.value ?? '', index)
+                ) {
+                  break;
+                }
+              }
+              return {
+                type: 'select',
+                options,
+                truncated: contentTruncated || source.length > options.length,
+              };
             }
             const ariaRoles = new Set(['menu', 'listbox', 'combobox']);
             const role = element.getAttribute('role');
@@ -3503,34 +3576,48 @@ You will be given a query and the markdown of a webpage that has been filtered t
               const nodes = element.querySelectorAll(
                 '[role="menuitem"],[role="option"]'
               );
-              const options = Array.from(nodes).map((node, index) => ({
-                text: node.textContent?.trim() ?? '',
-                value: node.textContent?.trim() ?? '',
-                index,
-              }));
-              return { type: 'aria', options };
+              const count = Math.min(nodes.length, maxOptions);
+              for (let index = 0; index < count; index += 1) {
+                const text = nodes.item(index)?.textContent ?? '';
+                if (!pushOption(text, text, index)) break;
+              }
+              return {
+                type: 'aria',
+                options,
+                truncated: contentTruncated || nodes.length > options.length,
+              };
             }
             return null;
           },
-          { xpath: domElement.xpath }
+          {
+            xpath: domElement.xpath,
+            maxOptions: MAX_DROPDOWN_OPTIONS,
+            maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+            maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+          }
         );
       } finally {
         await validateBrowserPageAfterAction(browser_session, page, signal);
       }
 
-      if (!payload || !payload.options?.length) {
+      if (!payload || !Array.isArray(payload.options)) {
         throw new BrowserError('No options found for the specified dropdown.');
       }
 
-      const formatted = payload.options.map(
-        (opt: any) =>
-          `${opt.index}: text=${JSON.stringify(opt.text ?? '')}, value=${JSON.stringify(opt.value ?? '')}`
+      const normalized = normalizeDropdownOptions(
+        payload.options,
+        payload.truncated === true
       );
-      formatted.push(
-        'Prefer exact text first; if needed select_dropdown_option also supports case-insensitive text/value matching.'
+      if (!normalized.options.length) {
+        throw new BrowserError('No options found for the specified dropdown.');
+      }
+      const formatted = formatDropdownOptions(
+        normalized.options,
+        normalized.truncated
       );
-
-      const message = formatted.join('\n');
+      const message = boundDropdownMessage(
+        `${formatted.text}\nPrefer exact text first; if needed select_dropdown_option also supports case-insensitive text/value matching.`
+      );
       return new ActionResult({
         extracted_content: message,
         include_in_memory: true,
@@ -3589,13 +3676,16 @@ You will be given a query and the markdown of a webpage that has been filtered t
           | Record<string, string>
           | null
           | undefined;
-        const eventMessage =
+        const rawEventMessage =
           eventResult?.message ??
           eventResult?.short_term_memory ??
           eventResult?.matched_text ??
           null;
+        const eventMessage = boundDropdownMessage(rawEventMessage);
         if (eventMessage) {
-          const memory = eventResult?.long_term_memory ?? eventMessage;
+          const memory = boundDropdownMessage(
+            eventResult?.long_term_memory ?? eventMessage
+          );
           return new ActionResult({
             extracted_content: eventMessage,
             include_in_memory: true,
@@ -3633,7 +3723,21 @@ You will be given a query and the markdown of a webpage that has been filtered t
 
           if (typeInfo.type === 'select') {
             const selection = await frame.evaluate(
-              ({ xpath, text }: { xpath: string; text: string }) => {
+              ({
+                xpath,
+                text,
+                maxScanOptions,
+                maxReturnedOptions,
+                maxFieldChars,
+                maxPayloadChars,
+              }: {
+                xpath: string;
+                text: string;
+                maxScanOptions: number;
+                maxReturnedOptions: number;
+                maxFieldChars: number;
+                maxPayloadChars: number;
+              }) => {
                 const root = document.evaluate(
                   xpath,
                   document,
@@ -3645,65 +3749,131 @@ You will be given a query and the markdown of a webpage that has been filtered t
                   return { found: false };
                 }
 
-                const options = Array.from(root.options).map((opt, index) => ({
-                  index,
-                  text: opt.textContent?.trim() ?? '',
-                  value: (opt.value ?? '').trim(),
-                }));
                 const targetRaw = text.trim();
                 const targetLower = text.trim().toLowerCase();
-
-                let matchedIndex = options.findIndex(
-                  (opt) => opt.text === targetRaw || opt.value === targetRaw
-                );
-                if (matchedIndex < 0) {
-                  matchedIndex = options.findIndex(
-                    (opt) =>
-                      opt.text.trim().toLowerCase() === targetLower ||
-                      opt.value.trim().toLowerCase() === targetLower
+                const options: Array<{
+                  index: number;
+                  text: string;
+                  value: string;
+                }> = [];
+                let remainingChars = Math.max(0, maxPayloadChars);
+                let contentTruncated = false;
+                let exactMatch = -1;
+                let caseInsensitiveMatch = -1;
+                const scanText = (value: string) => {
+                  if (value.length > maxFieldChars) contentTruncated = true;
+                  return value.slice(0, maxFieldChars + 1).trim();
+                };
+                const take = (value: string) => {
+                  const allowed = Math.max(
+                    0,
+                    Math.min(maxFieldChars, remainingChars)
                   );
+                  const bounded = value.slice(0, allowed);
+                  remainingChars -= bounded.length;
+                  if (bounded.length < value.length) contentTruncated = true;
+                  return bounded;
+                };
+                const scanCount = Math.min(root.options.length, maxScanOptions);
+                for (let index = 0; index < scanCount; index += 1) {
+                  const option = root.options.item(index);
+                  if (!option) continue;
+                  const optionTextValue = scanText(option.textContent ?? '');
+                  const optionValue = scanText(option.value ?? '');
+                  if (
+                    optionTextValue === targetRaw ||
+                    optionValue === targetRaw
+                  ) {
+                    exactMatch = index;
+                  } else if (
+                    caseInsensitiveMatch < 0 &&
+                    (optionTextValue.toLowerCase() === targetLower ||
+                      optionValue.toLowerCase() === targetLower)
+                  ) {
+                    caseInsensitiveMatch = index;
+                  }
+                  if (
+                    options.length < maxReturnedOptions &&
+                    remainingChars > 0
+                  ) {
+                    options.push({
+                      index,
+                      text: take(optionTextValue),
+                      value: take(optionValue),
+                    });
+                  } else {
+                    contentTruncated = true;
+                  }
+                  if (exactMatch >= 0) break;
                 }
+                const matchedIndex =
+                  exactMatch >= 0 ? exactMatch : caseInsensitiveMatch;
                 if (matchedIndex < 0) {
-                  return { found: true, success: false, options };
+                  return {
+                    found: true,
+                    success: false,
+                    options,
+                    truncated:
+                      contentTruncated ||
+                      root.options.length > scanCount ||
+                      root.options.length > options.length,
+                  };
                 }
 
-                const matched = options[matchedIndex];
-                root.value = matched.value;
+                const matchedOption = root.options.item(matchedIndex);
+                if (!matchedOption) return { found: true, success: false };
+                root.selectedIndex = matchedIndex;
                 root.dispatchEvent(new Event('input', { bubbles: true }));
                 root.dispatchEvent(new Event('change', { bubbles: true }));
                 const selectedOption =
                   root.selectedIndex >= 0
                     ? root.options[root.selectedIndex]
                     : null;
-                const selectedText = selectedOption?.textContent?.trim() ?? '';
-                const selectedValue = (root.value ?? '').trim();
-                const selectedValueLower = selectedValue.trim().toLowerCase();
-                const selectedTextLower = selectedText.trim().toLowerCase();
-                const matchedValueLower = String(matched.value ?? '')
-                  .trim()
-                  .toLowerCase();
-                const matchedTextLower = String(matched.text ?? '')
-                  .trim()
-                  .toLowerCase();
-                const verified =
-                  selectedValueLower === matchedValueLower ||
-                  selectedTextLower === matchedTextLower;
+                const selectedText = scanText(
+                  selectedOption?.textContent ?? ''
+                ).slice(0, maxFieldChars);
+                const selectedValue = scanText(root.value ?? '').slice(
+                  0,
+                  maxFieldChars
+                );
+                const verified = root.selectedIndex === matchedIndex;
 
                 return {
                   found: true,
                   success: verified,
-                  options,
                   selectedText,
                   selectedValue,
-                  matched,
+                  matched: {
+                    index: matchedIndex,
+                    text: scanText(matchedOption.textContent ?? '').slice(
+                      0,
+                      maxFieldChars
+                    ),
+                    value: scanText(matchedOption.value ?? '').slice(
+                      0,
+                      maxFieldChars
+                    ),
+                  },
                 };
               },
-              { xpath: domElement.xpath, text: params.text }
+              {
+                xpath: domElement.xpath,
+                text: params.text,
+                maxScanOptions: MAX_DROPDOWN_SCANNED_OPTIONS,
+                maxReturnedOptions: MAX_DROPDOWN_OPTIONS,
+                maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+                maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+              }
             );
 
             if (selection?.found && selection.success) {
-              const matchedText = selection.matched?.text ?? params.text;
-              const matchedValue = selection.matched?.value ?? '';
+              const matchedText = String(
+                selection.matched?.text ?? params.text
+              ).slice(0, MAX_DROPDOWN_FIELD_CHARS);
+              const matchedValue = String(selection.matched?.value ?? '').slice(
+                0,
+                MAX_DROPDOWN_FIELD_CHARS
+              );
               const msg = `Selected option ${matchedText} (${matchedValue})`;
               return new ActionResult({
                 extracted_content: msg,
@@ -3713,11 +3883,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
             }
             if (selection?.found) {
               const details = formatAvailableOptions(
-                (selection.options as Array<{
-                  index: number;
-                  text: string;
-                  value: string;
-                }>) ?? []
+                selection.options,
+                selection.truncated === true
               );
               throw new BrowserError(
                 `Could not select option '${params.text}' for index ${params.index}.\nAvailable options:\n${details}`
@@ -3727,7 +3894,21 @@ You will be given a query and the markdown of a webpage that has been filtered t
           }
 
           const clicked = await frame.evaluate(
-            ({ xpath, text }: { xpath: string; text: string }) => {
+            ({
+              xpath,
+              text,
+              maxScanOptions,
+              maxReturnedOptions,
+              maxFieldChars,
+              maxPayloadChars,
+            }: {
+              xpath: string;
+              text: string;
+              maxScanOptions: number;
+              maxReturnedOptions: number;
+              maxFieldChars: number;
+              maxPayloadChars: number;
+            }) => {
               const root = document.evaluate(
                 xpath,
                 document,
@@ -3739,40 +3920,97 @@ You will be given a query and the markdown of a webpage that has been filtered t
               const nodes = root.querySelectorAll(
                 '[role="menuitem"],[role="option"]'
               );
-              const options = Array.from(nodes).map((node, index) => ({
-                index,
-                text: node.textContent?.trim() ?? '',
-                value: node.textContent?.trim() ?? '',
-              }));
               const targetRaw = text.trim();
               const targetLower = text.trim().toLowerCase();
-
-              let matchedIndex = options.findIndex(
-                (opt) => opt.text === targetRaw || opt.value === targetRaw
-              );
-              if (matchedIndex < 0) {
-                matchedIndex = options.findIndex(
-                  (opt) =>
-                    opt.text.trim().toLowerCase() === targetLower ||
-                    opt.value.trim().toLowerCase() === targetLower
+              const options: Array<{
+                index: number;
+                text: string;
+                value: string;
+              }> = [];
+              let remainingChars = Math.max(0, maxPayloadChars);
+              let contentTruncated = false;
+              let exactMatch = -1;
+              let caseInsensitiveMatch = -1;
+              const scanText = (value: string) => {
+                if (value.length > maxFieldChars) contentTruncated = true;
+                return value.slice(0, maxFieldChars + 1).trim();
+              };
+              const take = (value: string) => {
+                const allowed = Math.max(
+                  0,
+                  Math.min(maxFieldChars, remainingChars)
                 );
+                const bounded = value.slice(0, allowed);
+                remainingChars -= bounded.length;
+                if (bounded.length < value.length) contentTruncated = true;
+                return bounded;
+              };
+              const scanCount = Math.min(nodes.length, maxScanOptions);
+              for (let index = 0; index < scanCount; index += 1) {
+                const optionTextValue = scanText(
+                  nodes.item(index)?.textContent ?? ''
+                );
+                if (optionTextValue === targetRaw) {
+                  exactMatch = index;
+                } else if (
+                  caseInsensitiveMatch < 0 &&
+                  optionTextValue.toLowerCase() === targetLower
+                ) {
+                  caseInsensitiveMatch = index;
+                }
+                if (options.length < maxReturnedOptions && remainingChars > 0) {
+                  options.push({
+                    index,
+                    text: take(optionTextValue),
+                    value: take(optionTextValue),
+                  });
+                } else {
+                  contentTruncated = true;
+                }
+                if (exactMatch >= 0) break;
               }
+              const matchedIndex =
+                exactMatch >= 0 ? exactMatch : caseInsensitiveMatch;
               if (matchedIndex < 0) {
-                return { found: true, success: false, options };
+                return {
+                  found: true,
+                  success: false,
+                  options,
+                  truncated:
+                    contentTruncated ||
+                    nodes.length > scanCount ||
+                    nodes.length > options.length,
+                };
               }
               (nodes[matchedIndex] as HTMLElement).click();
               return {
                 found: true,
                 success: true,
-                options,
-                matched: options[matchedIndex],
+                matched: {
+                  index: matchedIndex,
+                  text: scanText(
+                    nodes.item(matchedIndex)?.textContent ?? ''
+                  ).slice(0, maxFieldChars),
+                  value: scanText(
+                    nodes.item(matchedIndex)?.textContent ?? ''
+                  ).slice(0, maxFieldChars),
+                },
               };
             },
-            { xpath: domElement.xpath, text: params.text }
+            {
+              xpath: domElement.xpath,
+              text: params.text,
+              maxScanOptions: MAX_DROPDOWN_SCANNED_OPTIONS,
+              maxReturnedOptions: MAX_DROPDOWN_OPTIONS,
+              maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+              maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+            }
           );
 
           if (clicked?.found && clicked.success) {
-            const matchedText = clicked.matched?.text ?? params.text;
+            const matchedText = String(
+              clicked.matched?.text ?? params.text
+            ).slice(0, MAX_DROPDOWN_FIELD_CHARS);
             const msg = `Selected menu item ${matchedText}`;
             return new ActionResult({
               extracted_content: msg,
@@ -3782,11 +4020,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
           }
           if (clicked?.found) {
             const details = formatAvailableOptions(
-              (clicked.options as Array<{
-                index: number;
-                text: string;
-                value: string;
-              }>) ?? []
+              clicked.options,
+              clicked.truncated === true
             );
             throw new BrowserError(
               `Could not select option '${params.text}' for index ${params.index}.\nAvailable options:\n${details}`

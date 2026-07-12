@@ -14,6 +14,16 @@ import { createLogger } from '../logging-config.js';
 import { match_url_with_domain_pattern, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
 import { getMaxAutoDownloadBytes } from './download-limits.js';
+import {
+  formatDropdownOptions,
+  MAX_DROPDOWN_FIELD_CHARS,
+  MAX_DROPDOWN_MESSAGE_CHARS,
+  MAX_DROPDOWN_OPTIONS,
+  MAX_DROPDOWN_PAYLOAD_CHARS,
+  MAX_DROPDOWN_SCANNED_OPTIONS,
+  normalizeDropdownOptions,
+  serializeDropdownOptions,
+} from './dropdown-options.js';
 import { getProcessCommandLine } from '../process-identity.js';
 import {
   EventBus,
@@ -3653,7 +3663,17 @@ export class BrowserSession {
     try {
       payload = await this._withAbort(
         page.evaluate(
-          ({ xpath }: { xpath: string }) => {
+          ({
+            xpath,
+            maxOptions,
+            maxFieldChars,
+            maxPayloadChars,
+          }: {
+            xpath: string;
+            maxOptions: number;
+            maxFieldChars: number;
+            maxPayloadChars: number;
+          }) => {
             const element = document.evaluate(
               xpath,
               document,
@@ -3663,15 +3683,57 @@ export class BrowserSession {
             ).singleNodeValue as HTMLElement | null;
             if (!element) return null;
 
+            const options: Array<{
+              text: string;
+              value: string;
+              index: number;
+            }> = [];
+            let remainingChars = Math.max(0, maxPayloadChars);
+            let contentTruncated = false;
+            const take = (value: string) => {
+              const scanLimit = Math.min(
+                value.length,
+                maxFieldChars + 1,
+                remainingChars + 1
+              );
+              const scanned = value.slice(0, scanLimit).trim();
+              const allowed = Math.max(
+                0,
+                Math.min(maxFieldChars, remainingChars)
+              );
+              const bounded = scanned.slice(0, allowed);
+              remainingChars -= bounded.length;
+              if (scanLimit < value.length || bounded.length < scanned.length) {
+                contentTruncated = true;
+              }
+              return bounded;
+            };
+            const pushOption = (text: string, value: string, index: number) => {
+              if (remainingChars <= 0) {
+                contentTruncated = true;
+                return false;
+              }
+              options.push({ text: take(text), value: take(value), index });
+              return remainingChars > 0;
+            };
+
             if (element.tagName?.toLowerCase() === 'select') {
-              const options = Array.from(
-                (element as HTMLSelectElement).options
-              ).map((opt, index) => ({
-                text: opt.textContent?.trim() ?? '',
-                value: (opt.value ?? '').trim(),
-                index,
-              }));
-              return { type: 'select', options };
+              const source = (element as HTMLSelectElement).options;
+              const count = Math.min(source.length, maxOptions);
+              for (let index = 0; index < count; index += 1) {
+                const opt = source.item(index);
+                if (!opt) continue;
+                if (
+                  !pushOption(opt.textContent ?? '', opt.value ?? '', index)
+                ) {
+                  break;
+                }
+              }
+              return {
+                type: 'select',
+                options,
+                truncated: contentTruncated || source.length > options.length,
+              };
             }
 
             const ariaRoles = new Set(['menu', 'listbox', 'combobox']);
@@ -3680,17 +3742,26 @@ export class BrowserSession {
               const nodes = element.querySelectorAll(
                 '[role="menuitem"],[role="option"]'
               );
-              const options = Array.from(nodes).map((node, index) => ({
-                text: node.textContent?.trim() ?? '',
-                value: node.textContent?.trim() ?? '',
-                index,
-              }));
-              return { type: 'aria', options };
+              const count = Math.min(nodes.length, maxOptions);
+              for (let index = 0; index < count; index += 1) {
+                const text = nodes.item(index)?.textContent ?? '';
+                if (!pushOption(text, text, index)) break;
+              }
+              return {
+                type: 'aria',
+                options,
+                truncated: contentTruncated || nodes.length > options.length,
+              };
             }
 
             return null;
           },
-          { xpath: element_node.xpath }
+          {
+            xpath: element_node.xpath,
+            maxOptions: MAX_DROPDOWN_OPTIONS,
+            maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+            maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+          }
         ),
         signal
       );
@@ -3702,37 +3773,33 @@ export class BrowserSession {
       throw new BrowserError('No options found for the specified dropdown.');
     }
 
-    const normalizedOptions = (payload as any).options
-      .map((option: any, index: number) => ({
-        index:
-          typeof option?.index === 'number' && Number.isFinite(option.index)
-            ? option.index
-            : index,
-        text: String(option?.text ?? ''),
-        value: String(option?.value ?? ''),
-      }))
-      .filter(
-        (option: any) => option.text.length > 0 || option.value.length > 0
-      );
+    const normalized = normalizeDropdownOptions(
+      (payload as any).options,
+      (payload as any).truncated === true
+    );
+    const normalizedOptions = normalized.options;
 
     if (normalizedOptions.length === 0) {
       throw new BrowserError('No options found for the specified dropdown.');
     }
 
-    const formattedOptions = normalizedOptions.map(
-      (option: { index: number; text: string; value: string }) =>
-        `${option.index}: text=${JSON.stringify(option.text)}, value=${JSON.stringify(option.value)}`
+    const serialized = serializeDropdownOptions(normalizedOptions);
+    const formatted = formatDropdownOptions(
+      normalizedOptions,
+      normalized.truncated || serialized.truncated
     );
-    formattedOptions.push(
-      'Prefer exact text first; if needed select_dropdown_option also supports case-insensitive text/value matching.'
+    const guidance =
+      'Prefer exact text first; if needed select_dropdown_option also supports case-insensitive text/value matching.';
+    const message = `${formatted.text}\n${guidance}`.slice(
+      0,
+      MAX_DROPDOWN_MESSAGE_CHARS
     );
-    const message = formattedOptions.join('\n');
     const indexForMemory = element_node.highlight_index ?? 'unknown';
 
     return {
       type: String((payload as any).type ?? 'unknown'),
-      options: JSON.stringify(normalizedOptions),
-      formatted_options: formattedOptions.join('\n'),
+      options: serialized.json,
+      formatted_options: message,
       message,
       short_term_memory: message,
       long_term_memory: `Found dropdown options for index ${indexForMemory}.`,
@@ -3758,14 +3825,23 @@ export class BrowserSession {
     await this.validate_page_after_action(page, signal);
     try {
       const formatAvailableOptions = (
-        opts: Array<{ index: number; text: string; value: string }>
-      ) =>
-        opts
-          .map(
-            (opt) =>
-              `  - [${opt.index}] text=${JSON.stringify(opt.text)} value=${JSON.stringify(opt.value)}`
+        opts: unknown,
+        alreadyTruncated = false
+      ) => {
+        const normalized = normalizeDropdownOptions(opts, alreadyTruncated);
+        const formatted = formatDropdownOptions(
+          normalized.options,
+          normalized.truncated
+        ).text;
+        return formatted
+          .split('\n')
+          .map((line) =>
+            line.startsWith('...')
+              ? line
+              : `  - [${line.replace(': text=', '] text=')}`
           )
           .join('\n');
+      };
 
       const pageFrames = (() => {
         const framesAccessor = (page as any).frames;
@@ -3812,9 +3888,17 @@ export class BrowserSession {
                 ({
                   xpath,
                   optionText,
+                  maxScanOptions,
+                  maxReturnedOptions,
+                  maxFieldChars,
+                  maxPayloadChars,
                 }: {
                   xpath: string;
                   optionText: string;
+                  maxScanOptions: number;
+                  maxReturnedOptions: number;
+                  maxFieldChars: number;
+                  maxPayloadChars: number;
                 }) => {
                   const root = document.evaluate(
                     xpath,
@@ -3827,70 +3911,137 @@ export class BrowserSession {
                     return { found: false };
                   }
 
-                  const options = Array.from(root.options).map(
-                    (opt, index) => ({
-                      index,
-                      text: opt.textContent?.trim() ?? '',
-                      value: (opt.value ?? '').trim(),
-                    })
-                  );
                   const targetRaw = optionText.trim();
                   const targetLower = optionText.trim().toLowerCase();
-
-                  let matchedIndex = options.findIndex(
-                    (opt) => opt.text === targetRaw || opt.value === targetRaw
-                  );
-                  if (matchedIndex < 0) {
-                    matchedIndex = options.findIndex(
-                      (opt) =>
-                        opt.text.trim().toLowerCase() === targetLower ||
-                        opt.value.trim().toLowerCase() === targetLower
+                  const options: Array<{
+                    index: number;
+                    text: string;
+                    value: string;
+                  }> = [];
+                  let remainingChars = Math.max(0, maxPayloadChars);
+                  let contentTruncated = false;
+                  let exactMatch = -1;
+                  let caseInsensitiveMatch = -1;
+                  const scanText = (value: string) => {
+                    if (value.length > maxFieldChars) contentTruncated = true;
+                    return value.slice(0, maxFieldChars + 1).trim();
+                  };
+                  const take = (value: string) => {
+                    const allowed = Math.max(
+                      0,
+                      Math.min(maxFieldChars, remainingChars)
                     );
+                    const bounded = value.slice(0, allowed);
+                    remainingChars -= bounded.length;
+                    if (bounded.length < value.length) contentTruncated = true;
+                    return bounded;
+                  };
+                  const scanCount = Math.min(
+                    root.options.length,
+                    maxScanOptions
+                  );
+                  for (let index = 0; index < scanCount; index += 1) {
+                    const option = root.options.item(index);
+                    if (!option) continue;
+                    const optionTextValue = scanText(option.textContent ?? '');
+                    const optionValue = scanText(option.value ?? '');
+                    if (
+                      optionTextValue === targetRaw ||
+                      optionValue === targetRaw
+                    ) {
+                      exactMatch = index;
+                    } else if (
+                      caseInsensitiveMatch < 0 &&
+                      (optionTextValue.toLowerCase() === targetLower ||
+                        optionValue.toLowerCase() === targetLower)
+                    ) {
+                      caseInsensitiveMatch = index;
+                    }
+                    if (
+                      options.length < maxReturnedOptions &&
+                      remainingChars > 0
+                    ) {
+                      options.push({
+                        index,
+                        text: take(optionTextValue),
+                        value: take(optionValue),
+                      });
+                    } else {
+                      contentTruncated = true;
+                    }
+                    if (exactMatch >= 0) break;
                   }
+                  const matchedIndex =
+                    exactMatch >= 0 ? exactMatch : caseInsensitiveMatch;
                   if (matchedIndex < 0) {
-                    return { found: true, success: false, options };
+                    return {
+                      found: true,
+                      success: false,
+                      options,
+                      truncated:
+                        contentTruncated ||
+                        root.options.length > scanCount ||
+                        root.options.length > options.length,
+                    };
                   }
 
-                  const matched = options[matchedIndex];
-                  root.value = matched.value;
+                  const matchedOption = root.options.item(matchedIndex);
+                  if (!matchedOption) return { found: true, success: false };
+                  root.selectedIndex = matchedIndex;
                   root.dispatchEvent(new Event('input', { bubbles: true }));
                   root.dispatchEvent(new Event('change', { bubbles: true }));
                   const selectedOption =
                     root.selectedIndex >= 0
                       ? root.options[root.selectedIndex]
                       : null;
-                  const selectedText =
-                    selectedOption?.textContent?.trim() ?? '';
-                  const selectedValue = (root.value ?? '').trim();
-                  const selectedValueLower = selectedValue.trim().toLowerCase();
-                  const selectedTextLower = selectedText.trim().toLowerCase();
-                  const matchedValueLower = String(matched.value ?? '')
-                    .trim()
-                    .toLowerCase();
-                  const matchedTextLower = String(matched.text ?? '')
-                    .trim()
-                    .toLowerCase();
-                  const verified =
-                    selectedValueLower === matchedValueLower ||
-                    selectedTextLower === matchedTextLower;
+                  const selectedText = scanText(
+                    selectedOption?.textContent ?? ''
+                  ).slice(0, maxFieldChars);
+                  const selectedValue = scanText(root.value ?? '').slice(
+                    0,
+                    maxFieldChars
+                  );
+                  const verified = root.selectedIndex === matchedIndex;
 
                   return {
                     found: true,
                     success: verified,
-                    options,
                     selectedText,
                     selectedValue,
-                    matched,
+                    matched: {
+                      index: matchedIndex,
+                      text: scanText(matchedOption.textContent ?? '').slice(
+                        0,
+                        maxFieldChars
+                      ),
+                      value: scanText(matchedOption.value ?? '').slice(
+                        0,
+                        maxFieldChars
+                      ),
+                    },
                   };
                 },
-                { xpath: element_node.xpath, optionText: text }
+                {
+                  xpath: element_node.xpath,
+                  optionText: text,
+                  maxScanOptions: MAX_DROPDOWN_SCANNED_OPTIONS,
+                  maxReturnedOptions: MAX_DROPDOWN_OPTIONS,
+                  maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+                  maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+                }
               ),
               signal
             );
 
             if (selection?.found && selection.success) {
-              const matchedText = selection.matched?.text ?? text;
-              const matchedValue = selection.matched?.value ?? '';
+              const matchedText = String(selection.matched?.text ?? text).slice(
+                0,
+                MAX_DROPDOWN_FIELD_CHARS
+              );
+              const matchedValue = String(selection.matched?.value ?? '').slice(
+                0,
+                MAX_DROPDOWN_FIELD_CHARS
+              );
               const msg = `Selected option ${matchedText} (${matchedValue})`;
               return {
                 message: msg,
@@ -3902,11 +4053,8 @@ export class BrowserSession {
             }
             if (selection?.found) {
               const details = formatAvailableOptions(
-                (selection.options as Array<{
-                  index: number;
-                  text: string;
-                  value: string;
-                }>) ?? []
+                selection.options,
+                selection.truncated === true
               );
               throw new BrowserError(
                 `Could not select option '${text}' for index ${element_node.highlight_index ?? 'unknown'}.\nAvailable options:\n${details}`
@@ -3920,9 +4068,17 @@ export class BrowserSession {
               ({
                 xpath,
                 optionText,
+                maxScanOptions,
+                maxReturnedOptions,
+                maxFieldChars,
+                maxPayloadChars,
               }: {
                 xpath: string;
                 optionText: string;
+                maxScanOptions: number;
+                maxReturnedOptions: number;
+                maxFieldChars: number;
+                maxPayloadChars: number;
               }) => {
                 const root = document.evaluate(
                   xpath,
@@ -3935,42 +4091,103 @@ export class BrowserSession {
                 const nodes = root.querySelectorAll(
                   '[role="menuitem"],[role="option"]'
                 );
-                const options = Array.from(nodes).map((node, index) => ({
-                  index,
-                  text: node.textContent?.trim() ?? '',
-                  value: node.textContent?.trim() ?? '',
-                }));
                 const targetRaw = optionText.trim();
                 const targetLower = optionText.trim().toLowerCase();
-
-                let matchedIndex = options.findIndex(
-                  (opt) => opt.text === targetRaw || opt.value === targetRaw
-                );
-                if (matchedIndex < 0) {
-                  matchedIndex = options.findIndex(
-                    (opt) =>
-                      opt.text.trim().toLowerCase() === targetLower ||
-                      opt.value.trim().toLowerCase() === targetLower
+                const options: Array<{
+                  index: number;
+                  text: string;
+                  value: string;
+                }> = [];
+                let remainingChars = Math.max(0, maxPayloadChars);
+                let contentTruncated = false;
+                let exactMatch = -1;
+                let caseInsensitiveMatch = -1;
+                const scanText = (value: string) => {
+                  if (value.length > maxFieldChars) contentTruncated = true;
+                  return value.slice(0, maxFieldChars + 1).trim();
+                };
+                const take = (value: string) => {
+                  const allowed = Math.max(
+                    0,
+                    Math.min(maxFieldChars, remainingChars)
                   );
+                  const bounded = value.slice(0, allowed);
+                  remainingChars -= bounded.length;
+                  if (bounded.length < value.length) contentTruncated = true;
+                  return bounded;
+                };
+                const scanCount = Math.min(nodes.length, maxScanOptions);
+                for (let index = 0; index < scanCount; index += 1) {
+                  const optionTextValue = scanText(
+                    nodes.item(index)?.textContent ?? ''
+                  );
+                  if (optionTextValue === targetRaw) {
+                    exactMatch = index;
+                  } else if (
+                    caseInsensitiveMatch < 0 &&
+                    optionTextValue.toLowerCase() === targetLower
+                  ) {
+                    caseInsensitiveMatch = index;
+                  }
+                  if (
+                    options.length < maxReturnedOptions &&
+                    remainingChars > 0
+                  ) {
+                    options.push({
+                      index,
+                      text: take(optionTextValue),
+                      value: take(optionTextValue),
+                    });
+                  } else {
+                    contentTruncated = true;
+                  }
+                  if (exactMatch >= 0) break;
                 }
+                const matchedIndex =
+                  exactMatch >= 0 ? exactMatch : caseInsensitiveMatch;
                 if (matchedIndex < 0) {
-                  return { found: true, success: false, options };
+                  return {
+                    found: true,
+                    success: false,
+                    options,
+                    truncated:
+                      contentTruncated ||
+                      nodes.length > scanCount ||
+                      nodes.length > options.length,
+                  };
                 }
                 (nodes[matchedIndex] as HTMLElement).click();
                 return {
                   found: true,
                   success: true,
-                  options,
-                  matched: options[matchedIndex],
+                  matched: {
+                    index: matchedIndex,
+                    text: scanText(
+                      nodes.item(matchedIndex)?.textContent ?? ''
+                    ).slice(0, maxFieldChars),
+                    value: scanText(
+                      nodes.item(matchedIndex)?.textContent ?? ''
+                    ).slice(0, maxFieldChars),
+                  },
                 };
               },
-              { xpath: element_node.xpath, optionText: text }
+              {
+                xpath: element_node.xpath,
+                optionText: text,
+                maxScanOptions: MAX_DROPDOWN_SCANNED_OPTIONS,
+                maxReturnedOptions: MAX_DROPDOWN_OPTIONS,
+                maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
+                maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
+              }
             ),
             signal
           );
 
           if (clicked?.found && clicked.success) {
-            const matchedText = clicked.matched?.text ?? text;
+            const matchedText = String(clicked.matched?.text ?? text).slice(
+              0,
+              MAX_DROPDOWN_FIELD_CHARS
+            );
             const msg = `Selected menu item ${matchedText}`;
             return {
               message: msg,
@@ -3981,11 +4198,8 @@ export class BrowserSession {
           }
           if (clicked?.found) {
             const details = formatAvailableOptions(
-              (clicked.options as Array<{
-                index: number;
-                text: string;
-                value: string;
-              }>) ?? []
+              clicked.options,
+              clicked.truncated === true
             );
             throw new BrowserError(
               `Could not select option '${text}' for index ${element_node.highlight_index ?? 'unknown'}.\nAvailable options:\n${details}`
