@@ -4,10 +4,54 @@
     focusHighlightIndex: -1,
     viewportExpansion: 0,
     debugMode: false,
+    domLimits: {},
   }
 ) => {
   const { doHighlightElements, focusHighlightIndex, viewportExpansion, debugMode } = args;
+  const domLimits = args.domLimits || {};
+  const positiveInteger = (value, fallback) =>
+    Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  const MAX_VISITED_NODES = positiveInteger(domLimits.maxVisitedNodes, 100000);
+  const MAX_SERIALIZED_NODES = positiveInteger(domLimits.maxSerializedNodes, 30000);
+  const MAX_DOM_DEPTH = positiveInteger(domLimits.maxDepth, 512);
+  const MAX_TEXT_LENGTH = positiveInteger(domLimits.maxTextLength, 16384);
+  const MAX_ATTRIBUTE_NAME_LENGTH = positiveInteger(domLimits.maxAttributeNameLength, 256);
+  const MAX_ATTRIBUTE_VALUE_LENGTH = positiveInteger(domLimits.maxAttributeValueLength, 8192);
+  const MAX_ATTRIBUTES_PER_NODE = positiveInteger(domLimits.maxAttributesPerNode, 100);
+  const MAX_SERIALIZED_STRING_LENGTH = positiveInteger(
+    domLimits.maxSerializedStringLength,
+    8 * 1024 * 1024,
+  );
   let highlightIndex = 0; // Reset highlight index
+  let visitedNodeCount = 0;
+  let reservedSerializedNodeCount = 0;
+  let serializedStringLength = 0;
+  let traversalLimitReached = false;
+  let domWasTruncated = false;
+
+  function reserveSerializedNode() {
+    if (reservedSerializedNodeCount >= MAX_SERIALIZED_NODES) {
+      traversalLimitReached = true;
+      domWasTruncated = true;
+      return false;
+    }
+    reservedSerializedNodeCount += 1;
+    return true;
+  }
+
+  function boundedString(value, perValueLimit) {
+    if (value === null || value === undefined) return '';
+    const stringValue = String(value);
+    const remaining = MAX_SERIALIZED_STRING_LENGTH - serializedStringLength;
+    if (remaining <= 0) {
+      if (stringValue.length > 0) domWasTruncated = true;
+      return '';
+    }
+    const result = stringValue.slice(0, Math.min(perValueLimit, remaining));
+    if (result.length < stringValue.length) domWasTruncated = true;
+    serializedStringLength += result.length;
+    return result;
+  }
 
   // Add caching mechanisms at the top level
   const DOM_CACHE = {
@@ -97,6 +141,7 @@
 
   // Add a WeakMap cache for XPath strings
   const xpathCache = new WeakMap();
+  const siblingPositionCache = new WeakMap();
 
   // // Initialize once and reuse
   // const viewportObserver = new IntersectionObserver(
@@ -378,17 +423,37 @@
       return 0; // No parent means no siblings
     }
 
+    const parent = currentElement.parentElement;
     const tagName = currentElement.nodeName.toLowerCase();
+    const children = parent.children;
 
-    const siblings = Array.from(currentElement.parentElement.children)
-      .filter((sib) => sib.nodeName.toLowerCase() === tagName);
+    // Avoid allocating or walking an attacker-controlled, unbounded sibling
+    // collection just to construct an XPath. The DOM result will already be
+    // truncated at this scale, so an unindexed fallback is safer.
+    if (children.length > MAX_SERIALIZED_NODES) {
+      domWasTruncated = true;
+      return 0;
+    }
 
-    if (siblings.length === 1) {
+    let cache = siblingPositionCache.get(parent);
+    if (!cache) {
+      const counts = new Map();
+      const positions = new WeakMap();
+      for (const child of children) {
+        const childTagName = child.nodeName.toLowerCase();
+        const position = (counts.get(childTagName) || 0) + 1;
+        counts.set(childTagName, position);
+        positions.set(child, position);
+      }
+      cache = { counts, positions };
+      siblingPositionCache.set(parent, cache);
+    }
+
+    if (cache.counts.get(tagName) === 1) {
       return 0; // Only element of its type
     }
 
-    const index = siblings.indexOf(currentElement) + 1; // 1-based index
-    return index;
+    return cache.positions.get(currentElement) || 0;
   }
 
 
@@ -1197,7 +1262,19 @@
    * @param {boolean} isParentHighlighted - Whether the parent node is highlighted.
    * @returns {string | null} The ID of the node data object, or null if the node is not processed.
    */
-  function buildDomTree(node, parentIframe = null, isParentHighlighted = false) {
+  function buildDomTree(node, parentIframe = null, isParentHighlighted = false, depth = 0) {
+    if (traversalLimitReached || depth > MAX_DOM_DEPTH) {
+      if (depth > MAX_DOM_DEPTH) domWasTruncated = true;
+      return null;
+    }
+
+    visitedNodeCount += 1;
+    if (visitedNodeCount > MAX_VISITED_NODES) {
+      traversalLimitReached = true;
+      domWasTruncated = true;
+      return null;
+    }
+
     // Fast rejection checks first
     if (!node || node.id === HIGHLIGHT_CONTAINER_ID ||
       (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.TEXT_NODE)) {
@@ -1210,6 +1287,9 @@
 
     // Special handling for root node (body)
     if (node === document.body) {
+      if (!reserveSerializedNode()) {
+        return null;
+      }
       const nodeData = {
         tagName: 'body',
         attributes: {},
@@ -1219,7 +1299,8 @@
 
       // Process children of body
       for (const child of node.childNodes) {
-        const domElement = buildDomTree(child, parentIframe, false); // Body's children have no highlighted parent initially
+        if (traversalLimitReached) break;
+        const domElement = buildDomTree(child, parentIframe, false, depth + 1); // Body's children have no highlighted parent initially
         if (domElement) nodeData.children.push(domElement);
       }
 
@@ -1235,14 +1316,18 @@
 
     // Process text nodes
     if (node.nodeType === Node.TEXT_NODE) {
-      const textContent = node.textContent?.trim();
+      // Only check visibility for text nodes that might be visible
+      const parentElement = node.parentElement;
+      if (!parentElement || parentElement.tagName.toLowerCase() === 'script') {
+        return null;
+      }
+
+      const textContent = boundedString(node.textContent, MAX_TEXT_LENGTH).trim();
       if (!textContent) {
         return null;
       }
 
-      // Only check visibility for text nodes that might be visible
-      const parentElement = node.parentElement;
-      if (!parentElement || parentElement.tagName.toLowerCase() === 'script') {
+      if (!reserveSerializedNode()) {
         return null;
       }
 
@@ -1304,9 +1389,13 @@
     const nodeData = {
       tagName: node.tagName.toLowerCase(),
       attributes: {},
-      xpath: getXPathTree(node, true),
+      xpath: boundedString(getXPathTree(node, true), MAX_TEXT_LENGTH),
       children: [],
     };
+
+    if (!reserveSerializedNode()) {
+      return null;
+    }
 
     // Password values must never leave the page. They may be present in the
     // HTML value attribute (for example from server-rendered or autofilled
@@ -1322,15 +1411,27 @@
 
     // Get attributes for interactive elements or potential text containers
     if (isInteractiveCandidate(node) || node.tagName.toLowerCase() === 'iframe' || node.tagName.toLowerCase() === 'body') {
-      const attributeNames = node.getAttributeNames?.() || [];
-      for (const name of attributeNames) {
+      const attributes = node.attributes;
+      const attributeCount = attributes?.length || 0;
+      if (attributeCount > MAX_ATTRIBUTES_PER_NODE) {
+        domWasTruncated = true;
+      }
+      for (let index = 0; index < Math.min(attributeCount, MAX_ATTRIBUTES_PER_NODE); index += 1) {
+        const attribute = attributes[index];
+        const originalName = attribute?.name;
+        if (!originalName) continue;
         if (
           isPasswordInput &&
-          passwordValueAttributes.has(name.toLowerCase())
+          passwordValueAttributes.has(originalName.toLowerCase())
         ) {
           continue;
         }
-        const value = node.getAttribute(name);
+        const name = boundedString(originalName, MAX_ATTRIBUTE_NAME_LENGTH);
+        if (!name) continue;
+        const value = boundedString(
+          attribute.value,
+          MAX_ATTRIBUTE_VALUE_LENGTH,
+        );
         nodeData.attributes[name] = value;
       }
     }
@@ -1364,7 +1465,8 @@
           const iframeDoc = node.contentDocument || node.contentWindow?.document;
           if (iframeDoc) {
             for (const child of iframeDoc.childNodes) {
-              const domElement = buildDomTree(child, node, false);
+              if (traversalLimitReached) break;
+              const domElement = buildDomTree(child, node, false, depth + 1);
               if (domElement) nodeData.children.push(domElement);
             }
           }
@@ -1382,7 +1484,8 @@
       ) {
         // Process all child nodes to capture formatted text
         for (const child of node.childNodes) {
-          const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+          if (traversalLimitReached) break;
+          const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted, depth + 1);
           if (domElement) nodeData.children.push(domElement);
         }
       }
@@ -1391,15 +1494,17 @@
         if (node.shadowRoot) {
           nodeData.shadowRoot = true;
           for (const child of node.shadowRoot.childNodes) {
-            const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted);
+            if (traversalLimitReached) break;
+            const domElement = buildDomTree(child, parentIframe, nodeWasHighlighted, depth + 1);
             if (domElement) nodeData.children.push(domElement);
           }
         }
         // Handle regular elements
         for (const child of node.childNodes) {
+          if (traversalLimitReached) break;
           // Pass the highlighted status of the *current* node to its children
           const passHighlightStatusToChild = nodeWasHighlighted || isParentHighlighted;
-          const domElement = buildDomTree(child, parentIframe, passHighlightStatusToChild);
+          const domElement = buildDomTree(child, parentIframe, passHighlightStatusToChild, depth + 1);
           if (domElement) nodeData.children.push(domElement);
         }
       }
@@ -1427,5 +1532,14 @@
   // Clear the cache before starting
   DOM_CACHE.clearCache();
 
-  return { rootId, map: DOM_HASH_MAP };
+  return {
+    rootId,
+    map: DOM_HASH_MAP,
+    metadata: {
+      truncated: domWasTruncated,
+      visitedNodeCount,
+      serializedNodeCount: Object.keys(DOM_HASH_MAP).length,
+      serializedStringLength,
+    },
+  };
 };

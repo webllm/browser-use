@@ -55,6 +55,16 @@ describe('DomService script safeguards', () => {
     expect(script).toContain('function cleanupHighlights()');
     expect(script).toContain('cleanupHighlights();');
   });
+
+  it('ships hard limits for page-controlled DOM extraction', () => {
+    const domService = new DomService({} as any);
+    const script = (domService as any).jsCode as string;
+
+    expect(script).toContain('MAX_VISITED_NODES');
+    expect(script).toContain('MAX_SERIALIZED_NODES');
+    expect(script).toContain('MAX_DOM_DEPTH');
+    expect(script).toContain('MAX_SERIALIZED_STRING_LENGTH');
+  });
 });
 
 describe('DOM Element Classes', () => {
@@ -621,6 +631,61 @@ describe('DomService', () => {
   });
 
   describe('Clickable Elements Extraction', () => {
+    it('bounds nodes and strings returned by the page DOM script', async () => {
+      await page.setContent(
+        `<body>${Array.from(
+          { length: 40 },
+          (_, index) =>
+            `<button aria-label="${'a'.repeat(100)}-${index}">${'b'.repeat(100)}</button>`
+        ).join('')}</body>`
+      );
+
+      const script = (new DomService(page) as any).jsCode as string;
+      const serialized = await page.evaluate(
+        ({ domScript }) => {
+          const buildTree = eval(domScript);
+          return buildTree({
+            doHighlightElements: false,
+            focusHighlightIndex: -1,
+            viewportExpansion: -1,
+            debugMode: false,
+            domLimits: {
+              maxVisitedNodes: 100,
+              maxSerializedNodes: 12,
+              maxDepth: 20,
+              maxTextLength: 32,
+              maxAttributeNameLength: 20,
+              maxAttributeValueLength: 24,
+              maxAttributesPerNode: 4,
+              maxSerializedStringLength: 1_000,
+            },
+          });
+        },
+        { domScript: script }
+      );
+
+      expect(Object.keys(serialized.map)).toHaveLength(12);
+      expect(serialized.map[String(serialized.rootId)]?.tagName).toBe('body');
+      expect(serialized.metadata.truncated).toBe(true);
+
+      const nodes = Object.values(serialized.map) as Array<{
+        type?: string;
+        text?: string;
+        attributes?: Record<string, string>;
+      }>;
+      const textNodes = nodes.filter((node) => node.type === 'TEXT_NODE');
+      const ariaLabels = nodes
+        .map((node) => node.attributes?.['aria-label'])
+        .filter((value): value is string => value !== undefined);
+
+      expect(textNodes.length).toBeGreaterThan(0);
+      expect(textNodes.every((node) => (node.text?.length ?? 0) <= 32)).toBe(
+        true
+      );
+      expect(ariaLabels.length).toBeGreaterThan(0);
+      expect(ariaLabels.every((value) => value.length <= 24)).toBe(true);
+    });
+
     it('extracts clickable elements from page', async () => {
       await page.setContent(`
         <html>

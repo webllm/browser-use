@@ -36,12 +36,32 @@ type SerializedDOMNode = {
 type SerializedDOMTree = {
   map: Record<string, SerializedDOMNode>;
   rootId: string | number;
+  metadata?: {
+    truncated?: boolean;
+    visitedNodeCount?: number;
+    serializedNodeCount?: number;
+    serializedStringLength?: number;
+  };
 };
 
 const DOM_TREE_SCRIPT = fs.readFileSync(
   fileURLToPath(new URL('./dom_tree/index.js', import.meta.url)),
   'utf-8'
 );
+
+// DOM contents are controlled by the visited page. Keep the evaluated script's
+// work and the Playwright result payload bounded so a hostile or accidentally
+// enormous document cannot exhaust the browser or Node.js process.
+const DOM_EXTRACTION_LIMITS = {
+  maxVisitedNodes: 100_000,
+  maxSerializedNodes: 30_000,
+  maxDepth: 512,
+  maxTextLength: 16_384,
+  maxAttributeNameLength: 256,
+  maxAttributeValueLength: 8_192,
+  maxAttributesPerNode: 100,
+  maxSerializedStringLength: 8 * 1024 * 1024,
+} as const;
 
 export class DomService {
   private readonly logger;
@@ -136,6 +156,7 @@ export class DomService {
       focusHighlightIndex: focus_element,
       viewportExpansion: viewport_expansion,
       debugMode: this.isDebugEnabled(),
+      domLimits: DOM_EXTRACTION_LIMITS,
     };
 
     let eval_page: SerializedDOMTree;
@@ -156,6 +177,15 @@ export class DomService {
         `Error evaluating DOMTree: ${(error as Error).message}`
       );
       throw error;
+    }
+
+    if (eval_page.metadata?.truncated) {
+      this.logger.warn(
+        `DOM extraction reached its safety budget for ${pageUrl.slice(0, 50)} ` +
+          `(visited=${eval_page.metadata.visitedNodeCount ?? 'unknown'}, ` +
+          `serialized=${eval_page.metadata.serializedNodeCount ?? 'unknown'}, ` +
+          `stringChars=${eval_page.metadata.serializedStringLength ?? 'unknown'})`
+      );
     }
 
     if (args.debugMode && (eval_page as any).perfMetrics) {
