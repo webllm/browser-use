@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readBoundedCdpPdf } from '../src/controller/pdf-output.js';
+import { readBoundedCdpPdf } from '../src/browser/pdf-output.js';
 
 describe('bounded CDP PDF output', () => {
   it('reads and closes a CDP stream in bounded chunks', async () => {

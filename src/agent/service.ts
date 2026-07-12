@@ -53,7 +53,7 @@ import { extractCleanMarkdownFromHtml } from '../dom/markdown-extractor.js';
 import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
-} from '../controller/page-content.js';
+} from '../browser/page-content.js';
 import type { BaseChatModel } from '../llm/base.js';
 import { ChatBrowserUse } from '../llm/browser-use/chat.js';
 import {

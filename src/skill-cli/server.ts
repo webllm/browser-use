@@ -6,7 +6,7 @@ import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
   MAX_PAGE_HTML_SELECTOR_CHARS,
-} from '../controller/page-content.js';
+} from '../browser/page-content.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import { readBoundedCliElementData } from './page-inspection.js';
 

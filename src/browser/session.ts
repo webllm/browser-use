@@ -31,7 +31,7 @@ import { SMART_SCROLL_JS } from './smart-scroll.js';
 import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
-} from '../controller/page-content.js';
+} from './page-content.js';
 import {
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,

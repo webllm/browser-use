@@ -93,8 +93,8 @@ import {
   MAX_EXTRACTED_IFRAMES,
   MAX_IFRAME_HTML_CHARS,
   MAX_MAIN_PAGE_HTML_CHARS,
-} from './page-content.js';
-import { readBoundedCdpPdf } from './pdf-output.js';
+} from '../browser/page-content.js';
+import { readBoundedCdpPdf } from '../browser/pdf-output.js';
 
 type BrowserSession = any;
 type Page = any;

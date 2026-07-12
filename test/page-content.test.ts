@@ -3,7 +3,7 @@ import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
   MAX_PAGE_HTML_SELECTOR_CHARS,
-} from '../src/controller/page-content.js';
+} from '../src/browser/page-content.js';
 
 describe('bounded page HTML extraction', () => {
   it('uses the bounded page-context serializer instead of content()', async () => {

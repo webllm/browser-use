@@ -22,7 +22,7 @@ import {
 } from '../events.js';
 import { URLNotAllowedError } from '../views.js';
 import { readBoundedPageTitle } from '../state-limits.js';
-import { readBoundedCdpPdf } from '../../controller/pdf-output.js';
+import { readBoundedCdpPdf } from '../pdf-output.js';
 import { BaseWatchdog } from './base.js';
 
 const chmodPrivatePath = (targetPath: string, mode: number) => {
