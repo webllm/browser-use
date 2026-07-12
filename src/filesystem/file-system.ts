@@ -1,7 +1,10 @@
 import fsSync from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import AdmZip from 'adm-zip';
+import extract from 'extract-zip';
 import PDFDocument from 'pdfkit';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -60,6 +63,8 @@ interface PdfParser {
 }
 
 type PdfParserConstructor = new (options: { data: Buffer }) => PdfParser;
+const MAX_PDF_PAGES_TO_EXTRACT = 200;
+const MAX_PDF_EXTRACTED_TEXT_CHARS = 120_000;
 
 export async function extractPdfText(buffer: Buffer): Promise<{
   text: string;
@@ -100,11 +105,17 @@ export async function extractPdfText(buffer: Buffer): Promise<{
   );
 }
 
-export async function extractPdfTextByPage(buffer: Buffer): Promise<{
+export async function extractPdfTextByPage(
+  buffer: Buffer,
+  limits: { maxPages?: number; maxChars?: number } = {}
+): Promise<{
   numPages: number;
   pageTexts: string[];
   totalChars: number;
+  truncated?: boolean;
 }> {
+  const maxPages = Math.max(1, limits.maxPages ?? MAX_PDF_PAGES_TO_EXTRACT);
+  const maxChars = Math.max(1, limits.maxChars ?? MAX_PDF_EXTRACTED_TEXT_CHARS);
   const pdfParseModule = (await import('pdf-parse')) as {
     default?: unknown;
     PDFParse?: unknown;
@@ -127,25 +138,37 @@ export async function extractPdfTextByPage(buffer: Buffer): Promise<{
         const text = typeof full?.text === 'string' ? full.text : '';
         return {
           numPages: 1,
-          pageTexts: [text],
+          pageTexts: [text.slice(0, maxChars)],
           totalChars: text.length,
+          truncated: text.length > maxChars,
         };
       }
 
       const pageTexts: string[] = [];
       let totalChars = 0;
-      for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
+      let storedChars = 0;
+      const pagesToExtract = Math.min(numPages, maxPages);
+      let truncated = pagesToExtract < numPages;
+      for (let pageNumber = 1; pageNumber <= pagesToExtract; pageNumber += 1) {
         const pageResult = await parser.getText({ partial: [pageNumber] });
         const text =
           typeof pageResult?.text === 'string' ? pageResult.text : '';
-        pageTexts.push(text);
         totalChars += text.length;
+        const remaining = Math.max(0, maxChars - storedChars);
+        const storedText = text.slice(0, remaining);
+        pageTexts.push(storedText);
+        storedChars += storedText.length;
+        if (text.length > remaining) {
+          truncated = true;
+          break;
+        }
       }
 
       return {
         numPages,
         pageTexts,
         totalChars,
+        truncated,
       };
     } finally {
       if (typeof parser.destroy === 'function') {
@@ -158,14 +181,24 @@ export async function extractPdfTextByPage(buffer: Buffer): Promise<{
   const text = parsed.text ?? '';
   return {
     numPages: Math.max(parsed.totalPages, 1),
-    pageTexts: [text],
+    pageTexts: [text.slice(0, maxChars)],
     totalChars: text.length,
+    truncated: text.length > maxChars,
   };
 }
 
 export const INVALID_FILENAME_ERROR_MESSAGE =
   'Error: Invalid filename format. Must be alphanumeric with supported extension.';
 export const DEFAULT_FILE_SYSTEM_PATH = 'browseruse_agent_data';
+export const MAX_EXTERNAL_FILE_BYTES = 50 * 1024 * 1024;
+export const MAX_EXTERNAL_PDF_BYTES = 25 * 1024 * 1024;
+export const MAX_EXTERNAL_DOCX_BYTES = 10 * 1024 * 1024;
+export const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_EXTERNAL_TEXT_READ_BYTES = 256 * 1024;
+const MAX_EXTERNAL_TEXT_CHARS = 60_000;
+const MAX_DOCX_ARCHIVE_ENTRIES = 2_000;
+const MAX_DOCX_ENTRY_BYTES = 20 * 1024 * 1024;
+const MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 
 const UNSUPPORTED_BINARY_EXTENSIONS = new Set([
   'png',
@@ -330,27 +363,92 @@ const buildDocxBuffer = (content: string): Buffer => {
   return zip.toBuffer();
 };
 
-const readDocxText = (fileBuffer: Buffer): string => {
-  const zip = new AdmZip(fileBuffer);
-  const documentEntry = zip.getEntry('word/document.xml');
-  if (!documentEntry) {
-    throw new FileSystemError('Error: Could not parse DOCX file content.');
-  }
-  const xml = documentEntry.getData().toString('utf-8');
-  const normalizedXml = xml.replace(/<w:p\b([^>]*)\/>/g, '<w:p$1></w:p>');
-  const paragraphMatches = normalizedXml.match(/<w:p[\s\S]*?<\/w:p>/g) ?? [];
+const readDocxText = async (filePath: string): Promise<string> => {
+  const extractDir = path.join(os.tmpdir(), `browser-use-docx-${randomUUID()}`);
+  await fsp.mkdir(extractDir, { recursive: true, mode: 0o700 });
+  let entryCount = 0;
+  let uncompressedBytes = 0;
 
-  const lines = paragraphMatches.map((paragraph) => {
-    const textMatches = Array.from(
-      paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)
-    );
-    if (!textMatches.length) {
-      return '';
+  try {
+    await extract(filePath, {
+      dir: extractDir,
+      onEntry(entry) {
+        entryCount += 1;
+        uncompressedBytes += entry.uncompressedSize;
+        const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+        const normalizedName = entry.fileName.replace(/\\/g, '/');
+        if (
+          !Number.isSafeInteger(entry.uncompressedSize) ||
+          entry.uncompressedSize < 0 ||
+          entryCount > MAX_DOCX_ARCHIVE_ENTRIES ||
+          entry.uncompressedSize > MAX_DOCX_ENTRY_BYTES ||
+          uncompressedBytes > MAX_DOCX_UNCOMPRESSED_BYTES ||
+          !normalizedName ||
+          normalizedName.includes('\0') ||
+          normalizedName.startsWith('/') ||
+          /^[a-zA-Z]:\//.test(normalizedName) ||
+          normalizedName.split('/').includes('..') ||
+          (unixMode & 0o170000) === 0o120000
+        ) {
+          throw new FileSystemError(
+            'Error: DOCX archive exceeds safe extraction limits.'
+          );
+        }
+      },
+    });
+
+    const documentPath = path.join(extractDir, 'word', 'document.xml');
+    const documentStat = await fsp.lstat(documentPath);
+    if (!documentStat.isFile() || documentStat.size > MAX_DOCX_ENTRY_BYTES) {
+      throw new FileSystemError('Error: Could not parse DOCX file content.');
     }
-    return textMatches.map((match) => decodeXmlText(match[1] ?? '')).join('');
-  });
+    const xml = await fsp.readFile(documentPath, 'utf-8');
+    const normalizedXml = xml.replace(/<w:p\b([^>]*)\/>/g, '<w:p$1></w:p>');
+    const paragraphMatches = normalizedXml.match(/<w:p[\s\S]*?<\/w:p>/g) ?? [];
 
-  return lines.join('\n').trim();
+    const lines = paragraphMatches.map((paragraph) => {
+      const textMatches = Array.from(
+        paragraph.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)
+      );
+      if (!textMatches.length) {
+        return '';
+      }
+      return textMatches.map((match) => decodeXmlText(match[1] ?? '')).join('');
+    });
+
+    return lines.join('\n').trim();
+  } finally {
+    await fsp
+      .rm(extractDir, { recursive: true, force: true })
+      .catch(() => undefined);
+  }
+};
+
+const truncateExternalText = (content: string) => {
+  if (content.length <= MAX_EXTERNAL_TEXT_CHARS) {
+    return { content, truncated: false };
+  }
+  return {
+    content: `${content.slice(0, MAX_EXTERNAL_TEXT_CHARS)}\n... [Truncated after ${MAX_EXTERNAL_TEXT_CHARS} characters]`,
+    truncated: true,
+  };
+};
+
+const readExternalTextPrefix = async (filename: string, fileSize: number) => {
+  const bytesToRead = Math.min(fileSize, MAX_EXTERNAL_TEXT_READ_BYTES);
+  const buffer = Buffer.alloc(bytesToRead);
+  const handle = await fsp.open(filename, 'r');
+  try {
+    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+    const decoded = buffer.subarray(0, bytesRead).toString('utf-8');
+    const truncatedText = truncateExternalText(decoded);
+    return {
+      content: truncatedText.content,
+      truncated: truncatedText.truncated || bytesRead < fileSize,
+    };
+  } finally {
+    await handle.close();
+  }
 };
 
 export class FileSystemError extends Error {}
@@ -716,6 +814,18 @@ export class FileSystem {
         }
 
         const extension = base.slice(idx + 1).toLowerCase();
+        const fileStat = await fsp.lstat(filename);
+        if (!fileStat.isFile()) {
+          result.message = `Error: File '${filename}' is not a regular file.`;
+          return result;
+        }
+        if (fileStat.size > MAX_EXTERNAL_FILE_BYTES) {
+          result.message =
+            `Error: File '${filename}' is too large to read safely ` +
+            `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_FILE_BYTES.toLocaleString()} bytes).`;
+          return result;
+        }
+
         const specialExtensions = new Set([
           'docx',
           'pdf',
@@ -728,12 +838,24 @@ export class FileSystem {
         );
 
         if (textExtensions.includes(extension)) {
-          const content = await fsp.readFile(filename, 'utf-8');
-          result.message = `Read from file ${filename}.\n<content>\n${content}\n</content>`;
+          const { content, truncated } = await readExternalTextPrefix(
+            filename,
+            fileStat.size
+          );
+          const truncationNote = truncated
+            ? '\n[File content was truncated to the safe read limit.]'
+            : '';
+          result.message = `Read from file ${filename}.\n<content>\n${content}${truncationNote}\n</content>`;
           return result;
         }
 
         if (extension === 'pdf') {
+          if (fileStat.size > MAX_EXTERNAL_PDF_BYTES) {
+            result.message =
+              `Error: PDF '${filename}' is too large to parse safely ` +
+              `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_PDF_BYTES.toLocaleString()} bytes).`;
+            return result;
+          }
           const MAX_CHARS = 60000;
           const buffer = await fsp.readFile(filename);
           const pdf = await extractPdfTextByPage(buffer);
@@ -741,7 +863,7 @@ export class FileSystem {
           const pageTexts = pdf.pageTexts;
           const totalChars = pdf.totalChars;
 
-          if (totalChars <= MAX_CHARS) {
+          if (totalChars <= MAX_CHARS && !pdf.truncated) {
             const contentParts: string[] = [];
             for (
               let pageNumber = 1;
@@ -802,11 +924,6 @@ export class FileSystem {
               priorityPages.push(pageNumber);
             }
           }
-          for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
-            if (!priorityPages.includes(pageNumber)) {
-              priorityPages.push(pageNumber);
-            }
-          }
 
           const contentParts: Array<{ pageNumber: number; content: string }> =
             [];
@@ -854,14 +971,18 @@ export class FileSystem {
           const pagesNotShown = numPages - pagesIncluded.length;
           if (pagesNotShown > 0) {
             const skipped: number[] = [];
-            for (let pageNumber = 1; pageNumber <= numPages; pageNumber += 1) {
+            for (
+              let pageNumber = 1;
+              pageNumber <= numPages && skipped.length < 10;
+              pageNumber += 1
+            ) {
               if (!pagesIncludedSet.has(pageNumber)) {
                 skipped.push(pageNumber);
               }
             }
 
-            const skippedPreview = skipped.slice(0, 10).join(', ');
-            const skippedSuffix = skipped.length > 10 ? ', ...' : '';
+            const skippedPreview = skipped.join(', ');
+            const skippedSuffix = pagesNotShown > skipped.length ? ', ...' : '';
             truncationNote =
               `\n\n[Showing ${pagesIncluded.length} of ${numPages} pages. ` +
               `Skipped pages: [${skippedPreview}${skippedSuffix}]. ` +
@@ -875,9 +996,18 @@ export class FileSystem {
         }
 
         if (extension === 'docx') {
-          const fileBuffer = await fsp.readFile(filename);
-          const content = readDocxText(fileBuffer);
-          result.message = `Read from file ${filename}.\n<content>\n${content}\n</content>`;
+          if (fileStat.size > MAX_EXTERNAL_DOCX_BYTES) {
+            result.message =
+              `Error: DOCX '${filename}' is too large to parse safely ` +
+              `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_DOCX_BYTES.toLocaleString()} bytes).`;
+            return result;
+          }
+          const extracted = await readDocxText(filename);
+          const { content, truncated } = truncateExternalText(extracted);
+          const truncationNote = truncated
+            ? '\n[Document content was truncated to the safe read limit.]'
+            : '';
+          result.message = `Read from file ${filename}.\n<content>\n${content}${truncationNote}\n</content>`;
           return result;
         }
 
@@ -886,6 +1016,12 @@ export class FileSystem {
           extension === 'jpeg' ||
           extension === 'png'
         ) {
+          if (fileStat.size > MAX_EXTERNAL_IMAGE_BYTES) {
+            result.message =
+              `Error: Image '${filename}' is too large to attach safely ` +
+              `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_IMAGE_BYTES.toLocaleString()} bytes).`;
+            return result;
+          }
           const fileBuffer = await fsp.readFile(filename);
           result.message = `Read image file ${filename}.`;
           result.images = [

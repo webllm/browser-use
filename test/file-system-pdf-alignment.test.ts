@@ -83,4 +83,26 @@ describe('FileSystem PDF external read alignment', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('caps the number of PDF pages parsed from untrusted files', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-fs-pdf-')
+    );
+    const fileSystem = new FileSystem(tempDir, false);
+    const pdfPath = path.join(tempDir, 'many-pages.pdf');
+    fs.writeFileSync(pdfPath, 'fake-pdf');
+    mockedPdfPages = Array.from(
+      { length: 250 },
+      (_, index) => `Page ${index + 1}`
+    );
+
+    try {
+      const result = await fileSystem.read_file_structured(pdfPath, true);
+      expect(result.message).toContain('Showing 200 of 250 pages');
+      expect(result.message).toContain('Skipped pages: [201, 202');
+    } finally {
+      mockedPdfPages = [];
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
