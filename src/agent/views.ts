@@ -791,42 +791,32 @@ export class AgentHistory {
     return redactSensitiveDataFromString(value, sensitive_data);
   }
 
-  private static _filterSensitiveDataFromDict<
-    T extends Record<string, unknown>,
-  >(data: T, sensitive_data: SensitiveDataMap | null): T {
+  private static _filterSensitiveData<T>(
+    data: T,
+    sensitive_data: SensitiveDataMap | null
+  ): T {
     if (!sensitive_data) {
       return data;
     }
 
-    const filtered: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (typeof value === 'string') {
-        filtered[key] = this._filterSensitiveDataFromString(
-          value,
-          sensitive_data
-        );
-      } else if (value && typeof value === 'object' && !Array.isArray(value)) {
-        filtered[key] = this._filterSensitiveDataFromDict(
-          value as Record<string, unknown>,
-          sensitive_data
-        );
-      } else if (Array.isArray(value)) {
-        filtered[key] = value.map((item) => {
-          if (typeof item === 'string') {
-            return this._filterSensitiveDataFromString(item, sensitive_data);
-          }
-          if (item && typeof item === 'object' && !Array.isArray(item)) {
-            return this._filterSensitiveDataFromDict(
-              item as Record<string, unknown>,
-              sensitive_data
-            );
-          }
-          return item;
-        });
-      } else {
-        filtered[key] = value;
-      }
+    if (typeof data === 'string') {
+      return this._filterSensitiveDataFromString(data, sensitive_data) as T;
     }
+    if (Array.isArray(data)) {
+      return data.map((item) =>
+        this._filterSensitiveData(item, sensitive_data)
+      ) as T;
+    }
+    if (!data || typeof data !== 'object') {
+      return data;
+    }
+
+    const filtered = Object.fromEntries(
+      Object.entries(data).map(([key, value]) => [
+        key,
+        this._filterSensitiveData(value, sensitive_data),
+      ])
+    );
     return filtered as T;
   }
 
@@ -851,7 +841,7 @@ export class AgentHistory {
       state_message: this.state_message,
     };
     return sensitive_data
-      ? AgentHistory._filterSensitiveDataFromDict(payload, sensitive_data)
+      ? AgentHistory._filterSensitiveData(payload, sensitive_data)
       : payload;
   }
 }

@@ -221,6 +221,27 @@ describe('Agent variable alignment', () => {
     );
   });
 
+  it('redacts sensitive values at arbitrary array nesting depth', () => {
+    const history = new AgentHistoryList([
+      new AgentHistory(
+        null,
+        [
+          new ActionResult({
+            metadata: { nested: [['deep-secret']] },
+          }),
+        ],
+        new BrowserStateHistory('about:blank', 'Blank', [], [])
+      ),
+    ]);
+
+    const serialized = history.model_dump({ password: 'deep-secret' });
+
+    expect(
+      (serialized.history[0]!.result[0]!.metadata as any).nested[0][0]
+    ).toBe('<secret>password</secret>');
+    expect(JSON.stringify(serialized)).not.toContain('deep-secret');
+  });
+
   it('omits usage from serialized history for python parity', () => {
     const history = createHistory();
     (history as any).usage = { total_tokens: 42 };
