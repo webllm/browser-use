@@ -129,7 +129,38 @@ describe('sandbox alignment', () => {
       quiet: true,
     })(async () => 'local');
 
-    await expect(wrapped()).rejects.toBeInstanceOf(SandboxError);
+    await expect(wrapped()).rejects.toEqual(
+      expect.objectContaining({
+        name: 'SandboxError',
+        message: 'Execution failed: sandbox failed',
+      })
+    );
+  });
+
+  it('preserves failed result-event details', async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(
+        `data: ${JSON.stringify({
+          type: 'result',
+          data: {
+            execution_response: {
+              success: false,
+              error: 'remote function failed',
+            },
+          },
+        })}`,
+        { status: 200, headers: { 'content-type': 'text/event-stream' } }
+      );
+    });
+    const wrapped = sandbox({
+      api_key: 'sandbox-test-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+      quiet: true,
+    })(async () => 'local');
+
+    await expect(wrapped()).rejects.toThrow(
+      'Execution failed: remote function failed'
+    );
   });
 
   it('does not forward sandbox code or arguments to a redirect target', async () => {

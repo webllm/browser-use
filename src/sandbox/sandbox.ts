@@ -35,11 +35,14 @@ const parseSSEChunks = async (
     if (!jsonPayload) {
       return;
     }
+    let event: SSEEvent;
     try {
-      await onEvent(SSEEvent.from_json(jsonPayload));
+      event = SSEEvent.from_json(jsonPayload);
     } catch {
       // Ignore malformed SSE entries.
+      return;
     }
+    await onEvent(event);
   };
 
   if (!response.body) {
