@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { constants, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -155,16 +155,35 @@ const parseInstallRequest = (
   };
 };
 
-const pathExists = async (value: string) => {
+const getPathStats = async (value: string) => {
   try {
-    await fs.access(value);
-    return true;
+    return await fs.lstat(value);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return false;
+      return null;
     }
     throw error;
   }
+};
+
+const validateDestinationType = async (
+  destination: string,
+  skillFileOnly: boolean
+) => {
+  const stats = await getPathStats(destination);
+  if (!stats) {
+    return null;
+  }
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Skill destination must not be a symlink: ${destination}`);
+  }
+  if (skillFileOnly && !stats.isFile()) {
+    throw new Error(`Skill destination is not a regular file: ${destination}`);
+  }
+  if (!skillFileOnly && !stats.isDirectory()) {
+    throw new Error(`Skill destination is not a directory: ${destination}`);
+  }
+  return stats;
 };
 
 const installSkill = async (
@@ -176,29 +195,36 @@ const installSkill = async (
     ? path.join(bundledSkillDir, 'SKILL.md')
     : bundledSkillDir;
 
-  if (!(await pathExists(source))) {
+  if (!(await getPathStats(source))) {
     throw new Error(`Bundled skill is missing: ${source}`);
   }
 
-  if (!request.force) {
-    for (const destination of request.destinations) {
-      if (await pathExists(destination)) {
-        throw new Error(
-          `Skill destination already exists: ${destination}. Use --force to replace it.`
-        );
-      }
+  for (const destination of request.destinations) {
+    const existing = await validateDestinationType(
+      destination,
+      request.skillFileOnly
+    );
+    if (!request.force && existing) {
+      throw new Error(
+        `Skill destination already exists: ${destination}. Use --force to update it.`
+      );
     }
   }
 
   for (const destination of request.destinations) {
-    if (request.force) {
-      await fs.rm(destination, { recursive: true, force: true });
-    }
     await fs.mkdir(path.dirname(destination), { recursive: true });
     if (request.skillFileOnly) {
-      await fs.copyFile(source, destination);
+      await fs.copyFile(
+        source,
+        destination,
+        request.force ? 0 : constants.COPYFILE_EXCL
+      );
     } else {
-      await fs.cp(source, destination, { recursive: true });
+      await fs.cp(source, destination, {
+        recursive: true,
+        force: request.force,
+        errorOnExist: !request.force,
+      });
     }
     writeLine(stdout, `Installed browser-use skill: ${destination}`);
   }

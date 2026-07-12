@@ -159,7 +159,7 @@ describe('coding-agent skill installer', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('refuses to replace an existing install unless forced', async () => {
+  it('updates managed files without deleting unrelated files when forced', async () => {
     const tempDir = await makeTempDir();
     const destination = path.join(tempDir, BROWSER_USE_SKILL_NAME);
     const stderr = createOutput();
@@ -176,7 +176,7 @@ describe('coding-agent skill installer', () => {
     );
 
     expect(refusedCode).toBe(1);
-    expect(stderr.read()).toContain('Use --force to replace it');
+    expect(stderr.read()).toContain('Use --force to update it');
     await expect(
       fs.readFile(path.join(destination, 'sentinel.txt'), 'utf8')
     ).resolves.toBe('keep');
@@ -192,11 +192,46 @@ describe('coding-agent skill installer', () => {
 
     expect(forcedCode).toBe(0);
     await expect(
-      fs.access(path.join(destination, 'sentinel.txt'))
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+      fs.readFile(path.join(destination, 'sentinel.txt'), 'utf8')
+    ).resolves.toBe('keep');
     await expect(
       fs.readFile(path.join(destination, 'SKILL.md'), 'utf8')
     ).resolves.toContain('name: browser-use');
+  });
+
+  it('rejects incompatible existing destinations even when forced', async () => {
+    const tempDir = await makeTempDir();
+    const directoryAsFile = path.join(tempDir, 'portable', 'SKILL.md');
+    const fileAsDirectory = path.join(tempDir, 'browser-use');
+    await fs.mkdir(directoryAsFile, { recursive: true });
+    await fs.writeFile(fileAsDirectory, 'do not replace');
+
+    const fileStderr = createOutput();
+    const fileCode = await runSkillCommand(
+      ['install', '--path', directoryAsFile, '--force'],
+      {
+        bundledSkillDir: BUNDLED_SKILL_DIR,
+        stdout: createOutput().stream,
+        stderr: fileStderr.stream,
+      }
+    );
+    expect(fileCode).toBe(1);
+    expect(fileStderr.read()).toContain('not a regular file');
+
+    const directoryStderr = createOutput();
+    const directoryCode = await runSkillCommand(
+      ['install', '--path', fileAsDirectory, '--force'],
+      {
+        bundledSkillDir: BUNDLED_SKILL_DIR,
+        stdout: createOutput().stream,
+        stderr: directoryStderr.stream,
+      }
+    );
+    expect(directoryCode).toBe(1);
+    expect(directoryStderr.read()).toContain('not a directory');
+    await expect(fs.readFile(fileAsDirectory, 'utf8')).resolves.toBe(
+      'do not replace'
+    );
   });
 
   it('reports invalid targets without writing any install', async () => {
