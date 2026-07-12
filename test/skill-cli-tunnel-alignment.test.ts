@@ -271,4 +271,42 @@ describe('skill-cli tunnel alignment', () => {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
   });
+
+  it('retains tunnel metadata when process termination fails', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const logPath = path.join(tunnelDir, '3000.log');
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({
+        port: 3000,
+        pid: 4321,
+        url: 'https://demo.trycloudflare.com',
+        binary_path: '/usr/bin/cloudflared',
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(logPath, 'tunnel log', 'utf8');
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
+        kill_process: vi.fn(async () => false),
+      });
+
+      await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+        error:
+          'Failed to stop tunnel on port 3000; process 4321 is still running',
+      });
+      expect(fs.existsSync(infoPath)).toBe(true);
+      expect(fs.existsSync(logPath)).toBe(true);
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
 });

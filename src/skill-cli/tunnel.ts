@@ -358,7 +358,17 @@ export class TunnelManager {
       return { error: `No tunnel running on port ${port}` };
     }
 
-    await this.kill_process_impl(info.pid);
+    let terminated = false;
+    try {
+      terminated = await this.kill_process_impl(info.pid);
+    } catch {
+      // Preserve metadata so a later stop attempt can retry.
+    }
+    if (!terminated && this.is_process_alive_impl(info.pid)) {
+      return {
+        error: `Failed to stop tunnel on port ${port}; process ${info.pid} is still running`,
+      };
+    }
     fs.rmSync(this.get_tunnel_file(port), { force: true });
     fs.rmSync(this.get_tunnel_log_file(port), { force: true });
     return {
