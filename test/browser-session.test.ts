@@ -515,6 +515,76 @@ esac
     ).toThrow(URLNotAllowedError);
   });
 
+  it('keeps client certificates scoped to an allowed origin', () => {
+    const certificate = {
+      origin: 'https://example.com',
+      certPath: '/tmp/client-cert.pem',
+      keyPath: '/tmp/client-key.pem',
+    };
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['https://example.com'],
+        client_certificates: [certificate],
+      }),
+    });
+
+    const playwrightOptions = (session as any)._toPlaywrightOptions(
+      session.browser_profile.kwargs_for_new_context()
+    );
+
+    expect(playwrightOptions.clientCertificates).toHaveLength(1);
+    expect(playwrightOptions.clientCertificates[0].origin).toBe(
+      certificate.origin
+    );
+    expect(playwrightOptions.clientCertificates[0].certPath).toBe(
+      certificate.certPath
+    );
+    expect(playwrightOptions.clientCertificates[0].keyPath).toBe(
+      certificate.keyPath
+    );
+  });
+
+  it('rejects client certificates scoped to a blocked origin', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['https://example.com'],
+        client_certificates: [
+          {
+            origin: 'https://evil.test',
+            cert: Buffer.from('certificate'),
+            key: Buffer.from('private-key'),
+          },
+        ],
+      }),
+    });
+
+    expect(() =>
+      (session as any)._toPlaywrightOptions(
+        session.browser_profile.kwargs_for_new_context()
+      )
+    ).toThrow(URLNotAllowedError);
+  });
+
+  it('requires client certificate origins under domain restrictions', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: ['https://example.com'],
+        client_certificates: [
+          {
+            cert: Buffer.from('certificate'),
+            key: Buffer.from('private-key'),
+          } as any,
+        ],
+      }),
+    });
+
+    expect(() =>
+      (session as any)._toPlaywrightOptions(
+        session.browser_profile.kwargs_for_new_context()
+      )
+    ).toThrow('Every client certificate must include an origin');
+  });
+
   it('applies configured extra_http_headers to existing contexts on start', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({

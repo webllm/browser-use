@@ -1703,6 +1703,12 @@ export class BrowserSession {
       ) {
         this._assertHttpCredentialsScoped(rawVal);
       }
+      if (
+        rawKey === 'client_certificates' &&
+        this._has_url_access_restrictions()
+      ) {
+        this._assertClientCertificatesScoped(rawVal);
+      }
       const valueToConvert =
         rawKey === 'storage_state' && this._has_url_access_restrictions()
           ? this._prepareStorageStateForContext(rawVal)
@@ -1734,6 +1740,27 @@ export class BrowserSession {
     }
 
     this._assert_url_allowed(origin.trim());
+  }
+
+  private _assertClientCertificatesScoped(value: unknown): void {
+    if (!Array.isArray(value)) {
+      throw new BrowserError(
+        'client_certificates must be an array when domain restrictions are configured.'
+      );
+    }
+
+    for (const certificate of value) {
+      const origin =
+        certificate && typeof certificate === 'object'
+          ? (certificate as { origin?: unknown }).origin
+          : null;
+      if (typeof origin !== 'string' || origin.trim().length === 0) {
+        throw new BrowserError(
+          'Every client certificate must include an origin when domain restrictions are configured.'
+        );
+      }
+      this._assert_url_allowed(origin.trim());
+    }
   }
 
   private _prepareStorageStateForContext(value: unknown): unknown {
