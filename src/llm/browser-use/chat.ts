@@ -313,6 +313,7 @@ export class ChatBrowserUse implements BaseChatModel {
           },
           body: JSON.stringify(payload),
           signal: controller.signal,
+          redirect: 'error',
         }
       );
 

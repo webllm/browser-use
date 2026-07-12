@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { z } from 'zod';
 import { ChatBrowserUse } from '../src/llm/browser-use/chat.js';
 import {
@@ -16,6 +18,21 @@ const createFetchResponse = (status: number, body: unknown): Response =>
       typeof body === 'string' ? body : JSON.stringify(body)
     ),
   }) as unknown as Response;
+
+const listenOnLoopback = async (server: Server) => {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return (server.address() as AddressInfo).port;
+};
+
+const closeServer = async (server: Server) => {
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+};
 
 describe('ChatBrowserUse alignment', () => {
   const originalApiKey = process.env.BROWSER_USE_API_KEY;
@@ -62,6 +79,7 @@ describe('ChatBrowserUse alignment', () => {
     expect(payload.request_type).toBe('judge');
     expect(payload.session_id).toBe('session-123');
     expect(payload.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    expect(request.redirect).toBe('error');
   });
 
   it.each([
@@ -215,5 +233,42 @@ describe('ChatBrowserUse alignment', () => {
   it('requires BROWSER_USE_API_KEY when apiKey is not provided', () => {
     delete process.env.BROWSER_USE_API_KEY;
     expect(() => new ChatBrowserUse()).toThrow(/BROWSER_USE_API_KEY/);
+  });
+
+  it('does not forward conversation content to a redirect target', async () => {
+    let redirectedRequests = 0;
+    let redirectedBody = '';
+    const redirectTarget = createServer((request, response) => {
+      redirectedRequests += 1;
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => {
+        redirectedBody += chunk;
+      });
+      request.on('end', () => response.end('{}'));
+    });
+    const targetPort = await listenOnLoopback(redirectTarget);
+    const apiServer = createServer((_request, response) => {
+      response.writeHead(307, {
+        location: `http://127.0.0.1:${targetPort}/steal`,
+      });
+      response.end();
+    });
+    const apiPort = await listenOnLoopback(apiServer);
+
+    try {
+      const llm = new ChatBrowserUse({
+        apiKey: 'top-secret-api-key',
+        baseUrl: `http://127.0.0.1:${apiPort}`,
+        maxRetries: 1,
+      });
+
+      await expect(
+        llm.ainvoke([new UserMessage('prompt-secret')])
+      ).rejects.toThrow();
+      expect(redirectedRequests).toBe(0);
+      expect(redirectedBody).toBe('');
+    } finally {
+      await Promise.all([closeServer(apiServer), closeServer(redirectTarget)]);
+    }
   });
 });
