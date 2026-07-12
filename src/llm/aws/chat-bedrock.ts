@@ -121,12 +121,15 @@ export class ChatBedrockConverse implements BaseChatModel {
 
   private getUsage(response: any) {
     const usage = response?.usage ?? {};
+    const cacheReadTokens = usage.cacheReadInputTokens ?? 0;
     return {
-      prompt_tokens: usage.inputTokens ?? 0,
+      prompt_tokens: (usage.inputTokens ?? 0) + cacheReadTokens,
       completion_tokens: usage.outputTokens ?? 0,
       total_tokens: usage.totalTokens ?? 0,
-      prompt_cached_tokens: null,
-      prompt_cache_creation_tokens: null,
+      prompt_cached_tokens: cacheReadTokens || null,
+      prompt_cache_creation_tokens: usage.cacheWriteInputTokens ?? null,
+      prompt_cache_creation_5m_tokens: null,
+      prompt_cache_creation_1h_tokens: null,
       prompt_image_tokens: null,
     };
   }
