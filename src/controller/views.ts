@@ -196,7 +196,7 @@ export const ReplaceFileStrActionSchema = z.object({
 export type ReplaceFileStrAction = z.infer<typeof ReplaceFileStrActionSchema>;
 
 export const ScrollToTextActionSchema = z.object({
-  text: z.string(),
+  text: z.string().min(1).max(1000),
 });
 export type ScrollToTextAction = z.infer<typeof ScrollToTextActionSchema>;
 

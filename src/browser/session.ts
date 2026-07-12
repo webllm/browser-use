@@ -23,6 +23,11 @@ import {
   readBoundedPageTitle,
 } from './state-limits.js';
 import {
+  buildScrollToTextExpression,
+  MAX_SCROLL_TEXT_QUERY_CHARS,
+  type ScrollToTextPageResult,
+} from './text-search.js';
+import {
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,
   MAX_DROPDOWN_MESSAGE_CHARS,
@@ -3635,39 +3640,35 @@ export class BrowserSession {
     if (!page?.evaluate) {
       throw new BrowserError('Unable to access page for scrolling.');
     }
+    const boundedText = String(text).slice(0, MAX_SCROLL_TEXT_QUERY_CHARS);
+    if (!boundedText) {
+      throw new BrowserError('Text to scroll to must not be empty.');
+    }
 
     try {
-      const success = await this._withAbort(
+      const rawResult = await this._withAbort(
         page.evaluate(
-          (payload: { text: string; direction: 'up' | 'down' }) => {
-            const query = payload.text.toLowerCase();
-            const iterator = document.createNodeIterator(
-              document.body,
-              NodeFilter.SHOW_ELEMENT
-            );
-            let node: Node | null;
-            while ((node = iterator.nextNode())) {
-              const el = node as HTMLElement;
-              if (!el || !el.textContent) {
-                continue;
-              }
-              if (el.textContent.toLowerCase().includes(query)) {
-                el.scrollIntoView({
-                  behavior: 'smooth',
-                  block: payload.direction === 'up' ? 'start' : 'center',
-                });
-                return true;
-              }
-            }
-            return false;
-          },
-          { text, direction: options.direction ?? 'down' }
+          buildScrollToTextExpression(boundedText, options.direction ?? 'down')
         ),
         signal
       );
+      const result: ScrollToTextPageResult =
+        rawResult && typeof rawResult === 'object'
+          ? (rawResult as ScrollToTextPageResult)
+          : {
+              found: rawResult === true,
+              truncated: false,
+              visitedNodes: 0,
+              scannedChars: 0,
+            };
 
-      if (!success) {
-        throw new BrowserError(`Text '${text}' not found on page`);
+      if (!result.found) {
+        const suffix = result.truncated
+          ? ' before the bounded page scan reached its safety limit'
+          : '';
+        throw new BrowserError(
+          `Text '${boundedText}' not found on page${suffix}`
+        );
       }
     } finally {
       await this.validate_page_after_action(page, signal);

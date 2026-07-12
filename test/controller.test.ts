@@ -1290,6 +1290,30 @@ describe('Regression Coverage', () => {
     expect(result.extracted_content).toContain('Scrolled to text: checkout');
   });
 
+  it('scroll_to_text reports when its bounded scan is exhausted', async () => {
+    const controller = new Controller();
+    const page = {
+      evaluate: vi.fn(async () => ({
+        found: false,
+        truncated: true,
+        visitedNodes: 100_000,
+        scannedChars: 2 * 1024 * 1024,
+      })),
+      url: vi.fn(() => 'https://example.com'),
+    };
+    const browserSession = {
+      get_current_page: vi.fn(async () => page),
+    };
+
+    await expect(
+      controller.registry.execute_action(
+        'scroll_to_text',
+        { text: 'checkout' },
+        { browser_session: browserSession as any }
+      )
+    ).rejects.toThrow('bounded page scan reached its safety limit');
+  });
+
   it('scroll_to_text fallback blocks disallowed current pages before evaluating text', async () => {
     const controller = new Controller();
     const session = new BrowserSession({

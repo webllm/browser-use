@@ -23,6 +23,10 @@ import {
 } from '../browser/events.js';
 import { BrowserError } from '../browser/views.js';
 import {
+  buildScrollToTextExpression,
+  type ScrollToTextPageResult,
+} from '../browser/text-search.js';
+import {
   boundDropdownMessage,
   formatDropdownOptions,
   MAX_DROPDOWN_FIELD_CHARS,
@@ -2822,35 +2826,31 @@ You will be given a query and the markdown of a webpage that has been filtered t
           }
 
           await validateBrowserPageAfterAction(browser_session, page);
-          let success = false;
+          let result: ScrollToTextPageResult = {
+            found: false,
+            truncated: false,
+            visitedNodes: 0,
+            scannedChars: 0,
+          };
           try {
-            success = await page.evaluate(
-              ({ text }: { text: string }) => {
-                const iterator = document.createNodeIterator(
-                  document.body,
-                  NodeFilter.SHOW_ELEMENT
-                );
-                let node: Node | null;
-                while ((node = iterator.nextNode())) {
-                  const el = node as HTMLElement;
-                  if (!el || !el.textContent) continue;
-                  if (
-                    el.textContent.toLowerCase().includes(text.toLowerCase())
-                  ) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    return true;
-                  }
-                }
-                return false;
-              },
-              { text: params.text }
+            const rawResult = await page.evaluate(
+              buildScrollToTextExpression(params.text, 'down')
             );
+            result =
+              rawResult && typeof rawResult === 'object'
+                ? (rawResult as ScrollToTextPageResult)
+                : { ...result, found: rawResult === true };
           } finally {
             await validateBrowserPageAfterAction(browser_session, page);
           }
 
-          if (!success) {
-            throw new BrowserError(`Text '${params.text}' not found on page`);
+          if (!result.found) {
+            const suffix = result.truncated
+              ? ' before the bounded page scan reached its safety limit'
+              : '';
+            throw new BrowserError(
+              `Text '${params.text}' not found on page${suffix}`
+            );
           }
           return null;
         }
