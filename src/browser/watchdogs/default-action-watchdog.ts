@@ -21,6 +21,8 @@ import {
   WaitEvent,
 } from '../events.js';
 import { URLNotAllowedError } from '../views.js';
+import { readBoundedPageTitle } from '../state-limits.js';
+import { readBoundedCdpPdf } from '../../controller/pdf-output.js';
 import { BaseWatchdog } from './base.js';
 
 const chmodPrivatePath = (targetPath: string, mode: number) => {
@@ -239,16 +241,20 @@ export class DefaultActionWatchdog extends BaseWatchdog {
       await this.browser_session.validate_page_after_action(page);
       const cdpSession =
         await this.browser_session.get_or_create_cdp_session(page);
-      await this.browser_session.validate_page_after_action(page);
-      const result = await cdpSession.send?.('Page.printToPDF', {
-        printBackground: true,
-        preferCSSPageSize: true,
-      });
-      await this.browser_session.validate_page_after_action(page);
-      const pdfBase64 =
-        result && typeof result.data === 'string' ? result.data : null;
-      if (!pdfBase64) {
+      if (!cdpSession?.send) {
         return null;
+      }
+      await this.browser_session.validate_page_after_action(page);
+      let content: Buffer;
+      try {
+        const result = await cdpSession.send('Page.printToPDF', {
+          printBackground: true,
+          preferCSSPageSize: true,
+          transferMode: 'ReturnAsStream',
+        });
+        content = await readBoundedCdpPdf(cdpSession, result ?? {});
+      } finally {
+        await this.browser_session.validate_page_after_action(page);
       }
 
       const downloadsPath =
@@ -256,8 +262,7 @@ export class DefaultActionWatchdog extends BaseWatchdog {
       ensurePrivateDirectoryIfCreated(downloadsPath);
 
       await this.browser_session.validate_page_after_action(page);
-      const title =
-        typeof page.title === 'function' ? await page.title() : 'document';
+      const title = await readBoundedPageTitle(page);
       await this.browser_session.validate_page_after_action(page);
       const suggestedName = this._sanitizeFilename(
         `${title || 'document'}.pdf`
@@ -267,7 +272,6 @@ export class DefaultActionWatchdog extends BaseWatchdog {
         suggestedName
       );
       const finalPath = path.join(downloadsPath, uniqueFilename);
-      const content = Buffer.from(pdfBase64, 'base64');
       fs.writeFileSync(finalPath, content, { mode: 0o600 });
       chmodPrivatePath(finalPath, 0o600);
 

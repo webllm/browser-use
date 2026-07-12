@@ -436,6 +436,7 @@ describe('default action watchdog alignment', () => {
       expect(cdpSend).toHaveBeenCalledWith('Page.printToPDF', {
         printBackground: true,
         preferCSSPageSize: true,
+        transferMode: 'ReturnAsStream',
       });
       expect(typeof outputPath).toBe('string');
       expect(outputPath.endsWith('.pdf')).toBe(true);
