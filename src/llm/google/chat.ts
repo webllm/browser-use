@@ -13,6 +13,7 @@ import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { GoogleMessageSerializer } from './serializer.js';
 import { get_browser_use_version } from '../../utils.js';
+import { createNoRedirectFetch } from '../http.js';
 
 export interface ChatGoogleOptions {
   model?: string;
@@ -26,6 +27,7 @@ export interface ChatGoogleOptions {
   httpOptions?: Record<string, unknown>;
   googleAuthOptions?: Record<string, unknown>;
   credentials?: Record<string, unknown>;
+  fetchImplementation?: typeof fetch;
   temperature?: number | null;
   topP?: number | null;
   seed?: number | null;
@@ -105,6 +107,7 @@ export class ChatGoogle implements BaseChatModel {
       httpOptions,
       googleAuthOptions,
       credentials,
+      fetchImplementation,
       temperature = 0.5,
       topP = null,
       seed = null,
@@ -160,6 +163,12 @@ export class ChatGoogle implements BaseChatModel {
     };
 
     this.client = new GoogleGenAI(clientOptions as any);
+    const apiClient = (this.client as any).apiClient;
+    if (apiClient && typeof apiClient.apiCall === 'function') {
+      const safeFetch = createNoRedirectFetch(fetchImplementation);
+      apiClient.apiCall = (url: string, init?: RequestInit) =>
+        safeFetch(url, init);
+    }
   }
 
   get name(): string {

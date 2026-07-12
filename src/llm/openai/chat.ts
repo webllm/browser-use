@@ -10,6 +10,7 @@ import {
   raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 // Reasoning models that support reasoning_effort parameter
 const DEFAULT_REASONING_MODELS = [
@@ -126,7 +127,7 @@ export class ChatOpenAI implements BaseChatModel {
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
-      fetchOptions: (fetchOptions ?? undefined) as any,
+      fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
   }
 

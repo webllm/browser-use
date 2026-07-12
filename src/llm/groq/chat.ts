@@ -9,6 +9,7 @@ import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { GroqMessageSerializer } from './serializer.js';
+import { createNoRedirectFetch } from '../http.js';
 
 const JsonSchemaModels = [
   'meta-llama/llama-4-maverick-17b-128e-instruct',
@@ -26,6 +27,7 @@ export interface ChatGroqOptions {
   topP?: number | null;
   seed?: number | null;
   maxRetries?: number;
+  fetchImplementation?: typeof fetch;
   removeMinItemsFromSchema?: boolean;
   removeDefaultsFromSchema?: boolean;
 }
@@ -53,6 +55,7 @@ export class ChatGroq implements BaseChatModel {
       topP = null,
       seed = null,
       maxRetries = 10,
+      fetchImplementation,
       removeMinItemsFromSchema = false,
       removeDefaultsFromSchema = false,
     } = normalizedOptions;
@@ -69,6 +72,7 @@ export class ChatGroq implements BaseChatModel {
       apiKey,
       baseURL,
       maxRetries,
+      fetch: createNoRedirectFetch(fetchImplementation),
     });
   }
 

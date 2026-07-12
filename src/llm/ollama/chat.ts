@@ -13,6 +13,7 @@ import { ChatInvokeCompletion } from '../views.js';
 import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
 import { OllamaMessageSerializer } from './serializer.js';
+import { createNoRedirectFetch } from '../http.js';
 
 export interface ChatOllamaOptions {
   model?: string;
@@ -48,7 +49,9 @@ export class ChatOllama implements BaseChatModel {
     this.model = model;
     this.ollamaOptions = ollamaOptions;
 
-    const baseFetch = clientParams?.fetch;
+    const baseFetch = createNoRedirectFetch<
+      NonNullable<OllamaClientConfig['fetch']>
+    >(clientParams?.fetch);
     let fetchWithTimeout = baseFetch;
     if (timeout !== null && timeout !== undefined) {
       const timeoutMs = Number(timeout);
@@ -113,11 +116,10 @@ export class ChatOllama implements BaseChatModel {
   }
 
   private createTimeoutFetch(
-    baseFetch: OllamaClientConfig['fetch'] | undefined,
+    baseFetch: NonNullable<OllamaClientConfig['fetch']>,
     timeoutMs: number
-  ): OllamaClientConfig['fetch'] {
+  ): NonNullable<OllamaClientConfig['fetch']> {
     return async (input, init) => {
-      const fetchImpl = baseFetch ?? fetch;
       const timeoutController = new AbortController();
       const timeoutHandle = setTimeout(
         () => timeoutController.abort(),
@@ -133,7 +135,7 @@ export class ChatOllama implements BaseChatModel {
             externalSignal.addEventListener('abort', onAbort, { once: true });
           }
         }
-        return await fetchImpl(input, {
+        return await baseFetch(input, {
           ...init,
           signal: timeoutController.signal,
         });

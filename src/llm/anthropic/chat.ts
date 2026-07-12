@@ -14,6 +14,7 @@ import {
   raiseIfStructuredOutputTruncated,
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatAnthropicOptions {
   model?: string;
@@ -106,7 +107,9 @@ export class ChatAnthropic implements BaseChatModel {
       defaultHeaders,
       defaultQuery,
       ...(fetchImplementation ? { fetch: fetchImplementation } : {}),
-      ...(fetchOptions ? { fetchOptions } : {}),
+      fetchOptions: rejectRedirectsInFetchOptions(
+        fetchOptions as RequestInit | undefined
+      ) as ClientOptions['fetchOptions'],
     });
   }
 

@@ -8,6 +8,7 @@ import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { OpenRouterMessageSerializer } from './serializer.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatOpenRouterOptions {
   model?: string;
@@ -79,7 +80,7 @@ export class ChatOpenRouter implements BaseChatModel {
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
-      fetchOptions: (fetchOptions ?? undefined) as any,
+      fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
   }
 

@@ -13,6 +13,7 @@ describe('Google LLM wire request', () => {
   it('sends system instruction, generation config, schema, and abort signal through SDK config', async () => {
     let capturedBody: Record<string, any> | null = null;
     let capturedSignal: AbortSignal | null = null;
+    let capturedRedirect: RequestRedirect | null = null;
 
     const fetchMock = vi.fn(
       async (
@@ -20,6 +21,7 @@ describe('Google LLM wire request', () => {
         init?: Parameters<typeof fetch>[1]
       ) => {
         capturedSignal = init?.signal ?? null;
+        capturedRedirect = init?.redirect ?? null;
         capturedBody = init?.body ? JSON.parse(String(init.body)) : null;
 
         return new Response(
@@ -66,6 +68,7 @@ describe('Google LLM wire request', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(capturedSignal).toBeTruthy();
+    expect(capturedRedirect).toBe('error');
     expect(capturedBody).not.toBeNull();
     const body = capturedBody as unknown as Record<string, any>;
 

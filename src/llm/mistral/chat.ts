@@ -10,6 +10,7 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
 import { OpenAIMessageSerializer } from '../openai/serializer.js';
 import { MistralSchemaOptimizer } from './schema.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatMistralOptions {
   model?: string;
@@ -83,8 +84,8 @@ export class ChatMistral implements BaseChatModel {
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
-      fetchOptions: (fetchOptions ?? undefined) as any,
       ...(clientParams ?? {}),
+      fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
   }
 

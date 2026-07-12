@@ -9,6 +9,7 @@ import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { VercelMessageSerializer } from './serializer.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 const DEFAULT_REASONING_MODELS = [
   'o1',
@@ -98,7 +99,7 @@ export class ChatVercel implements BaseChatModel {
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
-      fetchOptions: (fetchOptions ?? undefined) as any,
+      fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
   }
 

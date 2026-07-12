@@ -9,6 +9,7 @@ import type { Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { DeepSeekMessageSerializer } from './serializer.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatDeepSeekOptions {
   model?: string;
@@ -60,6 +61,9 @@ export class ChatDeepSeek implements BaseChatModel {
       ...(timeout !== null ? { timeout } : {}),
       maxRetries,
       ...(clientParams ?? {}),
+      fetchOptions: rejectRedirectsInFetchOptions(
+        (clientParams as any)?.fetchOptions as RequestInit | undefined
+      ) as any,
     });
   }
 

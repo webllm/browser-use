@@ -18,6 +18,7 @@ import {
   getCodexCloudflareHeaders,
   resolveCodexRuntimeCredentials,
 } from './auth.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatCodexOptions {
   model?: string;
@@ -193,7 +194,7 @@ export class ChatCodex implements BaseChatModel {
       },
       defaultQuery: this.defaultQuery ?? undefined,
       fetch: this.fetchImplementation,
-      fetchOptions: (this.fetchOptions ?? undefined) as any,
+      fetchOptions: rejectRedirectsInFetchOptions(this.fetchOptions) as any,
     });
   }
 

@@ -12,6 +12,7 @@ import {
   CerebrasMessageSerializer,
   type CerebrasMessage,
 } from './serializer.js';
+import { rejectRedirectsInFetchOptions } from '../http.js';
 
 export interface ChatCerebrasOptions {
   model?: string;
@@ -71,6 +72,9 @@ export class ChatCerebras implements BaseChatModel {
       ...(timeout !== null ? { timeout } : {}),
       maxRetries,
       ...(clientParams ?? {}),
+      fetchOptions: rejectRedirectsInFetchOptions(
+        (clientParams as any)?.fetchOptions as RequestInit | undefined
+      ) as any,
     });
   }
 
