@@ -278,6 +278,11 @@ export class TunnelManager {
   async start_tunnel(port: number): Promise<StartTunnelResult> {
     const existing = this.load_tunnel_info(port);
     if (existing) {
+      if (!existing.url) {
+        return {
+          error: `A previous tunnel launch on port ${port} is still running and requires cleanup; run tunnel stop ${port}`,
+        };
+      }
       return { url: existing.url, port, existing: true };
     }
 
@@ -347,9 +352,24 @@ export class TunnelManager {
           url: '',
           binary_path: binaryPath,
         };
-        await this.kill_process_impl(child.pid, () =>
+        let terminated = false;
+        try {
+          terminated = await this.kill_process_impl(child.pid, () =>
+            this.is_owned_tunnel_process(info)
+          );
+        } catch {
+          // Preserve ownership metadata below when cleanup can be retried.
+        }
+        if (
+          !terminated &&
+          this.is_process_alive_impl(child.pid) &&
           this.is_owned_tunnel_process(info)
-        );
+        ) {
+          this.save_tunnel_info(port, child.pid, '', binaryPath);
+          return {
+            error: `Timed out waiting for cloudflare tunnel URL and could not stop process ${child.pid}; run tunnel stop ${port} to retry cleanup`,
+          };
+        }
       }
       return { error: 'Timed out waiting for cloudflare tunnel URL (15s)' };
     } finally {

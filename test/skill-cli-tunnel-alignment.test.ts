@@ -227,6 +227,57 @@ describe('skill-cli tunnel alignment', () => {
     }
   });
 
+  it('retains ownership metadata when a timed-out tunnel cannot be stopped', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const spawnImpl = vi.fn(
+      () =>
+        ({
+          pid: 4321,
+          unref: vi.fn(),
+        }) as any
+    );
+    const killProcess = vi.fn(async () => false);
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: () => '/usr/bin/cloudflared',
+        spawn_impl: spawnImpl as any,
+        sleep_impl: async (ms) => {
+          now += ms;
+        },
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
+        kill_process: killProcess,
+      });
+
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error:
+          'Timed out waiting for cloudflare tunnel URL and could not stop process 4321; run tunnel stop 3000 to retry cleanup',
+      });
+      expect(killProcess).toHaveBeenCalledWith(4321, expect.any(Function));
+      expect(JSON.parse(fs.readFileSync(infoPath, 'utf8'))).toEqual({
+        port: 3000,
+        pid: 4321,
+        url: '',
+        binary_path: '/usr/bin/cloudflared',
+      });
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error:
+          'A previous tunnel launch on port 3000 is still running and requires cleanup; run tunnel stop 3000',
+      });
+    } finally {
+      nowSpy.mockRestore();
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
   it('stops a persisted tunnel only when its process signature matches', async () => {
     const tunnelDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-tunnel-')
