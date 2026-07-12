@@ -55,6 +55,9 @@ describe('CloudSync alignment', () => {
     expect(axiosPostMock).toHaveBeenCalledTimes(1);
     const payload = axiosPostMock.mock.calls[0]?.[1];
     expect(payload.events[0].user_id).toBe(TEMP_USER_ID);
+    expect(axiosPostMock.mock.calls[0]?.[2]).toMatchObject({
+      maxRedirects: 0,
+    });
   });
 
   it('does not overwrite explicit temp user_id when authenticated', async () => {

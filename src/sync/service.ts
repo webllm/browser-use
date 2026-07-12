@@ -102,7 +102,7 @@ export class CloudSync {
             device_id: (entry as any).device_id ?? this.auth_client.device_id,
           })),
         },
-        { headers, timeout: 10_000 }
+        { headers, timeout: 10_000, maxRedirects: 0 }
       );
     } catch (error: any) {
       const status = error?.response?.status;

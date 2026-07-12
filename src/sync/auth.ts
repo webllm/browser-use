@@ -155,6 +155,7 @@ export class DeviceAuthClient {
     }
     return this.client.post(this.buildUrl(pathname), form, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      maxRedirects: 0,
     });
   }
 

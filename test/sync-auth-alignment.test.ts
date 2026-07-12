@@ -26,9 +26,15 @@ describe('DeviceAuthClient alignment', () => {
   });
 
   it('sends empty agent_session_id when none is provided', async () => {
-    const post = vi.fn(async (_url?: string, _form?: URLSearchParams) => ({
-      data: {},
-    }));
+    const post = vi.fn(
+      async (
+        _url?: string,
+        _form?: URLSearchParams,
+        _config?: Record<string, unknown>
+      ) => ({
+        data: {},
+      })
+    );
     const client = new DeviceAuthClient('https://api.example.com', {
       post,
     } as any);
@@ -40,6 +46,7 @@ describe('DeviceAuthClient alignment', () => {
     expect(form).toBeInstanceOf(URLSearchParams);
     const params = form as URLSearchParams;
     expect(params.get('agent_session_id')).toBe('');
+    expect(post.mock.calls[0]?.[2]).toMatchObject({ maxRedirects: 0 });
   });
 
   it('clear_auth removes cloud auth file instead of writing empty values', async () => {
