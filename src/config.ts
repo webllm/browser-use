@@ -119,12 +119,34 @@ const fchmod_private = (fd: number, mode: number) => {
 const read_private_config_file = (config_path: string): string => {
   let fd: number | null = null;
   try {
+    const pathStats = fs.lstatSync(config_path);
+    if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+      throw new Error(`Config path is not a regular file: ${config_path}`);
+    }
     const nonBlocking =
       process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
-    fd = fs.openSync(config_path, fs.constants.O_RDONLY | nonBlocking);
+    const noFollow =
+      process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+    fd = fs.openSync(
+      config_path,
+      fs.constants.O_RDONLY | nonBlocking | noFollow
+    );
     const stats = fs.fstatSync(fd);
-    if (!stats.isFile()) {
+    const currentPathStats = fs.lstatSync(config_path);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile()
+    ) {
       throw new Error(`Config path is not a regular file: ${config_path}`);
+    }
+    if (
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino
+    ) {
+      throw new Error(`Config path changed while opening: ${config_path}`);
     }
     fchmod_private(fd, 0o600);
     if (stats.size > MAX_CONFIG_FILE_BYTES) {

@@ -246,6 +246,75 @@ describe('Config alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'rejects symbolic links as config inputs',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-config-')
+      );
+      const targetPath = path.join(tempDir, 'target.json');
+      const configPath = path.join(tempDir, 'config.json');
+      fs.writeFileSync(targetPath, '{}');
+      fs.symlinkSync(targetPath, configPath);
+
+      try {
+        await withEnv(
+          {
+            BROWSER_USE_CONFIG_DIR: tempDir,
+            BROWSER_USE_CONFIG_PATH: configPath,
+          },
+          async () => {
+            const { CONFIG } = await importConfigModule();
+            expect(() => CONFIG.get_default_profile()).toThrow(
+              /not a regular file/
+            );
+          }
+        );
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('rejects a config path replaced while it is being opened', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    const configPath = path.join(tempDir, 'config.json');
+    const replacementPath = path.join(tempDir, 'replacement.json');
+    fs.writeFileSync(configPath, '{}');
+    fs.writeFileSync(replacementPath, '{}');
+
+    try {
+      await withEnv(
+        {
+          BROWSER_USE_CONFIG_DIR: tempDir,
+          BROWSER_USE_CONFIG_PATH: configPath,
+        },
+        async () => {
+          const { CONFIG } = await importConfigModule();
+          const originalOpen = fs.openSync.bind(fs);
+          const openSpy = vi
+            .spyOn(fs, 'openSync')
+            .mockImplementationOnce((...args) => {
+              fs.rmSync(configPath);
+              fs.renameSync(replacementPath, configPath);
+              return originalOpen(...args);
+            });
+          try {
+            expect(() => CONFIG.get_default_profile()).toThrow(
+              /changed while opening/
+            );
+          } finally {
+            openSpy.mockRestore();
+          }
+        }
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves unsupported legacy config instead of deleting it', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-config-')
