@@ -534,6 +534,38 @@ describe('Agent constructor browser session alignment', () => {
     await overrideAgent.close();
   });
 
+  it.each([
+    ['max_failures', { max_failures: Number.POSITIVE_INFINITY }],
+    ['max_actions_per_step', { max_actions_per_step: Number.NaN }],
+    ['max_history_items', { max_history_items: Number.POSITIVE_INFINITY }],
+    ['planning_replan_on_stall', { planning_replan_on_stall: 1.5 }],
+    ['planning_exploration_limit', { planning_exploration_limit: -1 }],
+    ['llm_timeout', { llm_timeout: Number.POSITIVE_INFINITY }],
+    ['step_timeout', { step_timeout: Number.POSITIVE_INFINITY }],
+    ['loop_detection_window', { loop_detection_window: 0 }],
+    ['_url_shortening_limit', { _url_shortening_limit: Number.NaN }],
+  ])('rejects invalid %s resource settings', (_name, options) => {
+    expect(
+      () =>
+        new Agent({
+          task: 'invalid resource setting',
+          llm: createLlm(),
+          ...options,
+        })
+    ).toThrow(RangeError);
+  });
+
+  it('rejects screenshot targets that exceed the pixel budget', () => {
+    expect(
+      () =>
+        new Agent({
+          task: 'oversized screenshot target',
+          llm: createLlm(),
+          llm_screenshot_size: [8_192, 8_192],
+        })
+    ).toThrow(/total pixels/);
+  });
+
   it('only disables vision automatically for grok-3/grok-code models', async () => {
     const grok2Agent = new Agent({
       task: 'grok-2 vision',

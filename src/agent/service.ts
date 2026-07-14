@@ -400,6 +400,56 @@ const defaultAgentOptions = () => ({
   _url_shortening_limit: 25,
 });
 
+const MAX_AGENT_TIMEOUT_SECONDS = 24 * 60 * 60;
+const MAX_AGENT_FAILURES = 10_000;
+const MAX_AGENT_ACTIONS_PER_STEP = 1_000;
+const MAX_AGENT_HISTORY_ITEMS = 100_000;
+const MAX_AGENT_PLANNING_THRESHOLD = 1_000_000;
+const MAX_AGENT_LOOP_DETECTION_WINDOW = 10_000;
+const MAX_AGENT_URL_SHORTENING_LIMIT = 1_000_000;
+const MAX_LLM_SCREENSHOT_DIMENSION = 8_192;
+const MAX_LLM_SCREENSHOT_PIXELS = 25_000_000;
+
+const requireBoundedInteger = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be an integer between ${minimum} and ${maximum}`
+    );
+  }
+  return value;
+};
+
+const requireBoundedNumber = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be a finite number between ${minimum} and ${maximum}`
+    );
+  }
+  return value;
+};
+
+const requireBoundedHistoryItems = (value: number) => {
+  if (Number.isFinite(value) && value <= 5) {
+    throw new Error('max_history_items must be null or greater than 5');
+  }
+  return requireBoundedInteger(
+    'max_history_items',
+    value,
+    6,
+    MAX_AGENT_HISTORY_ITEMS
+  );
+};
+
 const chmodPrivateFile = async (filePath: string) => {
   if (process.platform !== 'win32') {
     await fs.promises.chmod(filePath, 0o600);
@@ -640,6 +690,58 @@ export class Agent<
       typeof llm_timeout === 'number'
         ? llm_timeout
         : get_model_timeout(resolvedLlm);
+    const validatedMaxFailures = requireBoundedInteger(
+      'max_failures',
+      max_failures,
+      1,
+      MAX_AGENT_FAILURES
+    );
+    const validatedMaxActionsPerStep = requireBoundedInteger(
+      'max_actions_per_step',
+      max_actions_per_step,
+      1,
+      MAX_AGENT_ACTIONS_PER_STEP
+    );
+    const validatedMaxHistoryItems =
+      max_history_items === null
+        ? null
+        : requireBoundedHistoryItems(max_history_items);
+    const validatedPlanningReplanOnStall = requireBoundedInteger(
+      'planning_replan_on_stall',
+      planning_replan_on_stall,
+      0,
+      MAX_AGENT_PLANNING_THRESHOLD
+    );
+    const validatedPlanningExplorationLimit = requireBoundedInteger(
+      'planning_exploration_limit',
+      planning_exploration_limit,
+      0,
+      MAX_AGENT_PLANNING_THRESHOLD
+    );
+    const validatedLlmTimeout = requireBoundedNumber(
+      'llm_timeout',
+      effectiveLlmTimeout,
+      0,
+      MAX_AGENT_TIMEOUT_SECONDS
+    );
+    const validatedStepTimeout = requireBoundedNumber(
+      'step_timeout',
+      step_timeout,
+      0,
+      MAX_AGENT_TIMEOUT_SECONDS
+    );
+    const validatedLoopDetectionWindow = requireBoundedInteger(
+      'loop_detection_window',
+      loop_detection_window,
+      1,
+      MAX_AGENT_LOOP_DETECTION_WINDOW
+    );
+    const validatedUrlShorteningLimit = requireBoundedInteger(
+      '_url_shortening_limit',
+      _url_shortening_limit,
+      0,
+      MAX_AGENT_URL_SHORTENING_LIMIT
+    );
     const normalizedMessageCompaction =
       this._normalizeMessageCompactionSetting(message_compaction);
     let resolvedLlmScreenshotSize: [number, number] | null =
@@ -662,6 +764,15 @@ export class Agent<
           'llm_screenshot_size dimensions must be at least 100 pixels'
         );
       }
+      if (
+        width > MAX_LLM_SCREENSHOT_DIMENSION ||
+        height > MAX_LLM_SCREENSHOT_DIMENSION ||
+        width * height > MAX_LLM_SCREENSHOT_PIXELS
+      ) {
+        throw new Error(
+          `llm_screenshot_size must not exceed ${MAX_LLM_SCREENSHOT_DIMENSION} pixels per dimension or ${MAX_LLM_SCREENSHOT_PIXELS.toLocaleString()} total pixels`
+        );
+      }
       logger.info(`LLM screenshot resizing enabled: ${width}x${height}`);
     }
     if (resolvedLlmScreenshotSize == null) {
@@ -681,7 +792,7 @@ export class Agent<
     this._fallback_llm = fallback_llm;
     this._using_fallback_llm = false;
     this._original_llm = resolvedLlm;
-    this._url_shortening_limit = Math.max(0, Math.trunc(_url_shortening_limit));
+    this._url_shortening_limit = validatedUrlShorteningLimit;
     this.id = task_id || uuid7str();
     this.task_id = this.id;
     this.session_id = uuid7str();
@@ -806,29 +917,29 @@ export class Agent<
       vision_detail_level,
       save_conversation_path,
       save_conversation_path_encoding,
-      max_failures,
+      max_failures: validatedMaxFailures,
       generate_gif,
       override_system_message,
       extend_system_message,
       include_attributes: include_attributes ?? [...DEFAULT_INCLUDE_ATTRIBUTES],
-      max_actions_per_step,
+      max_actions_per_step: validatedMaxActionsPerStep,
       use_thinking,
       flash_mode: effectiveFlashMode,
       use_judge,
       ground_truth,
-      max_history_items,
+      max_history_items: validatedMaxHistoryItems,
       page_extraction_llm: effectivePageExtractionLlm,
       enable_planning: effectiveEnablePlanning,
-      planning_replan_on_stall,
-      planning_exploration_limit,
+      planning_replan_on_stall: validatedPlanningReplanOnStall,
+      planning_exploration_limit: validatedPlanningExplorationLimit,
       calculate_cost,
       include_tool_call_examples,
       session_attachment_mode,
-      llm_timeout: effectiveLlmTimeout,
-      step_timeout,
+      llm_timeout: validatedLlmTimeout,
+      step_timeout: validatedStepTimeout,
       final_response_after_failure,
       message_compaction: normalizedMessageCompaction,
-      loop_detection_window,
+      loop_detection_window: validatedLoopDetectionWindow,
       loop_detection_enabled,
     };
 
