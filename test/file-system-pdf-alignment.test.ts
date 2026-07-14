@@ -27,9 +27,47 @@ vi.mock('pdf-parse', () => {
   return { PDFParse };
 });
 
-import { FileSystem } from '../src/filesystem/file-system.js';
+import {
+  extractPdfTextByPage,
+  FileSystem,
+} from '../src/filesystem/file-system.js';
 
 describe('FileSystem PDF external read alignment', () => {
+  it.each([
+    [{ maxPages: Number.POSITIVE_INFINITY }, 'maxPages'],
+    [{ maxPages: 1.5 }, 'maxPages'],
+    [{ maxPages: 0 }, 'maxPages'],
+    [{ maxChars: Number.POSITIVE_INFINITY }, 'maxChars'],
+    [{ maxChars: 1.5 }, 'maxChars'],
+    [{ maxChars: 0 }, 'maxChars'],
+  ] as const)(
+    'rejects unsafe PDF extraction limits %j',
+    async (limits, name) => {
+      await expect(
+        extractPdfTextByPage(Buffer.alloc(0), limits)
+      ).rejects.toThrow(`${name} must be a positive safe integer`);
+    }
+  );
+
+  it('keeps custom PDF extraction limits below hard safety caps', async () => {
+    mockedPdfPages = Array.from({ length: 250 }, () => 'x');
+
+    const pageLimited = await extractPdfTextByPage(Buffer.alloc(0), {
+      maxPages: Number.MAX_SAFE_INTEGER,
+      maxChars: Number.MAX_SAFE_INTEGER,
+    });
+    expect(pageLimited.pageTexts).toHaveLength(200);
+    expect(pageLimited.truncated).toBe(true);
+
+    mockedPdfPages = ['x'.repeat(120_001)];
+    const charLimited = await extractPdfTextByPage(Buffer.alloc(0), {
+      maxChars: Number.MAX_SAFE_INTEGER,
+    });
+    expect(charLimited.pageTexts.join('')).toHaveLength(120_000);
+    expect(charLimited.truncated).toBe(true);
+    mockedPdfPages = [];
+  });
+
   it('returns full page-tagged content when PDF fits budget', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-fs-pdf-')

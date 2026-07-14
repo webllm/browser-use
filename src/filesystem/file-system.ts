@@ -67,6 +67,18 @@ type PdfParserConstructor = new (options: { data: Buffer }) => PdfParser;
 const MAX_PDF_PAGES_TO_EXTRACT = 200;
 const MAX_PDF_EXTRACTED_TEXT_CHARS = 120_000;
 
+const normalizePdfExtractionLimit = (
+  value: number | undefined,
+  maximum: number,
+  name: string
+) => {
+  if (value === undefined) return maximum;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  return Math.min(value, maximum);
+};
+
 export async function extractPdfText(buffer: Buffer): Promise<{
   text: string;
   totalPages: number;
@@ -115,8 +127,16 @@ export async function extractPdfTextByPage(
   totalChars: number;
   truncated?: boolean;
 }> {
-  const maxPages = Math.max(1, limits.maxPages ?? MAX_PDF_PAGES_TO_EXTRACT);
-  const maxChars = Math.max(1, limits.maxChars ?? MAX_PDF_EXTRACTED_TEXT_CHARS);
+  const maxPages = normalizePdfExtractionLimit(
+    limits.maxPages,
+    MAX_PDF_PAGES_TO_EXTRACT,
+    'maxPages'
+  );
+  const maxChars = normalizePdfExtractionLimit(
+    limits.maxChars,
+    MAX_PDF_EXTRACTED_TEXT_CHARS,
+    'maxChars'
+  );
   const pdfParseModule = (await import('pdf-parse')) as {
     default?: unknown;
     PDFParse?: unknown;
