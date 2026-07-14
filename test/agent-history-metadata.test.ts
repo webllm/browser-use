@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BrowserStateHistory } from '../src/browser/views.js';
 import {
   ActionResult,
   AgentHistory,
   AgentHistoryList,
   AgentOutput,
+  MAX_AGENT_HISTORY_FILE_BYTES,
   StepMetadata,
 } from '../src/agent/views.js';
 
@@ -100,6 +101,62 @@ describe('Agent history metadata alignment', () => {
     expect(loaded.history[0].state_message).toBe('payload state');
     expect(loaded.history[0].metadata?.step_interval).toBe(2);
     expect(loaded.final_result()).toBe('payload result');
+  });
+
+  it('rejects oversized and non-regular history files', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agent-history-limits-')
+    );
+    const filePath = path.join(tempDir, 'history.json');
+    fs.writeFileSync(filePath, '{}');
+    fs.truncateSync(filePath, MAX_AGENT_HISTORY_FILE_BYTES + 1);
+
+    try {
+      expect(() =>
+        AgentHistoryList.load_from_file(filePath, AgentOutput)
+      ).toThrow(`exceeds ${MAX_AGENT_HISTORY_FILE_BYTES} bytes`);
+      expect(() =>
+        AgentHistoryList.load_from_file(tempDir, AgentOutput)
+      ).toThrow('not a regular file');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves existing history when atomic replacement fails', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agent-history-atomic-')
+    );
+    const filePath = path.join(tempDir, 'history.json');
+    fs.writeFileSync(filePath, '{"history":[]}');
+    const history = new AgentHistoryList();
+    history.add_item(
+      new AgentHistory(
+        null,
+        [new ActionResult({ extracted_content: 'new result' })],
+        new BrowserStateHistory('https://example.com', 'Example', [], [])
+      )
+    );
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('injected history replacement failure');
+    });
+
+    try {
+      expect(() => history.save_to_file(filePath)).toThrow(
+        'injected history replacement failure'
+      );
+    } finally {
+      rename.mockRestore();
+    }
+
+    try {
+      expect(fs.readFileSync(filePath, 'utf8')).toBe('{"history":[]}');
+      expect(
+        fs.readdirSync(tempDir).filter((entry) => entry.endsWith('.tmp'))
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('parses structured output with explicit parser in get_structured_output', () => {

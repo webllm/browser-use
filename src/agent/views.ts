@@ -14,6 +14,10 @@ import type { FileSystemState } from '../filesystem/file-system.js';
 import type { BaseChatModel } from '../llm/base.js';
 import { MessageManagerState } from './message-manager/views.js';
 import type { UsageSummary } from '../tokens/views.js';
+import {
+  readBoundedPrivateFile,
+  writePrivateFileAtomic,
+} from '../private-state.js';
 
 // Re-export ActionModel for agent/service.ts
 export { ActionModel };
@@ -26,6 +30,7 @@ export interface StructuredOutputParser<T = unknown> {
 }
 
 type SensitiveDataMap = Record<string, string | Record<string, string>>;
+export const MAX_AGENT_HISTORY_FILE_BYTES = 64 * 1024 * 1024;
 
 export const redactSensitiveDataFromString = (
   value: string,
@@ -60,12 +65,6 @@ export const redactSensitiveDataFromString = (
     filtered = filtered.split(secret).join(`<secret>${key}</secret>`);
   }
   return filtered;
-};
-
-const chmodPrivateFile = (filePath: string) => {
-  if (process.platform !== 'win32') {
-    fs.chmodSync(filePath, 0o600);
-  }
 };
 
 const ensurePrivateDirectoryIfCreated = (dirPath: string) => {
@@ -1158,19 +1157,23 @@ export class AgentHistoryList<TStructured = unknown> {
   ) {
     const dir = path.dirname(filepath);
     ensurePrivateDirectoryIfCreated(dir);
-    fs.writeFileSync(
-      filepath,
-      JSON.stringify(this.toJSON(sensitive_data), null, 2),
-      { encoding: 'utf-8', mode: 0o600 }
-    );
-    chmodPrivateFile(filepath);
+    const serialized = JSON.stringify(this.toJSON(sensitive_data), null, 2);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_AGENT_HISTORY_FILE_BYTES) {
+      throw new Error(
+        `Agent history exceeds ${MAX_AGENT_HISTORY_FILE_BYTES} bytes`
+      );
+    }
+    writePrivateFileAtomic(filepath, serialized);
   }
 
   static load_from_file(
     filepath: string,
     outputModel: typeof AgentOutput
   ): AgentHistoryList {
-    const content = fs.readFileSync(filepath, 'utf-8');
+    const content = readBoundedPrivateFile(
+      filepath,
+      MAX_AGENT_HISTORY_FILE_BYTES
+    );
     const payload = JSON.parse(content) as Record<string, unknown>;
     return AgentHistoryList.load_from_dict(payload, outputModel);
   }
