@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CONFIG } from '../../config.js';
+import { readBoundedResponseJson } from '../../http-response.js';
 
 export const CODEX_PROVIDER = 'openai-codex';
 export const DEFAULT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -13,6 +14,8 @@ export const CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120;
 
 const AUTH_STORE_VERSION = 1;
 const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
+const MAX_CODEX_AUTH_RESPONSE_BYTES = 1024 * 1024;
+const MAX_CODEX_AUTH_ERROR_BYTES = 64 * 1024;
 
 export interface CodexTokens {
   access_token: string;
@@ -501,6 +504,22 @@ const fetchWithTimeout = async (
   }
 };
 
+const readCodexAuthJson = async (
+  response: Response,
+  code: string,
+  message: string,
+  reloginRequired = false
+): Promise<any> => {
+  try {
+    return await readBoundedResponseJson(
+      response,
+      MAX_CODEX_AUTH_RESPONSE_BYTES
+    );
+  } catch {
+    throw new CodexAuthError(message, code, reloginRequired);
+  }
+};
+
 const parseErrorPayload = async (
   response: Response
 ): Promise<{ code: string; message: string; reloginRequired: boolean }> => {
@@ -509,7 +528,10 @@ const parseErrorPayload = async (
   let reloginRequired = false;
 
   try {
-    const payload = (await response.json()) as any;
+    const payload = (await readBoundedResponseJson(
+      response,
+      MAX_CODEX_AUTH_ERROR_BYTES
+    )) as any;
     const error = payload?.error;
     if (error && typeof error === 'object') {
       const nestedCode = error.code ?? error.type;
@@ -586,16 +608,12 @@ export const refreshCodexOAuth = async (
     );
   }
 
-  let payload: any;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    throw new CodexAuthError(
-      'Codex token refresh returned invalid JSON.',
-      'codex_refresh_invalid_json',
-      true
-    );
-  }
+  const payload = await readCodexAuthJson(
+    response,
+    'codex_refresh_invalid_json',
+    'Codex token refresh returned invalid or oversized JSON.',
+    true
+  );
 
   const refreshedAccessToken = requireTokenString(
     payload?.access_token,
@@ -795,7 +813,11 @@ export const loginCodexDeviceCode = async (
     );
   }
 
-  const deviceData = (await userCodeResponse.json()) as any;
+  const deviceData = await readCodexAuthJson(
+    userCodeResponse,
+    'device_code_invalid_response',
+    'Device code request returned invalid or oversized JSON.'
+  );
   const userCode = deviceData?.user_code;
   const deviceAuthId = deviceData?.device_auth_id;
   const parsedPollInterval = Number.parseInt(
@@ -846,7 +868,11 @@ export const loginCodexDeviceCode = async (
     );
 
     if (pollResponse.ok) {
-      const payload = (await pollResponse.json()) as any;
+      const payload = await readCodexAuthJson(
+        pollResponse,
+        'device_code_poll_invalid_response',
+        'Device auth polling returned invalid or oversized JSON.'
+      );
       authorizationCode =
         typeof payload?.authorization_code === 'string'
           ? payload.authorization_code
@@ -900,7 +926,12 @@ export const loginCodexDeviceCode = async (
     );
   }
 
-  const tokenPayload = (await tokenResponse.json()) as any;
+  const tokenPayload = await readCodexAuthJson(
+    tokenResponse,
+    'token_exchange_invalid_response',
+    'Token exchange returned invalid or oversized JSON.',
+    true
+  );
   const accessToken = requireTokenString(
     tokenPayload?.access_token,
     'token_exchange_no_access_token',

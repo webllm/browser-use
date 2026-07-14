@@ -203,6 +203,55 @@ describe('Codex auth store', () => {
     });
   });
 
+  it('rejects oversized Codex token refresh responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(1024 * 1024 + 1) },
+      })
+    );
+
+    await expect(
+      refreshCodexOAuth('access', 'refresh', {
+        fetchImplementation: fetchMock as typeof fetch,
+      })
+    ).rejects.toMatchObject({
+      code: 'codex_refresh_invalid_json',
+      relogin_required: true,
+    });
+  });
+
+  it('rejects oversized Codex device-code responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-length': String(1024 * 1024 + 1) },
+      })
+    );
+
+    await expect(
+      loginCodexDeviceCode({ fetchImplementation: fetchMock as typeof fetch })
+    ).rejects.toMatchObject({ code: 'device_code_invalid_response' });
+  });
+
+  it('bounds Codex refresh error response bodies', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 401,
+        headers: { 'content-length': String(64 * 1024 + 1) },
+      })
+    );
+
+    await expect(
+      refreshCodexOAuth('access', 'refresh', {
+        fetchImplementation: fetchMock as typeof fetch,
+      })
+    ).rejects.toMatchObject({
+      code: 'codex_refresh_failed',
+      relogin_required: true,
+    });
+  });
+
   it('extracts Codex Cloudflare account headers from access-token claims', () => {
     const token = makeJwt({
       exp: Math.floor(Date.now() / 1000) + 3600,
