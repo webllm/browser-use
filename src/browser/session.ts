@@ -2050,7 +2050,7 @@ export class BrowserSession {
           );
         }
         const strippedHeaders = Object.fromEntries(
-          Object.entries(requestHeaders).filter(
+          Object.entries(requestHeaders as Record<string, string>).filter(
             ([name]) => !scopedHeaderNames.has(name.toLowerCase())
           )
         );
