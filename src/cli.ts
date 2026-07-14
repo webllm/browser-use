@@ -2283,8 +2283,11 @@ export const runSessionCommand = async (
         if (!match) {
           throw new Error('Expected --screen-size WIDTHxHEIGHT');
         }
-        browserScreenWidth = Number.parseInt(match[1]!, 10);
-        browserScreenHeight = Number.parseInt(match[2]!, 10);
+        browserScreenWidth = parsePositiveInt('--screen-size width', match[1]!);
+        browserScreenHeight = parsePositiveInt(
+          '--screen-size height',
+          match[2]!
+        );
       }
       const session = await client.create_session({
         profileId: flags.profile,

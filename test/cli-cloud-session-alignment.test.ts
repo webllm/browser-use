@@ -218,6 +218,32 @@ describe('cli cloud session alignment', () => {
     expect(stderr.read()).toContain('Unknown option: --screen-sizee');
   });
 
+  it.each(['0x720', `1${'0'.repeat(400)}x720`])(
+    'rejects invalid session screen size %s before the API call',
+    async (screenSize) => {
+      const stdout = createWritable();
+      const stderr = createWritable();
+      const client = {
+        list_sessions: vi.fn(),
+        get_session: vi.fn(),
+        update_session: vi.fn(),
+        create_session: vi.fn(),
+        create_session_public_share: vi.fn(),
+        delete_session_public_share: vi.fn(),
+      };
+
+      expect(
+        await runSessionCommand(['create', '--screen-size', screenSize], {
+          client: client as any,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+        })
+      ).toBe(1);
+      expect(client.create_session).not.toHaveBeenCalled();
+      expect(stderr.read()).toContain('--screen-size width must be');
+    }
+  );
+
   it('rejects missing session ids instead of treating flags as ids', async () => {
     const stdout = createWritable();
     const stderr = createWritable();
