@@ -1051,6 +1051,38 @@ describe('Controller Integration Tests', () => {
       }
     });
 
+    it('runs evaluate without relying on page-global name helpers', async () => {
+      const collisionPage = await browser.newPage();
+      try {
+        await collisionPage.setContent('<main>Evaluate safely</main>');
+        await collisionPage.evaluate(() => {
+          Object.defineProperty(globalThis, '__name', {
+            value: 42,
+            writable: false,
+            configurable: false,
+          });
+        });
+        const controller = new Controller();
+        const browserSession = {
+          get_current_page: vi.fn(async () => collisionPage),
+          validate_page_after_action: vi.fn(async () => undefined),
+        };
+
+        const result = await controller.registry.execute_action(
+          'evaluate',
+          { code: '({ answer: 42, nested: ["safe"] })' },
+          { browser_session: browserSession as any }
+        );
+
+        expect(result.error).toBeNull();
+        expect(result.extracted_content).toBe(
+          '{"answer":42,"nested":["safe"]}'
+        );
+      } finally {
+        await collisionPage.close();
+      }
+    });
+
     it('caps find_elements text-node traversal across all matched elements', async () => {
       await page.setContent(`<main>${'<div></div>'.repeat(100)}</main>`);
       await page.evaluate(() => {

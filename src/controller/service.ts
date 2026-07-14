@@ -3544,116 +3544,124 @@ You will be given a query and the markdown of a webpage that has been filtered t
               const images: string[] = [];
               const seen = new WeakSet<object>();
 
-              const takeText = (value: string, limit = MAX_TEXT_CHARS) => {
-                const length = Math.min(
-                  value.length,
-                  limit,
-                  remainingTextChars
-                );
-                const result = value.slice(0, length);
-                remainingTextChars -= result.length;
-                if (result.length < value.length) truncated = true;
-                return result;
-              };
+              // Array destructuring prevents esbuild's keepNames transform
+              // from introducing a free `__name` helper into this callback.
+              const [takeText] = [
+                (value: string, limit = MAX_TEXT_CHARS) => {
+                  const length = Math.min(
+                    value.length,
+                    limit,
+                    remainingTextChars
+                  );
+                  const result = value.slice(0, length);
+                  remainingTextChars -= result.length;
+                  if (result.length < value.length) truncated = true;
+                  return result;
+                },
+              ];
 
-              const captureImages = (value: string) => {
-                const startsWithImage = value.startsWith('data:image/');
-                const scanLimit = startsWithImage
-                  ? MAX_IMAGE_CHARS + 1
-                  : MAX_TEXT_CHARS;
-                const scanned = value.slice(0, scanLimit);
-                if (scanned.length < value.length) truncated = true;
+              const [captureImages] = [
+                (value: string) => {
+                  const startsWithImage = value.startsWith('data:image/');
+                  const scanLimit = startsWithImage
+                    ? MAX_IMAGE_CHARS + 1
+                    : MAX_TEXT_CHARS;
+                  const scanned = value.slice(0, scanLimit);
+                  if (scanned.length < value.length) truncated = true;
 
-                return scanned.replace(
-                  /data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/g,
-                  (imageData: string, offset: number) => {
-                    const endsAtTruncatedBoundary =
-                      offset + imageData.length === scanned.length &&
-                      scanned.length < value.length;
-                    const fits =
-                      !endsAtTruncatedBoundary &&
-                      images.length < MAX_IMAGES &&
-                      imageData.length <= MAX_IMAGE_CHARS &&
-                      imageChars + imageData.length <= MAX_IMAGE_CHARS;
-                    if (fits) {
-                      images.push(imageData);
-                      imageChars += imageData.length;
-                    } else {
-                      truncated = true;
+                  return scanned.replace(
+                    /data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/g,
+                    (imageData: string, offset: number) => {
+                      const endsAtTruncatedBoundary =
+                        offset + imageData.length === scanned.length &&
+                        scanned.length < value.length;
+                      const fits =
+                        !endsAtTruncatedBoundary &&
+                        images.length < MAX_IMAGES &&
+                        imageData.length <= MAX_IMAGE_CHARS &&
+                        imageChars + imageData.length <= MAX_IMAGE_CHARS;
+                      if (fits) {
+                        images.push(imageData);
+                        imageChars += imageData.length;
+                      } else {
+                        truncated = true;
+                      }
+                      return '[Image]';
                     }
-                    return '[Image]';
+                  );
+                },
+              ];
+
+              const [boundedClone] = [
+                (value: unknown, depth = 0): unknown => {
+                  if (value === undefined || value === null) return null;
+                  if (typeof value === 'string') {
+                    return takeText(captureImages(value));
                   }
-                );
-              };
+                  if (typeof value === 'boolean' || typeof value === 'number') {
+                    return value;
+                  }
+                  if (typeof value === 'bigint' || typeof value === 'symbol') {
+                    return takeText(String(value), 256);
+                  }
+                  if (typeof value === 'function') {
+                    return `[Function ${takeText(value.name || 'anonymous', 128)}]`;
+                  }
+                  if (depth >= MAX_DEPTH || remainingEntries <= 0) {
+                    truncated = true;
+                    return '[Truncated]';
+                  }
 
-              const boundedClone = (value: unknown, depth = 0): unknown => {
-                if (value === undefined || value === null) return null;
-                if (typeof value === 'string') {
-                  return takeText(captureImages(value));
-                }
-                if (typeof value === 'boolean' || typeof value === 'number') {
-                  return value;
-                }
-                if (typeof value === 'bigint' || typeof value === 'symbol') {
-                  return takeText(String(value), 256);
-                }
-                if (typeof value === 'function') {
-                  return `[Function ${takeText(value.name || 'anonymous', 128)}]`;
-                }
-                if (depth >= MAX_DEPTH || remainingEntries <= 0) {
-                  truncated = true;
-                  return '[Truncated]';
-                }
+                  const objectValue = value as object;
+                  if (seen.has(objectValue)) return '[Circular]';
+                  seen.add(objectValue);
 
-                const objectValue = value as object;
-                if (seen.has(objectValue)) return '[Circular]';
-                seen.add(objectValue);
-
-                if (Array.isArray(value)) {
-                  const output: unknown[] = [];
-                  const count = Math.min(value.length, remainingEntries);
-                  if (count < value.length) truncated = true;
-                  for (let index = 0; index < count; index += 1) {
-                    remainingEntries -= 1;
-                    try {
-                      output.push(boundedClone(value[index], depth + 1));
-                    } catch {
-                      output.push('[Unreadable]');
+                  if (Array.isArray(value)) {
+                    const output: unknown[] = [];
+                    const count = Math.min(value.length, remainingEntries);
+                    if (count < value.length) truncated = true;
+                    for (let index = 0; index < count; index += 1) {
+                      remainingEntries -= 1;
+                      try {
+                        output.push(boundedClone(value[index], depth + 1));
+                      } catch {
+                        output.push('[Unreadable]');
+                      }
                     }
+                    return output;
+                  }
+
+                  const output: Record<string, unknown> = {};
+                  const record = value as Record<string, unknown>;
+                  let propertyCount = 0;
+                  try {
+                    for (const key in record) {
+                      if (!Object.prototype.hasOwnProperty.call(record, key)) {
+                        continue;
+                      }
+                      if (remainingEntries <= 0 || remainingTextChars <= 0) {
+                        truncated = true;
+                        break;
+                      }
+                      remainingEntries -= 1;
+                      propertyCount += 1;
+                      const safeKey = takeText(key, 256);
+                      if (!safeKey) break;
+                      try {
+                        output[safeKey] = boundedClone(record[key], depth + 1);
+                      } catch {
+                        output[safeKey] = '[Unreadable]';
+                      }
+                    }
+                  } catch {
+                    truncated = true;
+                  }
+                  if (propertyCount === 0) {
+                    return '[Object]';
                   }
                   return output;
-                }
-
-                const output: Record<string, unknown> = {};
-                const record = value as Record<string, unknown>;
-                let propertyCount = 0;
-                try {
-                  for (const key in record) {
-                    if (!Object.prototype.hasOwnProperty.call(record, key)) {
-                      continue;
-                    }
-                    if (remainingEntries <= 0 || remainingTextChars <= 0) {
-                      truncated = true;
-                      break;
-                    }
-                    remainingEntries -= 1;
-                    propertyCount += 1;
-                    const safeKey = takeText(key, 256);
-                    if (!safeKey) break;
-                    try {
-                      output[safeKey] = boundedClone(record[key], depth + 1);
-                    } catch {
-                      output[safeKey] = '[Unreadable]';
-                    }
-                  }
-                } catch {
-                  truncated = true;
-                }
-                if (propertyCount === 0) {
-                  return '[Object]';
-                }
-                return output;
-              };
+                },
+              ];
 
               const boundedResult = boundedClone(raw);
               let serializedResult: string;
