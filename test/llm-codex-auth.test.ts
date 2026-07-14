@@ -282,13 +282,15 @@ describe('Codex auth store', () => {
   });
 
   it('runs the Codex device code flow without persisting tokens', async () => {
+    const pendingResponse = jsonResponse(403, {});
+    const cancelPendingBody = vi.spyOn(pendingResponse.body!, 'cancel');
     const responses = [
       jsonResponse(200, {
         user_code: 'ABCD-EFGH',
         device_auth_id: 'device-1',
         interval: 1,
       }),
-      jsonResponse(403, {}),
+      pendingResponse,
       jsonResponse(200, {
         authorization_code: 'auth-code',
         code_verifier: 'verifier',
@@ -321,6 +323,38 @@ describe('Codex auth store', () => {
       'https://auth.test/api/accounts/deviceauth/token',
       'https://auth.test/oauth/token',
     ]);
+    expect(cancelPendingBody).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the Codex request timeout active while reading the body', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              signal.addEventListener(
+                'abort',
+                () => {
+                  const error = new Error('aborted');
+                  error.name = 'AbortError';
+                  controller.error(error);
+                },
+                { once: true }
+              );
+            },
+          }),
+          { status: 200 }
+        );
+      }
+    );
+
+    await expect(
+      refreshCodexOAuth('access', 'refresh', {
+        fetchImplementation: fetchMock as typeof fetch,
+        timeoutMs: 20,
+      })
+    ).rejects.toMatchObject({ code: 'codex_refresh_invalid_json' });
   });
 
   it('uses CodexAuthError for missing refresh tokens before network calls', async () => {

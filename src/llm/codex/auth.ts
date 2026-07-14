@@ -484,23 +484,37 @@ export const importCodexCliTokens = async (
   }
 };
 
-const fetchWithTimeout = async (
+const fetchWithTimeout = async <T>(
   url: string,
   init: RequestInit,
-  options: FetchOptions = {}
-): Promise<Response> => {
+  options: FetchOptions,
+  consume: (response: Response) => Promise<T>
+): Promise<T> => {
   const fetchImplementation = options.fetchImplementation ?? fetch;
   const timeoutMs = options.timeoutMs ?? 20_000;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const upstreamSignal = init.signal;
+  const onUpstreamAbort = () => controller.abort();
+  if (upstreamSignal?.aborted) {
+    controller.abort();
+  } else {
+    upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
+  }
+  let response: Response | null = null;
   try {
-    return await fetchImplementation(url, {
+    response = await fetchImplementation(url, {
       ...init,
-      signal: init.signal ?? controller.signal,
+      signal: controller.signal,
       redirect: 'error',
     });
+    return await consume(response);
   } finally {
+    if (response?.body && !response.bodyUsed) {
+      await response.body.cancel().catch(() => undefined);
+    }
     clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
   }
 };
 
@@ -582,7 +596,7 @@ export const refreshCodexOAuth = async (
     'Codex auth is missing refresh_token. Run `browser-use auth codex login` to re-authenticate.'
   );
 
-  const response = await fetchWithTimeout(
+  return fetchWithTimeout(
     options.tokenUrl ?? CODEX_OAUTH_TOKEN_URL,
     {
       method: 'POST',
@@ -596,40 +610,41 @@ export const refreshCodexOAuth = async (
         client_id: options.clientId ?? CODEX_OAUTH_CLIENT_ID,
       }),
     },
-    options
+    options,
+    async (response) => {
+      if (!response.ok) {
+        const parsed = await parseErrorPayload(response);
+        throw new CodexAuthError(
+          parsed.message,
+          parsed.code,
+          parsed.reloginRequired
+        );
+      }
+
+      const payload = await readCodexAuthJson(
+        response,
+        'codex_refresh_invalid_json',
+        'Codex token refresh returned invalid or oversized JSON.',
+        true
+      );
+      const refreshedAccessToken = requireTokenString(
+        payload?.access_token,
+        'codex_refresh_missing_access_token',
+        'Codex token refresh response was missing access_token.'
+      );
+      const nextRefreshToken =
+        typeof payload?.refresh_token === 'string' &&
+        payload.refresh_token.trim()
+          ? payload.refresh_token.trim()
+          : cleanRefreshToken;
+
+      return {
+        access_token: refreshedAccessToken,
+        refresh_token: nextRefreshToken,
+        last_refresh: nowIso(),
+      };
+    }
   );
-
-  if (!response.ok) {
-    const parsed = await parseErrorPayload(response);
-    throw new CodexAuthError(
-      parsed.message,
-      parsed.code,
-      parsed.reloginRequired
-    );
-  }
-
-  const payload = await readCodexAuthJson(
-    response,
-    'codex_refresh_invalid_json',
-    'Codex token refresh returned invalid or oversized JSON.',
-    true
-  );
-
-  const refreshedAccessToken = requireTokenString(
-    payload?.access_token,
-    'codex_refresh_missing_access_token',
-    'Codex token refresh response was missing access_token.'
-  );
-  const nextRefreshToken =
-    typeof payload?.refresh_token === 'string' && payload.refresh_token.trim()
-      ? payload.refresh_token.trim()
-      : cleanRefreshToken;
-
-  return {
-    access_token: refreshedAccessToken,
-    refresh_token: nextRefreshToken,
-    last_refresh: nowIso(),
-  };
 };
 
 const resolveCodexBaseURL = (baseURL?: string | null) =>
@@ -796,27 +811,27 @@ export const loginCodexDeviceCode = async (
   const now = options.now ?? Date.now;
   const maxWaitMs = options.maxWaitMs ?? 15 * 60 * 1000;
 
-  const userCodeResponse = await fetchWithTimeout(
+  const deviceData = await fetchWithTimeout(
     `${issuer}/api/accounts/deviceauth/usercode`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: clientId }),
     },
-    options
-  );
-
-  if (!userCodeResponse.ok) {
-    throw new CodexAuthError(
-      `Device code request returned status ${userCodeResponse.status}.`,
-      'device_code_request_error'
-    );
-  }
-
-  const deviceData = await readCodexAuthJson(
-    userCodeResponse,
-    'device_code_invalid_response',
-    'Device code request returned invalid or oversized JSON.'
+    options,
+    async (response) => {
+      if (!response.ok) {
+        throw new CodexAuthError(
+          `Device code request returned status ${response.status}.`,
+          'device_code_request_error'
+        );
+      }
+      return readCodexAuthJson(
+        response,
+        'device_code_invalid_response',
+        'Device code request returned invalid or oversized JSON.'
+      );
+    }
   );
   const userCode = deviceData?.user_code;
   const deviceAuthId = deviceData?.device_auth_id;
@@ -854,7 +869,7 @@ export const loginCodexDeviceCode = async (
 
   while (now() - start < maxWaitMs) {
     await sleepImpl(pollIntervalMs);
-    const pollResponse = await fetchWithTimeout(
+    const pollResult = await fetchWithTimeout(
       `${issuer}/api/accounts/deviceauth/token`,
       {
         method: 'POST',
@@ -864,15 +879,22 @@ export const loginCodexDeviceCode = async (
           user_code: userCode,
         }),
       },
-      options
+      options,
+      async (response) => ({
+        ok: response.ok,
+        status: response.status,
+        payload: response.ok
+          ? await readCodexAuthJson(
+              response,
+              'device_code_poll_invalid_response',
+              'Device auth polling returned invalid or oversized JSON.'
+            )
+          : null,
+      })
     );
 
-    if (pollResponse.ok) {
-      const payload = await readCodexAuthJson(
-        pollResponse,
-        'device_code_poll_invalid_response',
-        'Device auth polling returned invalid or oversized JSON.'
-      );
+    if (pollResult.ok) {
+      const payload = pollResult.payload;
       authorizationCode =
         typeof payload?.authorization_code === 'string'
           ? payload.authorization_code
@@ -883,11 +905,11 @@ export const loginCodexDeviceCode = async (
           : null;
       break;
     }
-    if (pollResponse.status === 403 || pollResponse.status === 404) {
+    if (pollResult.status === 403 || pollResult.status === 404) {
       continue;
     }
     throw new CodexAuthError(
-      `Device auth polling returned status ${pollResponse.status}.`,
+      `Device auth polling returned status ${pollResult.status}.`,
       'device_code_poll_error'
     );
   }
@@ -900,7 +922,7 @@ export const loginCodexDeviceCode = async (
     );
   }
 
-  const tokenResponse = await fetchWithTimeout(
+  return fetchWithTimeout(
     options.issuer ? `${issuer}/oauth/token` : CODEX_OAUTH_TOKEN_URL,
     {
       method: 'POST',
@@ -915,45 +937,46 @@ export const loginCodexDeviceCode = async (
         code_verifier: codeVerifier,
       }),
     },
-    options
-  );
+    options,
+    async (response) => {
+      if (!response.ok) {
+        throw new CodexAuthError(
+          `Token exchange returned status ${response.status}.`,
+          'token_exchange_error',
+          response.status === 401 || response.status === 403
+        );
+      }
 
-  if (!tokenResponse.ok) {
-    throw new CodexAuthError(
-      `Token exchange returned status ${tokenResponse.status}.`,
-      'token_exchange_error',
-      tokenResponse.status === 401 || tokenResponse.status === 403
-    );
-  }
+      const tokenPayload = await readCodexAuthJson(
+        response,
+        'token_exchange_invalid_response',
+        'Token exchange returned invalid or oversized JSON.',
+        true
+      );
+      const accessToken = requireTokenString(
+        tokenPayload?.access_token,
+        'token_exchange_no_access_token',
+        'Token exchange did not return an access_token.'
+      );
+      const refreshToken = requireTokenString(
+        tokenPayload?.refresh_token,
+        'token_exchange_no_refresh_token',
+        'Token exchange did not return a refresh_token.'
+      );
 
-  const tokenPayload = await readCodexAuthJson(
-    tokenResponse,
-    'token_exchange_invalid_response',
-    'Token exchange returned invalid or oversized JSON.',
-    true
+      return {
+        tokens: {
+          ...tokenPayload,
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        },
+        base_url: resolveCodexBaseURL(),
+        last_refresh: nowIso(),
+        auth_mode: 'chatgpt' as const,
+        source: 'device-code' as const,
+      };
+    }
   );
-  const accessToken = requireTokenString(
-    tokenPayload?.access_token,
-    'token_exchange_no_access_token',
-    'Token exchange did not return an access_token.'
-  );
-  const refreshToken = requireTokenString(
-    tokenPayload?.refresh_token,
-    'token_exchange_no_refresh_token',
-    'Token exchange did not return a refresh_token.'
-  );
-
-  return {
-    tokens: {
-      ...tokenPayload,
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    },
-    base_url: resolveCodexBaseURL(),
-    last_refresh: nowIso(),
-    auth_mode: 'chatgpt',
-    source: 'device-code',
-  };
 };
 
 export const loginAndSaveCodexDeviceCode = async (
