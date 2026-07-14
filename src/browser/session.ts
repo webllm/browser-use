@@ -1983,6 +1983,9 @@ export class BrowserSession {
       await context.setExtraHTTPHeaders({});
     }
 
+    const scopedHeaderNames = new Set(
+      Object.keys(headers).map((name) => name.toLowerCase())
+    );
     const routeHandler = async (route: any) => {
       const continueRoute = async (overrides?: {
         headers?: Record<string, string>;
@@ -2006,6 +2009,8 @@ export class BrowserSession {
           : typeof request?.url === 'string'
             ? request.url
             : '';
+      const requestHeaders =
+        typeof request?.headers === 'function' ? request.headers() : null;
 
       let denialReason: string | null = 'invalid_url';
       if (url) {
@@ -2031,12 +2036,28 @@ export class BrowserSession {
           await route.abort('blockedbyclient');
           return;
         }
-        await continueRoute();
+        if (scopedHeaderNames.size === 0) {
+          await continueRoute();
+          return;
+        }
+        if (!requestHeaders || typeof requestHeaders !== 'object') {
+          if (typeof route?.abort === 'function') {
+            await route.abort('blockedbyclient');
+            return;
+          }
+          throw new BrowserError(
+            'Cannot safely strip scoped headers from a disallowed request.'
+          );
+        }
+        const strippedHeaders = Object.fromEntries(
+          Object.entries(requestHeaders).filter(
+            ([name]) => !scopedHeaderNames.has(name.toLowerCase())
+          )
+        );
+        await continueRoute({ headers: strippedHeaders });
         return;
       }
 
-      const requestHeaders =
-        typeof request?.headers === 'function' ? request.headers() : {};
       await continueRoute({
         headers: {
           ...(requestHeaders ?? {}),

@@ -693,13 +693,30 @@ esac
     await routeHandler!({
       request: () => ({
         url: () => 'https://evil.test/api',
-        headers: () => ({ Accept: 'application/json' }),
+        headers: () => ({
+          Accept: 'application/json',
+          authorization: 'Bearer secret',
+        }),
         isNavigationRequest: () => false,
       }),
       fallback: blockedFallback,
     });
 
-    expect(blockedFallback).toHaveBeenCalledWith(undefined);
+    expect(blockedFallback).toHaveBeenCalledWith({
+      headers: { Accept: 'application/json' },
+    });
+
+    const unreadableHeadersAbort = vi.fn(async () => {});
+    await routeHandler!({
+      request: () => ({
+        url: () => 'https://evil.test/image.png',
+        isNavigationRequest: () => false,
+      }),
+      fallback: vi.fn(async () => {}),
+      abort: unreadableHeadersAbort,
+    });
+
+    expect(unreadableHeadersAbort).toHaveBeenCalledWith('blockedbyclient');
 
     const blockedNavigationFallback = vi.fn(async () => {});
     const blockedNavigationAbort = vi.fn(async () => {});
