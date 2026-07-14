@@ -169,6 +169,49 @@ describe('ChatCodex', () => {
     });
   });
 
+  it('bounds retained Codex stream data and closes oversized streams', async () => {
+    let streamClosed = false;
+    async function* oversizedStream() {
+      try {
+        yield {
+          type: 'response.output_text.delta',
+          delta: 'x'.repeat(8 * 1024 * 1024 + 1),
+        };
+        yield { type: 'response.output_text.delta', delta: 'unreachable' };
+      } finally {
+        streamClosed = true;
+      }
+    }
+    responsesCreateMock.mockResolvedValue(oversizedStream());
+    const llm = new ChatCodex({ apiKey: 'opaque-token' });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      {
+        name: 'ModelProviderError',
+        model: 'gpt-5.5',
+        message: 'Codex stream exceeded 8388608 buffered bytes.',
+      }
+    );
+    expect(streamClosed).toBe(true);
+  });
+
+  it('bounds Codex stream output item counts', async () => {
+    async function* oversizedStream() {
+      for (let index = 0; index <= 10_000; index += 1) {
+        yield {
+          type: 'response.output_item.done',
+          item: { index },
+        };
+      }
+    }
+    responsesCreateMock.mockResolvedValue(oversizedStream());
+    const llm = new ChatCodex({ apiKey: 'opaque-token' });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toThrow(
+      'Codex stream exceeded 10000 output items.'
+    );
+  });
+
   it('moves system messages into Codex backend instructions', async () => {
     const llm = new ChatCodex({ apiKey: 'opaque-token' });
 

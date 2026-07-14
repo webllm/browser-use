@@ -52,6 +52,9 @@ interface CodexClientConfig {
 }
 
 const DEFAULT_CODEX_INSTRUCTIONS = 'You are a helpful assistant.';
+const MAX_CODEX_STREAM_EVENTS = 100_000;
+const MAX_CODEX_STREAM_OUTPUT_ITEMS = 10_000;
+const MAX_CODEX_STREAM_BUFFER_BYTES = 8 * 1024 * 1024;
 
 const isCodexBackendURL = (baseURL: string): boolean => {
   try {
@@ -248,18 +251,59 @@ export class ChatCodex implements BaseChatModel {
     let terminalResponse: any = null;
     const outputItems: any[] = [];
     const textDeltas: string[] = [];
+    let eventCount = 0;
+    let bufferedBytes = 0;
+
+    const addBufferedBytes = (value: unknown, label: string): void => {
+      let serialized: string;
+      try {
+        serialized =
+          typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+      } catch {
+        throw new ModelProviderError(
+          `Codex stream returned an invalid ${label}.`,
+          502,
+          this.model
+        );
+      }
+      bufferedBytes += Buffer.byteLength(serialized, 'utf8');
+      if (bufferedBytes > MAX_CODEX_STREAM_BUFFER_BYTES) {
+        throw new ModelProviderError(
+          `Codex stream exceeded ${MAX_CODEX_STREAM_BUFFER_BYTES} buffered bytes.`,
+          502,
+          this.model
+        );
+      }
+    };
 
     for await (const event of responseOrStream) {
+      eventCount += 1;
+      if (eventCount > MAX_CODEX_STREAM_EVENTS) {
+        throw new ModelProviderError(
+          `Codex stream exceeded ${MAX_CODEX_STREAM_EVENTS} events.`,
+          502,
+          this.model
+        );
+      }
       const eventType = event?.type;
 
       if (
         eventType === 'response.output_text.delta' &&
         typeof event?.delta === 'string'
       ) {
+        addBufferedBytes(event.delta, 'text delta');
         textDeltas.push(event.delta);
       }
 
       if (eventType === 'response.output_item.done' && event?.item) {
+        if (outputItems.length >= MAX_CODEX_STREAM_OUTPUT_ITEMS) {
+          throw new ModelProviderError(
+            `Codex stream exceeded ${MAX_CODEX_STREAM_OUTPUT_ITEMS} output items.`,
+            502,
+            this.model
+          );
+        }
+        addBufferedBytes(event.item, 'output item');
         outputItems.push(event.item);
       }
 
@@ -268,6 +312,7 @@ export class ChatCodex implements BaseChatModel {
         eventType === 'response.incomplete' ||
         eventType === 'response.failed'
       ) {
+        addBufferedBytes(event.response ?? null, 'terminal response');
         terminalResponse = event.response ?? null;
       }
     }
