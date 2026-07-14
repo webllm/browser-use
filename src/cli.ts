@@ -47,6 +47,11 @@ import { get_tunnel_manager } from './skill-cli/tunnel.js';
 import { DeviceAuthClient, save_cloud_api_token } from './sync/auth.js';
 import { isMainModule } from './entrypoint.js';
 import { getCliUsage } from './cli-usage.js';
+import {
+  ensurePrivateDirectory as ensurePrivateDirectorySync,
+  readBoundedPrivateFile,
+  writePrivateFileAtomic,
+} from './private-state.js';
 import dotenv from 'dotenv';
 
 export { getCliUsage } from './cli-usage.js';
@@ -126,6 +131,7 @@ export interface ParsedCliArgs {
 }
 
 export const CLI_HISTORY_LIMIT = 100;
+export const MAX_CLI_HISTORY_FILE_BYTES = 1024 * 1024;
 
 const INTERACTIVE_EXIT_COMMANDS = new Set(['exit', 'quit', ':q', '/q', '.q']);
 
@@ -412,27 +418,11 @@ export const getCliHistoryPath = (configDir?: string | null): string => {
   return path.join(baseDir, 'command_history.json');
 };
 
-const chmodPrivatePath = async (targetPath: string, mode: number) => {
-  if (process.platform === 'win32') {
-    return;
-  }
-  try {
-    await fs.chmod(targetPath, mode);
-  } catch {
-    /* best effort */
-  }
-};
-
-const ensurePrivateDirectory = async (dirPath: string) => {
-  await fs.mkdir(dirPath, { recursive: true, mode: 0o700 });
-  await chmodPrivatePath(dirPath, 0o700);
-};
-
 export const loadCliHistory = async (
   historyPath = getCliHistoryPath()
 ): Promise<string[]> => {
   try {
-    const raw = await fs.readFile(historyPath, 'utf-8');
+    const raw = readBoundedPrivateFile(historyPath, MAX_CLI_HISTORY_FILE_BYTES);
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
       return [];
@@ -452,12 +442,12 @@ export const saveCliHistory = async (
   historyPath = getCliHistoryPath()
 ): Promise<void> => {
   const normalized = normalizeCliHistory(history);
-  await ensurePrivateDirectory(path.dirname(historyPath));
-  await fs.writeFile(historyPath, JSON.stringify(normalized, null, 2), {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-  await chmodPrivatePath(historyPath, 0o600);
+  const serialized = JSON.stringify(normalized, null, 2);
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_CLI_HISTORY_FILE_BYTES) {
+    throw new Error(`CLI history exceeds ${MAX_CLI_HISTORY_FILE_BYTES} bytes`);
+  }
+  ensurePrivateDirectorySync(path.dirname(historyPath));
+  writePrivateFileAtomic(historyPath, serialized);
 };
 
 export const shouldStartInteractiveMode = (

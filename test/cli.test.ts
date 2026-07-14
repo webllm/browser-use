@@ -1,9 +1,10 @@
-import { promises as fs } from 'node:fs';
+import syncFs, { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLI_HISTORY_LIMIT,
+  MAX_CLI_HISTORY_FILE_BYTES,
   buildBrowserProfileFromCliArgs,
   extractPrefixedSubcommand,
   getCliHistoryPath,
@@ -437,6 +438,43 @@ describe('CLI interactive helpers', () => {
 
     const loaded = await loadCliHistory(historyPath);
     expect(loaded).toEqual([]);
+  });
+
+  it('returns empty history for oversized and non-regular history files', async () => {
+    const dir = await makeTempDir();
+    const historyPath = path.join(dir, 'command_history.json');
+    await fs.writeFile(historyPath, '[]', 'utf8');
+    await fs.truncate(historyPath, MAX_CLI_HISTORY_FILE_BYTES + 1);
+
+    await expect(loadCliHistory(historyPath)).resolves.toEqual([]);
+
+    await fs.rm(historyPath);
+    await fs.mkdir(historyPath);
+    await expect(loadCliHistory(historyPath)).resolves.toEqual([]);
+  });
+
+  it('preserves CLI history when atomic replacement fails', async () => {
+    const dir = await makeTempDir();
+    const historyPath = path.join(dir, 'command_history.json');
+    await saveCliHistory(['old task'], historyPath);
+    const rename = vi.spyOn(syncFs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('injected CLI history replacement failure');
+    });
+
+    try {
+      await expect(saveCliHistory(['new task'], historyPath)).rejects.toThrow(
+        'injected CLI history replacement failure'
+      );
+    } finally {
+      rename.mockRestore();
+    }
+
+    expect(JSON.parse(await fs.readFile(historyPath, 'utf8'))).toEqual([
+      'old task',
+    ]);
+    expect(
+      (await fs.readdir(dir)).filter((entry) => entry.endsWith('.tmp'))
+    ).toEqual([]);
   });
 
   it('detects interactive control commands', () => {
