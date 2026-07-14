@@ -21,6 +21,43 @@ import { match_url_with_domain_pattern } from '../../utils.js';
 import { createLogger } from '../../logging-config.js';
 
 const logger = createLogger('browser_use.agent.message_manager');
+const MAX_ACTION_RESULT_CONTENT_CHARS = 60_000;
+const MAX_ACTION_RESULTS_PER_STEP = 1_000;
+const MAX_READ_STATE_IMAGES = 10;
+const MAX_READ_STATE_IMAGE_CANDIDATES = 100;
+const MAX_READ_STATE_IMAGE_BASE64_CHARS = 20 * 1024 * 1024;
+const RESULT_TRUNCATION_NOTICE = '... [Content truncated at 60k characters]';
+
+const createBoundedTextAccumulator = (maxChars: number) => {
+  const chunks: string[] = [];
+  let length = 0;
+  let truncated = false;
+  return {
+    append(value: string) {
+      if (!value) return;
+      const remaining = maxChars - length;
+      if (remaining <= 0) {
+        truncated = true;
+        return;
+      }
+      const bounded = value.slice(0, remaining);
+      chunks.push(bounded);
+      length += bounded.length;
+      if (bounded.length < value.length) truncated = true;
+    },
+    markTruncated() {
+      truncated = true;
+    },
+    finish() {
+      const value = chunks.join('');
+      if (!truncated) return value;
+      if (maxChars <= RESULT_TRUNCATION_NOTICE.length) {
+        return RESULT_TRUNCATION_NOTICE.slice(0, maxChars);
+      }
+      return `${value.slice(0, maxChars - RESULT_TRUNCATION_NOTICE.length - 1)}\n${RESULT_TRUNCATION_NOTICE}`;
+    },
+  };
+};
 
 export class MessageManager {
   private task: string;
@@ -155,53 +192,95 @@ export class MessageManager {
     this.state.read_state_description = '';
     this.state.read_state_images = [];
 
-    let actionResults = '';
+    const readState = createBoundedTextAccumulator(
+      MAX_ACTION_RESULT_CONTENT_CHARS
+    );
+    const actionResults = createBoundedTextAccumulator(
+      MAX_ACTION_RESULT_CONTENT_CHARS - 'Result\n'.length
+    );
     let readStateIndex = 0;
-    results.forEach((action) => {
-      if (
-        action.include_extracted_content_only_once &&
-        action.extracted_content
-      ) {
-        this.state.read_state_description += `<read_state_${readStateIndex}>\n${action.extracted_content}\n</read_state_${readStateIndex}>\n`;
+    let readStateImageChars = 0;
+    let inspectedReadStateImages = 0;
+    const boundedResults = results.slice(0, MAX_ACTION_RESULTS_PER_STEP);
+    if (boundedResults.length < results.length) {
+      readState.markTruncated();
+      actionResults.markTruncated();
+    }
+    boundedResults.forEach((action) => {
+      if (!action || typeof action !== 'object') return;
+      const extractedContent =
+        typeof action.extracted_content === 'string'
+          ? action.extracted_content
+          : '';
+      const longTermMemory =
+        typeof action.long_term_memory === 'string'
+          ? action.long_term_memory
+          : '';
+      if (action.include_extracted_content_only_once && extractedContent) {
+        readState.append(`<read_state_${readStateIndex}>\n`);
+        readState.append(extractedContent);
+        readState.append(`\n</read_state_${readStateIndex}>\n`);
         readStateIndex += 1;
       }
       if (Array.isArray(action.images) && action.images.length > 0) {
-        this.state.read_state_images.push(...action.images);
+        for (const image of action.images) {
+          if (
+            this.state.read_state_images.length >= MAX_READ_STATE_IMAGES ||
+            inspectedReadStateImages >= MAX_READ_STATE_IMAGE_CANDIDATES
+          ) {
+            break;
+          }
+          inspectedReadStateImages += 1;
+          if (!image || typeof image !== 'object') continue;
+          let name = 'unknown';
+          let data = '';
+          try {
+            name = typeof image.name === 'string' ? image.name : 'unknown';
+            data = typeof image.data === 'string' ? image.data : '';
+          } catch {
+            continue;
+          }
+          if (
+            !data ||
+            readStateImageChars + data.length >
+              MAX_READ_STATE_IMAGE_BASE64_CHARS
+          ) {
+            continue;
+          }
+          readStateImageChars += data.length;
+          this.state.read_state_images.push({
+            name: name.slice(0, 512),
+            data,
+          });
+        }
       }
 
-      if (action.long_term_memory) {
-        actionResults += `${action.long_term_memory}\n`;
+      if (longTermMemory) {
+        actionResults.append(longTermMemory);
+        actionResults.append('\n');
       } else if (
-        action.extracted_content &&
+        extractedContent &&
         !action.include_extracted_content_only_once
       ) {
-        actionResults += `${action.extracted_content}\n`;
+        actionResults.append(extractedContent);
+        actionResults.append('\n');
       }
 
-      if (action.error) {
+      if (typeof action.error === 'string' && action.error) {
         const err =
           action.error.length > 200
             ? `${action.error.slice(0, 100)}......${action.error.slice(-100)}`
             : action.error;
-        actionResults += `${err}\n`;
+        actionResults.append(`${err}\n`);
       }
     });
 
-    const MAX_CONTENT_SIZE = 60000;
-    if (this.state.read_state_description.length > MAX_CONTENT_SIZE) {
-      this.state.read_state_description = `${this.state.read_state_description.slice(0, MAX_CONTENT_SIZE)}\n... [Content truncated at 60k characters]`;
-    }
-    this.state.read_state_description =
-      this.state.read_state_description.trim();
+    this.state.read_state_description = readState.finish().trim();
 
-    let normalizedActionResults = actionResults
-      ? `Result\n${actionResults}`.trim()
+    const renderedActionResults = actionResults.finish();
+    const normalizedActionResults = renderedActionResults
+      ? `Result\n${renderedActionResults}`.trim()
       : null;
-    if (normalizedActionResults) {
-      if (normalizedActionResults.length > MAX_CONTENT_SIZE) {
-        normalizedActionResults = `${normalizedActionResults.slice(0, MAX_CONTENT_SIZE)}\n... [Content truncated at 60k characters]`;
-      }
-    }
 
     if (!model_output) {
       if (stepNumber != null) {

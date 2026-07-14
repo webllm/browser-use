@@ -1938,6 +1938,52 @@ describe('Agent constructor browser session alignment', () => {
     await agent.close();
   });
 
+  it('bounds action result aggregation before building history and read state', async () => {
+    const agent = new Agent({
+      task: 'Bound large action results',
+      llm: createLlm(),
+    });
+    const messageManager = (agent as any)._message_manager;
+    const largeContent = 'x'.repeat(2 * 1024 * 1024);
+    const sharedImageData = 'a'.repeat(3 * 1024 * 1024);
+
+    messageManager.prepare_step_state(
+      createBrowserStateSummary(),
+      null,
+      [
+        new ActionResult({
+          include_extracted_content_only_once: true,
+          extracted_content: largeContent,
+          images: Array.from({ length: 20 }, (_, index) => ({
+            name: `image-${index}.png`,
+            data: sharedImageData,
+          })),
+        }),
+        new ActionResult({ long_term_memory: largeContent }),
+      ],
+      new AgentStepInfo(0, 10)
+    );
+
+    const state = (messageManager as any).state;
+    expect(state.read_state_description.length).toBeLessThanOrEqual(60_000);
+    expect(state.read_state_description).toContain('Content truncated');
+    expect(
+      state.agent_history_items.at(-1).action_results.length
+    ).toBeLessThanOrEqual(60_000);
+    expect(state.agent_history_items.at(-1).action_results).toContain(
+      'Content truncated'
+    );
+    expect(state.read_state_images).toHaveLength(6);
+    expect(
+      state.read_state_images.reduce(
+        (total: number, image: { data: string }) => total + image.data.length,
+        0
+      )
+    ).toBeLessThanOrEqual(20 * 1024 * 1024);
+
+    await agent.close();
+  });
+
   it('uses use_vision=auto to include screenshot only when requested by action metadata', async () => {
     const agent = new Agent({
       task: 'Auto screenshot inclusion',
