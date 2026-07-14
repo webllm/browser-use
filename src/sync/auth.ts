@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import axios, { type AxiosInstance } from 'axios';
 import { CONFIG } from '../config.js';
 import { createLogger } from '../logging-config.js';
 import { uuid7str } from '../utils.js';
 
 export const TEMP_USER_ID = '99999999-9999-9999-9999-999999999999';
+export const MAX_CLOUD_AUTH_FILE_BYTES = 1024 * 1024;
+export const MAX_DEVICE_ID_FILE_BYTES = 255;
+const PRIVATE_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
 const logger = createLogger('browser_use.sync.auth');
 
@@ -31,25 +35,114 @@ const ensureDir = () => {
   }
 };
 
-const writePrivateFile = (filePath: string, contents: string) => {
-  fs.writeFileSync(filePath, contents, { encoding: 'utf-8', mode: 0o600 });
-  if (process.platform !== 'win32') {
-    try {
-      fs.chmodSync(filePath, 0o600);
-    } catch {
-      /* noop */
+const readBoundedPrivateFile = (filePath: string, maxBytes: number) => {
+  const pathStats = fs.lstatSync(filePath);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new Error(`Private state path is not a regular file: ${filePath}`);
+  }
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
+  );
+  try {
+    const stats = fs.fstatSync(descriptor);
+    if (!stats.isFile()) {
+      throw new Error(`Private state path is not a regular file: ${filePath}`);
     }
+    if (stats.size > maxBytes) {
+      throw new Error(
+        `Private state file exceeds ${maxBytes} bytes: ${filePath}`
+      );
+    }
+    if (process.platform !== 'win32') {
+      fs.fchmodSync(descriptor, 0o600);
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= maxBytes) {
+      const remaining = maxBytes + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(PRIVATE_FILE_READ_CHUNK_BYTES, remaining)
+      );
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > maxBytes) {
+        throw new Error(
+          `Private state file exceeds ${maxBytes} bytes: ${filePath}`
+        );
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
+const writeCompletedPrivateTemp = (filePath: string, contents: string) => {
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const descriptor = fs.openSync(
+    tempPath,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+    0o600
+  );
+  let completed = false;
+  try {
+    fs.writeFileSync(descriptor, contents, 'utf8');
+    if (process.platform !== 'win32') {
+      fs.fchmodSync(descriptor, 0o600);
+    }
+    fs.fsyncSync(descriptor);
+    completed = true;
+    return tempPath;
+  } finally {
+    fs.closeSync(descriptor);
+    if (!completed) {
+      fs.rmSync(tempPath, { force: true });
+    }
+  }
+};
+
+const writePrivateFileAtomic = (filePath: string, contents: string) => {
+  const tempPath = writeCompletedPrivateTemp(filePath, contents);
+  try {
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
+};
+
+const writePrivateFileExclusive = (filePath: string, contents: string) => {
+  const tempPath = writeCompletedPrivateTemp(filePath, contents);
+  try {
+    fs.linkSync(tempPath, filePath);
+  } finally {
+    fs.rmSync(tempPath, { force: true });
   }
 };
 
 const loadAuthConfig = (): CloudAuthConfigData => {
   try {
-    const contents = fs.readFileSync(CLOUD_AUTH_PATH(), 'utf-8');
-    const parsed = JSON.parse(contents);
+    const contents = readBoundedPrivateFile(
+      CLOUD_AUTH_PATH(),
+      MAX_CLOUD_AUTH_FILE_BYTES
+    );
+    const parsed: unknown = JSON.parse(contents);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Cloud auth state must contain a JSON object');
+    }
+    const state = parsed as Record<string, unknown>;
     return {
-      api_token: parsed.api_token ?? null,
-      user_id: parsed.user_id ?? null,
-      authorized_at: parsed.authorized_at ?? null,
+      api_token: typeof state.api_token === 'string' ? state.api_token : null,
+      user_id: typeof state.user_id === 'string' ? state.user_id : null,
+      authorized_at:
+        typeof state.authorized_at === 'string' ? state.authorized_at : null,
     };
   } catch {
     return { api_token: null, user_id: null, authorized_at: null };
@@ -58,7 +151,13 @@ const loadAuthConfig = (): CloudAuthConfigData => {
 
 const saveAuthConfig = (config: CloudAuthConfigData) => {
   ensureDir();
-  writePrivateFile(CLOUD_AUTH_PATH(), JSON.stringify(config, null, 2));
+  const serialized = JSON.stringify(config, null, 2);
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_CLOUD_AUTH_FILE_BYTES) {
+    throw new Error(
+      `Cloud auth state exceeds ${MAX_CLOUD_AUTH_FILE_BYTES} bytes`
+    );
+  }
+  writePrivateFileAtomic(CLOUD_AUTH_PATH(), serialized);
 };
 
 export const load_cloud_auth_config = (): CloudAuthConfigData =>
@@ -83,8 +182,11 @@ export const save_cloud_api_token = (
 const getOrCreateDeviceId = () => {
   ensureDir();
   try {
-    const existing = fs.readFileSync(DEVICE_ID_PATH(), 'utf-8').trim();
-    if (existing) {
+    const existing = readBoundedPrivateFile(
+      DEVICE_ID_PATH(),
+      MAX_DEVICE_ID_FILE_BYTES
+    ).trim();
+    if (existing && /^[\x21-\x7e]+$/.test(existing)) {
       return existing;
     }
   } catch {
@@ -92,7 +194,26 @@ const getOrCreateDeviceId = () => {
   }
 
   const deviceId = uuid7str();
-  writePrivateFile(DEVICE_ID_PATH(), deviceId);
+  try {
+    writePrivateFileExclusive(DEVICE_ID_PATH(), deviceId);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      try {
+        const concurrentId = readBoundedPrivateFile(
+          DEVICE_ID_PATH(),
+          MAX_DEVICE_ID_FILE_BYTES
+        ).trim();
+        if (concurrentId && /^[\x21-\x7e]+$/.test(concurrentId)) {
+          return concurrentId;
+        }
+      } catch {
+        /* replace invalid state below */
+      }
+      writePrivateFileAtomic(DEVICE_ID_PATH(), deviceId);
+    } else {
+      throw error;
+    }
+  }
   return deviceId;
 };
 
