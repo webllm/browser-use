@@ -3,7 +3,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
@@ -517,45 +516,63 @@ const extractDirectModeArgs = (argv: string[]) => {
   };
 };
 
-const getFreePort = async () =>
-  await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        server.close(() => reject(new Error('Failed to allocate local port')));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
+const MAX_DEVTOOLS_ACTIVE_PORT_BYTES = 4 * 1024;
 
-const waitForLocalCdpEndpoint = async (port: number, timeoutMs = 15000) => {
+const readDevToolsActivePort = (activePortPath: string) => {
+  try {
+    const stats = fs.lstatSync(activePortPath);
+    if (!stats.isFile() || stats.size > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+      return null;
+    }
+    const raw = fs.readFileSync(activePortPath, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+      return null;
+    }
+    const [portText, browserPath] = raw.split(/\r?\n/, 2);
+    if (!/^\d+$/.test(portText ?? '')) {
+      return null;
+    }
+    const port = Number(portText);
+    if (
+      !Number.isSafeInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      !/^\/devtools\/browser\/[^/\s]+$/.test(browserPath ?? '')
+    ) {
+      return null;
+    }
+    return { port, browserPath };
+  } catch {
+    return null;
+  }
+};
+
+const waitForLocalCdpEndpoint = async (
+  activePortPath: string,
+  timeoutMs = 15000
+) => {
   const deadline = Date.now() + timeoutMs;
-  const endpoint = `http://127.0.0.1:${port}`;
 
   while (Date.now() < deadline) {
-    const webSocketUrl = await discoverLocalCdpWebSocketUrl({
-      port,
-      timeoutMs: Math.min(1_000, Math.max(1, deadline - Date.now())),
-    });
-    if (webSocketUrl) {
-      return endpoint;
+    const activePort = readDevToolsActivePort(activePortPath);
+    if (activePort) {
+      const webSocketUrl = await discoverLocalCdpWebSocketUrl({
+        port: activePort.port,
+        timeoutMs: Math.min(1_000, Math.max(1, deadline - Date.now())),
+      });
+      if (
+        webSocketUrl &&
+        new URL(webSocketUrl).pathname === activePort.browserPath
+      ) {
+        return `http://127.0.0.1:${activePort.port}`;
+      }
     }
 
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   throw new Error(
-    `Timed out waiting for local Chrome debugging endpoint on port ${port}`
+    `Timed out waiting for local Chrome debugging endpoint at ${activePortPath}`
   );
 };
 
@@ -659,9 +676,8 @@ export const defaultLocalLauncher = async (options: {
   }
   const executablePath = browserExecutable.executable_path;
 
-  const reusingUserDataDir =
-    options.state.user_data_dir &&
-    options.state.user_data_dir.trim().length > 0;
+  const savedUserDataDir = options.state.user_data_dir?.trim() ?? '';
+  const reusingUserDataDir = savedUserDataDir.length > 0;
   if (
     browserExecutable.source === 'playwright_chromium' &&
     reusingUserDataDir
@@ -670,16 +686,31 @@ export const defaultLocalLauncher = async (options: {
       'Playwright Chromium fallback cannot reuse a saved Chrome profile. Close the stale direct-mode session or remove its state before retrying.'
     );
   }
-  const port = await getFreePort();
   const userDataDir = reusingUserDataDir
-    ? options.state.user_data_dir
+    ? savedUserDataDir
     : fs.mkdtempSync(path.join(os.tmpdir(), 'browser-use-direct-'));
   const browserLaunchToken = randomUUID();
+  const activePortPath = path.join(userDataDir, 'DevToolsActivePort');
+  try {
+    fs.rmSync(activePortPath, { force: true });
+  } catch (error) {
+    if (!reusingUserDataDir) {
+      try {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      } catch {
+        // Preserve the original stale-marker error.
+      }
+    }
+    throw new Error(
+      `Cannot remove stale Chrome debugging marker at ${activePortPath}: ${(error as Error).message}`,
+      { cause: error }
+    );
+  }
 
   const child = spawn(
     executablePath,
     [
-      `--remote-debugging-port=${port}`,
+      '--remote-debugging-port=0',
       `--user-data-dir=${userDataDir}`,
       `--browser-use-direct-token=${browserLaunchToken}`,
       '--no-first-run',
@@ -698,7 +729,7 @@ export const defaultLocalLauncher = async (options: {
 
   try {
     const cdp_url = await Promise.race([
-      waitForLocalCdpEndpoint(port, options.timeout_ms),
+      waitForLocalCdpEndpoint(activePortPath, options.timeout_ms),
       spawnError,
     ]);
     return {

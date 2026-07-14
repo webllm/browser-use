@@ -334,6 +334,83 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'discovers a new direct browser through DevToolsActivePort',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-active-port-')
+      );
+      const fakeChrome = path.join(tempDir, 'fake-chrome');
+      const ownedProfileDir = path.join(tempDir, 'owned-profile');
+      fs.writeFileSync(
+        fakeChrome,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+if (!process.argv.includes('--remote-debugging-port=0')) process.exit(2);
+const profileArg = process.argv.find((arg) => arg.startsWith('--user-data-dir='));
+const profileDir = profileArg.slice('--user-data-dir='.length);
+const browserPath = '/devtools/browser/test-browser-id';
+const server = http.createServer((request, response) => {
+  if (request.url !== '/json/version') {
+    response.writeHead(404).end();
+    return;
+  }
+  const port = server.address().port;
+  response.setHeader('content-type', 'application/json');
+  response.end(JSON.stringify({ webSocketDebuggerUrl: 'ws://127.0.0.1:' + port + browserPath }));
+});
+server.listen(0, '127.0.0.1', () => {
+  const port = server.address().port;
+  fs.writeFileSync(path.join(profileDir, 'DevToolsActivePort'), port + '\\n' + browserPath + '\\n', { flag: 'wx' });
+});
+`,
+        { mode: 0o755 }
+      );
+      const findExecutableSpy = vi
+        .spyOn(systemChrome, 'findExecutable')
+        .mockReturnValue(fakeChrome);
+      const mkdtempSpy = vi.spyOn(fs, 'mkdtempSync').mockImplementation((() => {
+        fs.mkdirSync(ownedProfileDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(ownedProfileDir, 'DevToolsActivePort'),
+          '9\\n/devtools/browser/stale-browser-id\\n'
+        );
+        return ownedProfileDir;
+      }) as any);
+      let browserPid: number | null = null;
+
+      try {
+        const launched = await defaultLocalLauncher({
+          state: {},
+          timeout_ms: 5_000,
+        });
+        browserPid = launched.browser_pid;
+
+        expect(launched.cdp_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+        expect(
+          fs.readFileSync(
+            path.join(ownedProfileDir, 'DevToolsActivePort'),
+            'utf8'
+          )
+        ).toContain('/devtools/browser/test-browser-id');
+      } finally {
+        findExecutableSpy.mockRestore();
+        mkdtempSpy.mockRestore();
+        if (browserPid) {
+          try {
+            process.kill(-browserPid, 'SIGKILL');
+          } catch {
+            // Best-effort cleanup for the detached fake browser.
+          }
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    10_000
+  );
+
   it('explains how to install Chromium when neither executable exists', async () => {
     const findExecutableSpy = vi
       .spyOn(systemChrome, 'findExecutable')
