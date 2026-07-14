@@ -18,6 +18,84 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
   afterEach(() => {
     delete process.env.BROWSER_USE_DISABLE_EXTENSIONS;
     delete process.env.BROWSER_USE_CONFIG_DIR;
+    delete process.env.BROWSER_USE_SCREEN_WIDTH;
+    delete process.env.BROWSER_USE_SCREEN_HEIGHT;
+  });
+
+  it.each([
+    ['screen width', { screen: { width: Number.NaN, height: 1080 } }],
+    ['viewport height', { viewport: { width: 1920, height: Infinity } }],
+    ['window width', { window_width: -1 }],
+    ['video size', { record_video_size: { width: 640.5, height: 480 } }],
+  ])('rejects invalid %s dimensions', async (_name, invalidOptions) => {
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(
+      () =>
+        new BrowserProfile({
+          downloads_path: os.tmpdir(),
+          ...invalidOptions,
+        })
+    ).toThrow(/must be a non-negative safe integer/);
+  });
+
+  it.each([
+    ['slow_mo', -1],
+    ['timeout', Infinity],
+    ['default_navigation_timeout', Number.NaN],
+    ['minimum_wait_page_load_time', -0.1],
+    ['maximum_wait_page_load_time', Infinity],
+  ])('rejects invalid %s timing values', async (name, value) => {
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(
+      () =>
+        new BrowserProfile({
+          downloads_path: os.tmpdir(),
+          [name]: value,
+        })
+    ).toThrow(`${name} must be a finite non-negative number`);
+  });
+
+  it('allows the all-elements viewport sentinel but rejects other negative expansions', async () => {
+    const { BrowserProfile } = await importProfileModule();
+    const profile = new BrowserProfile({
+      downloads_path: os.tmpdir(),
+      viewport_expansion: -1,
+    });
+
+    expect(profile.viewport_expansion).toBe(-1);
+    expect(
+      () =>
+        new BrowserProfile({
+          downloads_path: os.tmpdir(),
+          viewport_expansion: -2,
+        })
+    ).toThrow('viewport_expansion must be -1 or a non-negative safe integer');
+  });
+
+  it('rejects invalid geolocation coordinates before browser launch', async () => {
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(
+      () =>
+        new BrowserProfile({
+          downloads_path: os.tmpdir(),
+          geolocation: {
+            latitude: 91,
+            longitude: 0,
+            accuracy: 0,
+          },
+        })
+    ).toThrow(/geolocation must contain finite/);
+  });
+
+  it('ignores invalid display dimensions from the environment', async () => {
+    process.env.BROWSER_USE_SCREEN_WIDTH = 'Infinity';
+    process.env.BROWSER_USE_SCREEN_HEIGHT = '1080';
+    const { get_display_size } = await importProfileModule();
+
+    expect(get_display_size()).toBeNull();
   });
 
   it('defaults wait_between_actions to 0.1 seconds', async () => {

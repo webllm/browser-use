@@ -221,7 +221,12 @@ const parseDisplayEnv = () => {
   if (width && height) {
     const parsedWidth = Number(width);
     const parsedHeight = Number(height);
-    if (!Number.isNaN(parsedWidth) && !Number.isNaN(parsedHeight)) {
+    if (
+      Number.isSafeInteger(parsedWidth) &&
+      parsedWidth >= 0 &&
+      Number.isSafeInteger(parsedHeight) &&
+      parsedHeight >= 0
+    ) {
       return { width: parsedWidth, height: parsedHeight };
     }
   }
@@ -260,7 +265,7 @@ const validate_url = (url: string, schemes: string[] = []) => {
 };
 
 const validate_float_range = (value: number, min: number, max: number) => {
-  if (value < min || value > max) {
+  if (!Number.isFinite(value) || value < min || value > max) {
     throw new Error(`Value ${value} outside of range ${min}-${max}`);
   }
   return value;
@@ -440,6 +445,97 @@ export type BrowserProfileOptions = BrowserContextArgs &
   BrowserLaunchArgs &
   BrowserConnectArgs &
   BrowserProfileSpecificOptions;
+
+const validateDimension = (value: number, name: string) => {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+};
+
+const validateViewportSize = (
+  value: ViewportSize | WindowRect | null,
+  name: string
+) => {
+  if (value === null) {
+    return;
+  }
+  validateDimension(value.width, `${name}.width`);
+  validateDimension(value.height, `${name}.height`);
+};
+
+const validateOptionalNonNegativeNumber = (
+  value: number | null,
+  name: string
+) => {
+  if (value !== null) {
+    try {
+      validate_float_range(value, 0, Number.MAX_VALUE);
+    } catch {
+      throw new Error(`${name} must be a finite non-negative number`);
+    }
+  }
+};
+
+const validateProfileNumericOptions = (options: BrowserProfileOptions) => {
+  for (const [name, value] of [
+    ['screen', options.screen],
+    ['viewport', options.viewport],
+    ['record_video_size', options.record_video_size],
+    ['window_size', options.window_size],
+    ['window_position', options.window_position],
+  ] as const) {
+    validateViewportSize(value, name);
+  }
+
+  for (const [name, value] of [
+    ['window_width', options.window_width],
+    ['window_height', options.window_height],
+  ] as const) {
+    if (value !== null) {
+      validateDimension(value, name);
+    }
+  }
+
+  for (const [name, value] of [
+    ['device_scale_factor', options.device_scale_factor],
+    ['slow_mo', options.slow_mo],
+    ['timeout', options.timeout],
+    ['default_navigation_timeout', options.default_navigation_timeout],
+    ['default_timeout', options.default_timeout],
+    ['minimum_wait_page_load_time', options.minimum_wait_page_load_time],
+    [
+      'wait_for_network_idle_page_load_time',
+      options.wait_for_network_idle_page_load_time,
+    ],
+    ['maximum_wait_page_load_time', options.maximum_wait_page_load_time],
+    ['wait_between_actions', options.wait_between_actions],
+  ] as const) {
+    validateOptionalNonNegativeNumber(value, name);
+  }
+
+  if (
+    !Number.isSafeInteger(options.viewport_expansion) ||
+    options.viewport_expansion < -1
+  ) {
+    throw new Error(
+      'viewport_expansion must be -1 or a non-negative safe integer'
+    );
+  }
+
+  if (options.geolocation) {
+    try {
+      validate_float_range(options.geolocation.latitude, -90, 90);
+      validate_float_range(options.geolocation.longitude, -180, 180);
+      if (options.geolocation.accuracy !== undefined) {
+        validate_float_range(options.geolocation.accuracy, 0, Number.MAX_VALUE);
+      }
+    } catch {
+      throw new Error(
+        'geolocation must contain finite latitude, longitude, and accuracy values within their supported ranges'
+      );
+    }
+  }
+};
 
 const DEFAULT_PERMISSIONS = [
   'clipboard-read',
@@ -662,6 +758,7 @@ export class BrowserProfile {
           : defaults.prohibited_domains,
       window_position: init.window_position ?? defaults.window_position,
     };
+    validateProfileNumericOptions(this.options);
     this.options.id = init.id ?? uuid7str();
     this.ensureDefaultDownloadsPath();
     this.applyLegacyWindowSize();
