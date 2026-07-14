@@ -180,6 +180,46 @@ describe('sandbox alignment', () => {
     await expect(wrapped()).rejects.toThrow(/SSE (chunk|event) exceeds/);
   });
 
+  it('times out a stalled sandbox event stream', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(
+        async (_url?: string | URL | Request, init?: RequestInit) => {
+          const signal = init?.signal;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                signal?.addEventListener(
+                  'abort',
+                  () => controller.error(signal.reason ?? new Error('aborted')),
+                  { once: true }
+                );
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'text/event-stream' } }
+          );
+        }
+      );
+      const wrapped = sandbox({
+        api_key: 'sandbox-test-key',
+        fetch_impl: fetchImpl as typeof fetch,
+        quiet: true,
+        request_timeout_ms: 25,
+      })(async () => 'local');
+
+      const request = wrapped();
+      const expectedRejection = expect(request).rejects.toThrow(
+        'HTTP request timed out'
+      );
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expectedRejection;
+      expect(fetchImpl.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not forward sandbox code or arguments to a redirect target', async () => {
     let redirectedRequests = 0;
     let redirectedBody = '';

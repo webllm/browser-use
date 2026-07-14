@@ -11,12 +11,14 @@ import {
 import {
   HttpResponseTooLargeError,
   readBoundedResponseText,
+  runWithHttpTimeout,
 } from '../http-response.js';
 
 const logger = createLogger('browser_use.sandbox');
 
 const defaultServerUrl = 'https://sandbox.api.browser-use.com/sandbox-stream';
 export const MAX_SANDBOX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
+export const SANDBOX_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
 const maybeInvoke = async <T>(
   callback: ((data: T) => void | Promise<void>) | undefined,
@@ -122,6 +124,7 @@ export interface SandboxOptions {
   cloud_profile_id?: string | null;
   cloud_proxy_country_code?: string | null;
   cloud_timeout?: number | null;
+  request_timeout_ms?: number;
   fetch_impl?: typeof fetch;
   on_browser_created?: (event: BrowserCreatedData) => void | Promise<void>;
   on_instance_ready?: () => void | Promise<void>;
@@ -178,80 +181,83 @@ export const sandbox =
       payload.cloud_timeout = options.cloud_timeout;
     }
 
-    const response = await fetch_impl(server_url, {
-      method: 'POST',
-      redirect: 'error',
-      headers: {
-        'X-API-Key': apiKey,
-        'Content-Type': 'application/json',
-        ...(options.headers ?? {}),
-      },
-      body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new SandboxError(
-        `Sandbox request failed with status ${response.status}`
-      );
-    }
-
-    let executionResult: TResult | null = null;
-    let hasResult = false;
-
-    await parseSSEChunks(response, async (event) => {
-      if (
-        event.type === SSEEventType.BROWSER_CREATED &&
-        event.data instanceof BrowserCreatedData
-      ) {
-        await maybeInvoke(options.on_browser_created, event.data);
-        if (!options.quiet && event.data.live_url) {
-          logger.info(`🔗 Live URL: ${event.data.live_url}`);
-        }
-        return;
-      }
-
-      if (event.type === SSEEventType.INSTANCE_READY) {
-        await maybeInvoke(options.on_instance_ready, undefined);
-        return;
-      }
-
-      if (event.type === SSEEventType.LOG && event.data instanceof LogData) {
-        await maybeInvoke(options.on_log, event.data);
-        if (!options.quiet) {
-          logger.info(event.data.message);
-        }
-        return;
-      }
-
-      if (
-        event.type === SSEEventType.RESULT &&
-        event.data instanceof ResultData
-      ) {
-        await maybeInvoke(options.on_result, event.data);
-        if (!event.data.execution_response.success) {
-          throw new SandboxError(
-            `Execution failed: ${event.data.execution_response.error ?? 'unknown error'}`
-          );
-        }
-        executionResult = event.data.execution_response.result as TResult;
-        hasResult = true;
-        return;
-      }
-
-      if (
-        event.type === SSEEventType.ERROR &&
-        event.data instanceof ErrorData
-      ) {
-        await maybeInvoke(options.on_error, event.data);
+    return await runWithHttpTimeout(async (signal) => {
+      const response = await fetch_impl(server_url, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'X-API-Key': apiKey,
+          'Content-Type': 'application/json',
+          ...(options.headers ?? {}),
+        },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (!response.ok) {
         throw new SandboxError(
-          `Execution failed: ${event.data.error || 'unknown error'}`
+          `Sandbox request failed with status ${response.status}`
         );
       }
-    });
 
-    if (!hasResult) {
-      throw new SandboxError('No result received from sandbox execution');
-    }
-    return executionResult as TResult;
+      let executionResult: TResult | null = null;
+      let hasResult = false;
+
+      await parseSSEChunks(response, async (event) => {
+        if (
+          event.type === SSEEventType.BROWSER_CREATED &&
+          event.data instanceof BrowserCreatedData
+        ) {
+          await maybeInvoke(options.on_browser_created, event.data);
+          if (!options.quiet && event.data.live_url) {
+            logger.info(`🔗 Live URL: ${event.data.live_url}`);
+          }
+          return;
+        }
+
+        if (event.type === SSEEventType.INSTANCE_READY) {
+          await maybeInvoke(options.on_instance_ready, undefined);
+          return;
+        }
+
+        if (event.type === SSEEventType.LOG && event.data instanceof LogData) {
+          await maybeInvoke(options.on_log, event.data);
+          if (!options.quiet) {
+            logger.info(event.data.message);
+          }
+          return;
+        }
+
+        if (
+          event.type === SSEEventType.RESULT &&
+          event.data instanceof ResultData
+        ) {
+          await maybeInvoke(options.on_result, event.data);
+          if (!event.data.execution_response.success) {
+            throw new SandboxError(
+              `Execution failed: ${event.data.execution_response.error ?? 'unknown error'}`
+            );
+          }
+          executionResult = event.data.execution_response.result as TResult;
+          hasResult = true;
+          return;
+        }
+
+        if (
+          event.type === SSEEventType.ERROR &&
+          event.data instanceof ErrorData
+        ) {
+          await maybeInvoke(options.on_error, event.data);
+          throw new SandboxError(
+            `Execution failed: ${event.data.error || 'unknown error'}`
+          );
+        }
+      });
+
+      if (!hasResult) {
+        throw new SandboxError('No result received from sandbox execution');
+      }
+      return executionResult as TResult;
+    }, options.request_timeout_ms ?? SANDBOX_REQUEST_TIMEOUT_MS);
   };
 
 export { SandboxError };
