@@ -1110,6 +1110,55 @@ esac
     );
   });
 
+  it('does not re-resolve an input locator after the document changes', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const originalHandle = {
+      click: vi.fn(async () => {}),
+      fill: vi.fn(async () => {}),
+      type: vi.fn(async () => {}),
+      evaluate: vi.fn(async () => {
+        throw new Error('Execution context was destroyed');
+      }),
+      dispose: vi.fn(async () => {}),
+    };
+    const replacementHandle = {
+      fill: vi.fn(async () => {}),
+      type: vi.fn(async () => {}),
+      dispose: vi.fn(async () => {}),
+    };
+    const locator = {
+      elementHandle: vi
+        .fn()
+        .mockResolvedValueOnce(originalHandle)
+        .mockResolvedValueOnce(replacementHandle),
+    };
+    const documentHandle = { dispose: vi.fn(async () => {}) };
+    const fakePage = {
+      evaluateHandle: vi.fn(async () => documentHandle),
+      evaluate: vi.fn(async () => {
+        throw new Error('JSHandles can be evaluated only in their context');
+      }),
+    } as any;
+    vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
+    vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage);
+    vi.spyOn(session, 'validate_page_after_action').mockResolvedValue();
+
+    await expect(
+      session._input_text_element_node(
+        { xpath: '/html/body/input' } as any,
+        'super-secret-value'
+      )
+    ).rejects.toThrow('page document changed');
+
+    expect(locator.elementHandle).toHaveBeenCalledTimes(1);
+    expect(originalHandle.fill).not.toHaveBeenCalled();
+    expect(replacementHandle.fill).not.toHaveBeenCalled();
+    expect(originalHandle.dispose).toHaveBeenCalledTimes(1);
+    expect(documentHandle.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('rolls back upload-triggered navigation to disallowed URLs', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upload-nav-'));
     const uploadPath = path.join(tempDir, 'file.txt');
@@ -4439,6 +4488,33 @@ describe('Direct Playwright Operations', () => {
     await page.fill('#input', 'Hello World');
     const value = await page.inputValue('#input');
     expect(value).toBe('Hello World');
+  });
+
+  it('inputs text after a click replaces the field in the same document', async () => {
+    await page.setContent(`
+      <input
+        id="input"
+        type="text"
+        onclick="this.replaceWith(this.cloneNode())"
+      />
+    `);
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    vi.spyOn(session, 'get_locate_element').mockResolvedValue(
+      page.locator('#input')
+    );
+    vi.spyOn(session, 'get_current_page').mockResolvedValue(page);
+    vi.spyOn(session, 'validate_page_after_action').mockResolvedValue();
+
+    await session._input_text_element_node(
+      { xpath: '/html/body/input' } as any,
+      'safe value'
+    );
+
+    await expect(page.locator('#input').inputValue()).resolves.toBe(
+      'safe value'
+    );
   });
 
   it('handles multiple tabs', async () => {

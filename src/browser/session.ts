@@ -4681,16 +4681,76 @@ export class BrowserSession {
     if (typeof locator.elementHandle === 'function' && !elementHandle) {
       throw new Error('Element not found');
     }
+    let initialDocumentHandle: Awaited<
+      ReturnType<Page['evaluateHandle']>
+    > | null = null;
+    if (elementHandle && typeof page?.evaluateHandle === 'function') {
+      try {
+        initialDocumentHandle = await this._withAbort(
+          page.evaluateHandle(() => document),
+          signal
+        );
+      } catch {
+        // A pinned element still provides the safe fallback when document
+        // identity cannot be captured.
+      }
+    }
     // A Locator is re-resolved against the current document for every action.
     // Pin the element whenever Playwright exposes an ElementHandle so a click
     // that navigates cannot make the subsequent fill target a matching element
     // on a different origin.
-    const inputTarget = elementHandle ?? locator;
+    let inputTarget = elementHandle ?? locator;
+    let replacementElementHandle: Awaited<
+      ReturnType<Locator['elementHandle']>
+    > = null;
     try {
       await this._withAbort(inputTarget.click({ timeout: 5000 }), signal);
       // Playwright waits for synchronous click-triggered navigation. Validate
       // it before any text (which may contain credentials) reaches the page.
       await this.validate_page_after_action(page, signal);
+      if (elementHandle && typeof elementHandle.evaluate === 'function') {
+        let elementIsConnected = false;
+        try {
+          elementIsConnected = await this._withAbort(
+            elementHandle.evaluate((element) => element.isConnected),
+            signal
+          );
+        } catch {
+          // Detached handles and destroyed execution contexts both land here.
+        }
+
+        if (!elementIsConnected) {
+          let sameDocument = false;
+          if (initialDocumentHandle && typeof page?.evaluate === 'function') {
+            try {
+              sameDocument = await this._withAbort(
+                page.evaluate(
+                  (initialDocument) => initialDocument === document,
+                  initialDocumentHandle
+                ),
+                signal
+              );
+            } catch {
+              // A navigation destroys the old document handle. Do not resolve
+              // a locator in the replacement document in that case.
+            }
+          }
+          if (!sameDocument) {
+            throw new Error(
+              'Input element became detached after the page document changed'
+            );
+          }
+
+          replacementElementHandle = await this._withAbort(
+            locator.elementHandle({ timeout: 5000 }),
+            signal
+          );
+          if (!replacementElementHandle) {
+            throw new Error('Element not found after page update');
+          }
+          inputTarget = replacementElementHandle;
+        }
+      }
       if (clear) {
         await this._withAbort(
           inputTarget.fill(text, { timeout: 5000 }),
@@ -4706,7 +4766,9 @@ export class BrowserSession {
       try {
         await this.validate_page_after_action(page, signal);
       } finally {
+        await replacementElementHandle?.dispose().catch(() => undefined);
         await elementHandle?.dispose().catch(() => undefined);
+        await initialDocumentHandle?.dispose().catch(() => undefined);
       }
     }
   }
