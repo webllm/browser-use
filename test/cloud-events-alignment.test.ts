@@ -413,6 +413,28 @@ describe('cloud events alignment', () => {
     }
   });
 
+  it.skipIf(process.platform === 'win32')(
+    'does not upload output files through symbolic links',
+    async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-cloud-file-'));
+      const targetPath = path.join(tempDir, 'outside.txt');
+      const outputPath = path.join(tempDir, 'output.txt');
+      fs.writeFileSync(targetPath, 'must not upload');
+      fs.symlinkSync(targetPath, outputPath);
+
+      try {
+        await expect(
+          CreateAgentOutputFileEvent.fromAgentAndFile(
+            { task_id: 'task-file', browser_session: { id: 'browser' } } as any,
+            outputPath
+          )
+        ).rejects.toThrow('not a regular file');
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('CreateAgentStepEvent enforces python-aligned screenshot data URL size guard', () => {
     expect(
       () =>

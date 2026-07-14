@@ -39,15 +39,30 @@ const assertMaximumLength = (
 };
 
 const readBoundedOutputFile = async (filePath: string) => {
+  const pathStats = await fs.promises.lstat(filePath);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new Error(`Agent output path is not a regular file: ${filePath}`);
+  }
   const nonBlockingFlag =
     process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
   const handle = await fs.promises.open(
     filePath,
-    fs.constants.O_RDONLY | nonBlockingFlag
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
   );
   try {
     const stats = await handle.stat();
-    if (!stats.isFile()) {
+    const currentPathStats = await fs.promises.lstat(filePath);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino
+    ) {
       throw new Error(`Agent output path is not a regular file: ${filePath}`);
     }
     if (stats.size >= MAX_FILE_CONTENT_SIZE) {
