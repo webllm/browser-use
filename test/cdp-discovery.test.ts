@@ -1,5 +1,68 @@
-import { describe, expect, it, vi } from 'vitest';
-import { discoverLocalCdpWebSocketUrl } from '../src/browser/cdp-discovery.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  discoverLocalCdpWebSocketUrl,
+  readDevToolsActivePort,
+} from '../src/browser/cdp-discovery.js';
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const directory of temporaryDirectories.splice(0)) {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+const createTemporaryDirectory = () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-use-cdp-'));
+  temporaryDirectories.push(directory);
+  return directory;
+};
+
+describe('DevToolsActivePort reads', () => {
+  it('reads a valid bounded regular file', () => {
+    const directory = createTemporaryDirectory();
+    const activePortPath = path.join(directory, 'DevToolsActivePort');
+    fs.writeFileSync(
+      activePortPath,
+      '9222\n/devtools/browser/browser-id\n',
+      'utf8'
+    );
+
+    expect(readDevToolsActivePort(activePortPath)).toEqual({
+      port: 9222,
+      browserPath: '/devtools/browser/browser-id',
+    });
+  });
+
+  it('does not follow a replacement symlink while opening the file', () => {
+    if (process.platform === 'win32') return;
+    const directory = createTemporaryDirectory();
+    const activePortPath = path.join(directory, 'DevToolsActivePort');
+    const replacementPath = path.join(directory, 'replacement');
+    fs.writeFileSync(activePortPath, '9222\n/devtools/browser/original\n');
+    fs.writeFileSync(replacementPath, '9333\n/devtools/browser/replacement\n');
+    const originalOpenSync = fs.openSync.bind(fs);
+    vi.spyOn(fs, 'openSync').mockImplementationOnce((...args) => {
+      fs.rmSync(activePortPath);
+      fs.symlinkSync(replacementPath, activePortPath);
+      return originalOpenSync(...args);
+    });
+
+    expect(readDevToolsActivePort(activePortPath)).toBeNull();
+  });
+
+  it('rejects files that grow beyond the read limit', () => {
+    const directory = createTemporaryDirectory();
+    const activePortPath = path.join(directory, 'DevToolsActivePort');
+    fs.writeFileSync(activePortPath, 'x'.repeat(4 * 1024 + 1));
+
+    expect(readDevToolsActivePort(activePortPath)).toBeNull();
+  });
+});
 
 describe('local CDP discovery', () => {
   it('accepts a bounded loopback browser websocket endpoint', async () => {

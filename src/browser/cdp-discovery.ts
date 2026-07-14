@@ -4,6 +4,7 @@ import { readBoundedResponseJson } from '../http-response.js';
 const MAX_CDP_VERSION_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_CDP_PROBE_TIMEOUT_MS = 1_000;
 const MAX_DEVTOOLS_ACTIVE_PORT_BYTES = 4 * 1024;
+const DEVTOOLS_ACTIVE_PORT_READ_CHUNK_BYTES = 1024;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 export interface DevToolsActivePort {
@@ -14,15 +15,48 @@ export interface DevToolsActivePort {
 export const readDevToolsActivePort = (
   activePortPath: string
 ): DevToolsActivePort | null => {
+  let descriptor: number | null = null;
   try {
-    const stats = fs.lstatSync(activePortPath);
-    if (!stats.isFile() || stats.size > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+    const pathStats = fs.lstatSync(activePortPath);
+    if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
       return null;
     }
-    const raw = fs.readFileSync(activePortPath, 'utf8');
-    if (Buffer.byteLength(raw, 'utf8') > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+
+    const nonBlockingFlag =
+      process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+    const noFollowFlag =
+      process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+    descriptor = fs.openSync(
+      activePortPath,
+      fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
+    );
+    const stats = fs.fstatSync(descriptor);
+    const currentPathStats = fs.lstatSync(activePortPath);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      stats.dev !== currentPathStats.dev ||
+      stats.ino !== currentPathStats.ino ||
+      stats.size > MAX_DEVTOOLS_ACTIVE_PORT_BYTES
+    ) {
       return null;
     }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+      const remaining = MAX_DEVTOOLS_ACTIVE_PORT_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(DEVTOOLS_ACTIVE_PORT_READ_CHUNK_BYTES, remaining)
+      );
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) return null;
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    const raw = Buffer.concat(chunks, totalBytes).toString('utf8');
     const [portText, rawBrowserPath] = raw.split(/\r?\n/, 2);
     const browserPath = rawBrowserPath ?? '';
     if (!/^\d+$/.test(portText ?? '')) {
@@ -40,6 +74,14 @@ export const readDevToolsActivePort = (
     return { port, browserPath };
   } catch {
     return null;
+  } finally {
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {
+        // Discovery failures should be reported as an unavailable endpoint.
+      }
+    }
   }
 };
 
