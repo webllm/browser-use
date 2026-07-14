@@ -6,6 +6,7 @@ export const MAX_STORAGE_STATE_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_STORAGE_STATE_COOKIES = 10_000;
 export const MAX_STORAGE_STATE_ORIGINS = 1_000;
 export const MAX_STORAGE_STATE_ENTRIES = 50_000;
+const STORAGE_STATE_READ_CHUNK_BYTES = 64 * 1024;
 
 const assertArrayLength = (
   value: unknown,
@@ -73,6 +74,80 @@ const chmodPrivateFile = (filePath: string) => {
   }
 };
 
+const readBoundedStorageStateBuffer = (
+  filePath: string,
+  rejectSymlinks = false
+) => {
+  const pathStats = rejectSymlinks ? fs.lstatSync(filePath) : null;
+  if (pathStats && (pathStats.isSymbolicLink() || !pathStats.isFile())) {
+    throw new Error(`Storage state path is not a regular file: ${filePath}`);
+  }
+
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    rejectSymlinks && process.platform !== 'win32'
+      ? (fs.constants.O_NOFOLLOW ?? 0)
+      : 0;
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
+  );
+  try {
+    const stats = fs.fstatSync(descriptor);
+    if (!stats.isFile()) {
+      throw new Error(`Storage state path is not a regular file: ${filePath}`);
+    }
+    if (
+      !Number.isSafeInteger(stats.size) ||
+      stats.size < 0 ||
+      stats.size > MAX_STORAGE_STATE_FILE_BYTES
+    ) {
+      throw new Error(
+        `Storage state file exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
+      );
+    }
+    if (pathStats) {
+      const currentPathStats = fs.lstatSync(filePath);
+      if (
+        currentPathStats.isSymbolicLink() ||
+        !currentPathStats.isFile() ||
+        stats.dev !== currentPathStats.dev ||
+        stats.ino !== currentPathStats.ino
+      ) {
+        throw new Error(
+          `Storage state path changed while opening: ${filePath}`
+        );
+      }
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_STORAGE_STATE_FILE_BYTES) {
+      const remaining = MAX_STORAGE_STATE_FILE_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(STORAGE_STATE_READ_CHUNK_BYTES, remaining)
+      );
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_STORAGE_STATE_FILE_BYTES) {
+        throw new Error(
+          `Storage state file exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
+        );
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes);
+  } finally {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      // Preserve a read or validation error.
+    }
+  }
+};
+
 export const writeBoundedStorageStateFile = (
   filePath: string,
   serializedState: string,
@@ -103,28 +178,31 @@ export const writeBoundedStorageStateFile = (
 
     if (options.backup !== false) {
       try {
-        const currentStats = fs.lstatSync(filePath);
-        if (
-          currentStats.isFile() &&
-          currentStats.size <= MAX_STORAGE_STATE_FILE_BYTES
-        ) {
-          const backupPath = `${filePath}.bak`;
-          const backupTemporaryPath = `${temporaryPath}.bak`;
-          let backupRenamed = false;
-          try {
-            fs.copyFileSync(
-              filePath,
-              backupTemporaryPath,
-              fs.constants.COPYFILE_EXCL
-            );
-            chmodPrivateFile(backupTemporaryPath);
-            fs.renameSync(backupTemporaryPath, backupPath);
-            backupRenamed = true;
-            chmodPrivateFile(backupPath);
-          } finally {
-            if (!backupRenamed) {
-              fs.rmSync(backupTemporaryPath, { force: true });
+        const currentState = readBoundedStorageStateBuffer(filePath, true);
+        const backupPath = `${filePath}.bak`;
+        const backupTemporaryPath = `${temporaryPath}.bak`;
+        let backupHandle: number | null = null;
+        let backupRenamed = false;
+        try {
+          backupHandle = fs.openSync(backupTemporaryPath, 'wx', 0o600);
+          fs.writeFileSync(backupHandle, currentState);
+          fs.fsyncSync(backupHandle);
+          fs.closeSync(backupHandle);
+          backupHandle = null;
+          chmodPrivateFile(backupTemporaryPath);
+          fs.renameSync(backupTemporaryPath, backupPath);
+          backupRenamed = true;
+          chmodPrivateFile(backupPath);
+        } finally {
+          if (backupHandle !== null) {
+            try {
+              fs.closeSync(backupHandle);
+            } catch {
+              // Preserve the backup error.
             }
+          }
+          if (!backupRenamed) {
+            fs.rmSync(backupTemporaryPath, { force: true });
           }
         }
       } catch {
@@ -156,22 +234,7 @@ export const writeBoundedStorageStateFile = (
 export const readBoundedStorageStateFile = (
   filePath: string
 ): Record<string, unknown> => {
-  const stats = fs.statSync(filePath);
-  if (!stats.isFile()) {
-    throw new Error(`Storage state path is not a regular file: ${filePath}`);
-  }
-  if (stats.size > MAX_STORAGE_STATE_FILE_BYTES) {
-    throw new Error(
-      `Storage state file exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
-    );
-  }
-
-  const raw = fs.readFileSync(filePath, 'utf8');
-  if (Buffer.byteLength(raw, 'utf8') > MAX_STORAGE_STATE_FILE_BYTES) {
-    throw new Error(
-      `Storage state file exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
-    );
-  }
+  const raw = readBoundedStorageStateBuffer(filePath).toString('utf8');
   let payload: unknown;
   try {
     payload = JSON.parse(raw);

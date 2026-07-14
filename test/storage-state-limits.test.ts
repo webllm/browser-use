@@ -8,6 +8,7 @@ import {
   MAX_STORAGE_STATE_COOKIES,
   MAX_STORAGE_STATE_ENTRIES,
   MAX_STORAGE_STATE_ORIGINS,
+  readBoundedStorageStateFile,
   serializeBoundedStorageState,
   writeBoundedStorageStateFile,
 } from '../src/browser/storage-state-limits.js';
@@ -55,6 +56,64 @@ describe('storage state limits', () => {
         origins: [],
       })
     ).toThrow(`exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`);
+  });
+
+  it('rechecks the opened state file after a path replacement', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-storage-state-')
+    );
+    const statePath = path.join(tempDir, 'state.json');
+    const replacementPath = path.join(tempDir, 'replacement.json');
+    fs.writeFileSync(statePath, '{"cookies":[],"origins":[]}');
+    fs.writeFileSync(replacementPath, '{}');
+    fs.truncateSync(replacementPath, MAX_STORAGE_STATE_FILE_BYTES + 1);
+    const originalOpen = fs.openSync.bind(fs);
+    const openSpy = vi
+      .spyOn(fs, 'openSync')
+      .mockImplementationOnce((...args) => {
+        fs.rmSync(statePath);
+        fs.renameSync(replacementPath, statePath);
+        return originalOpen(...args);
+      });
+
+    try {
+      expect(() => readBoundedStorageStateFile(statePath)).toThrow(
+        `exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
+      );
+    } finally {
+      openSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips a backup when the current state grows after validation', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-storage-state-')
+    );
+    const statePath = path.join(tempDir, 'state.json');
+    const replacementPath = path.join(tempDir, 'replacement.json');
+    const nextState = JSON.stringify({ cookies: [], origins: [] });
+    fs.writeFileSync(statePath, nextState);
+    fs.writeFileSync(replacementPath, '{}');
+    fs.truncateSync(replacementPath, MAX_STORAGE_STATE_FILE_BYTES + 1);
+    const originalLstat = fs.lstatSync.bind(fs);
+    const lstatSpy = vi.spyOn(fs, 'lstatSync').mockImplementation((target) => {
+      const stats = originalLstat(target);
+      if (target === statePath) {
+        fs.rmSync(statePath);
+        fs.renameSync(replacementPath, statePath);
+      }
+      return stats;
+    });
+
+    try {
+      writeBoundedStorageStateFile(statePath, nextState);
+      expect(fs.readFileSync(statePath, 'utf8')).toBe(nextState);
+      expect(fs.existsSync(`${statePath}.bak`)).toBe(false);
+    } finally {
+      lstatSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('keeps the current state readable when the atomic replacement fails', () => {
