@@ -20,7 +20,9 @@ import {
 } from '../browser/page-content.js';
 import { isMainModule } from '../entrypoint.js';
 import {
+  getProcessArguments,
   getProcessCommandLine,
+  parseProcessCommandLineArguments,
   type ProcessCommandLineReader,
 } from '../process-identity.js';
 import { formatDirectUsage, isDirectCommandName } from './direct-commands.js';
@@ -313,6 +315,10 @@ export interface DirectCliEnvironment {
     owns_user_data_dir?: boolean | null;
   }>;
   kill_process?: (pid: number) => void | Promise<void>;
+  get_process_arguments?: (
+    pid: number
+  ) => string[] | null | Promise<string[] | null>;
+  /** @deprecated Prefer get_process_arguments so argument boundaries survive. */
   get_process_command_line?: ProcessCommandLineReader;
   max_screenshot_bytes?: number | null;
   max_screenshot_pixels?: number | null;
@@ -426,7 +432,7 @@ export const clear_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
 
 const getDirectBrowserProcessOwnership = async (
   state: DirectModeState,
-  getProcessCommandLine: Required<DirectCliEnvironment>['get_process_command_line']
+  getProcessArgumentsImpl: Required<DirectCliEnvironment>['get_process_arguments']
 ): Promise<'owned' | 'not_owned' | 'unverified'> => {
   const pid = state.browser_pid;
   const token = state.browser_launch_token?.trim();
@@ -434,14 +440,14 @@ const getDirectBrowserProcessOwnership = async (
     return 'not_owned';
   }
 
-  let commandLine: string | null = null;
+  let args: string[] | null = null;
   try {
-    commandLine = await getProcessCommandLine(pid);
+    args = await getProcessArgumentsImpl(pid);
   } catch {
     // Treat process inspection failures as unverified while the PID is alive.
   }
-  if (commandLine) {
-    return commandLine.includes(`--browser-use-direct-token=${token}`)
+  if (args) {
+    return args.includes(`--browser-use-direct-token=${token}`)
       ? 'owned'
       : 'not_owned';
   }
@@ -978,7 +984,7 @@ const killOwnedDirectBrowserProcess = async (
 ): Promise<'terminated' | 'not_owned' | 'failed'> => {
   const ownership = await getDirectBrowserProcessOwnership(
     state,
-    environment.get_process_command_line
+    environment.get_process_arguments
   );
   if (ownership === 'not_owned') {
     return 'not_owned';
@@ -1184,6 +1190,16 @@ export const run_direct_command = async (
       options.cloud_client_factory ?? (() => new CloudBrowserClient()),
     local_launcher: options.local_launcher ?? defaultLocalLauncher,
     kill_process: options.kill_process ?? defaultKillDirectBrowserProcess,
+    get_process_arguments:
+      options.get_process_arguments ??
+      (options.get_process_command_line
+        ? async (pid) => {
+            const commandLine = await options.get_process_command_line!(pid);
+            return commandLine
+              ? parseProcessCommandLineArguments(commandLine)
+              : null;
+          }
+        : getProcessArguments),
     get_process_command_line:
       options.get_process_command_line ?? getProcessCommandLine,
     max_screenshot_bytes: options.max_screenshot_bytes ?? null,

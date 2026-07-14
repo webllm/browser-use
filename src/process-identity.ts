@@ -9,7 +9,7 @@ export type ProcessArgumentsReader = (pid: number) => string[] | null;
 
 const isValidPid = (pid: number) => Number.isSafeInteger(pid) && pid > 0;
 
-const parseDisplayedCommandLine = (commandLine: string) =>
+export const parseProcessCommandLineArguments = (commandLine: string) =>
   (commandLine.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((argument) => {
     if (
       argument.length >= 2 &&
@@ -103,7 +103,7 @@ const argumentsAfterExecutable = (
   if (remainder == null) {
     return null;
   }
-  return [executablePath, ...parseDisplayedCommandLine(remainder)];
+  return [executablePath, ...parseProcessCommandLineArguments(remainder)];
 };
 
 export const getProcessArguments: ProcessArgumentsReader = (pid) => {

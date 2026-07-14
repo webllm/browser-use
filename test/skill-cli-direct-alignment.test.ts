@@ -1045,7 +1045,7 @@ server.listen(0, '127.0.0.1', () => {
     10_000
   );
 
-  it('does not terminate a reused PID whose launch marker does not match', async () => {
+  it('does not terminate a PID whose launch marker is only an argument substring', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
     );
@@ -1054,7 +1054,7 @@ server.listen(0, '127.0.0.1', () => {
     const stderr = createWritable();
     const killProcessSpy = vi.fn(async () => {});
     const getProcessCommandLineSpy = vi.fn(
-      () => '/usr/bin/sleep --browser-use-direct-token=someone-else'
+      () => '/usr/bin/sleep --wrapper=--browser-use-direct-token=owned-321'
     );
 
     save_direct_state(
