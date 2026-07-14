@@ -10,6 +10,7 @@ export const MAX_EXTENSION_ARCHIVE_ENTRIES = 10_000;
 export const MAX_EXTENSION_ENTRY_BYTES = 100 * 1024 * 1024;
 export const MAX_EXTENSION_UNCOMPRESSED_BYTES = 250 * 1024 * 1024;
 export const MAX_EXTENSION_MANIFEST_BYTES = 1024 * 1024;
+const EXTENSION_MANIFEST_READ_CHUNK_BYTES = 64 * 1024;
 
 const chmodPrivate = async (targetPath: string, mode: number) => {
   if (process.platform !== 'win32') {
@@ -37,19 +38,94 @@ const assertSafeArchivePath = (entryName: string) => {
 export const readExtensionManifest = (
   manifestPath: string
 ): Record<string, unknown> => {
-  const stats = fs.lstatSync(manifestPath);
-  if (!stats.isFile() || stats.size > MAX_EXTENSION_MANIFEST_BYTES) {
+  const pathStats = fs.lstatSync(manifestPath);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
     throw new Error('Extension manifest.json is invalid or too large');
   }
-  const raw = fs.readFileSync(manifestPath, 'utf8');
-  if (Buffer.byteLength(raw, 'utf8') > MAX_EXTENSION_MANIFEST_BYTES) {
-    throw new Error('Extension manifest.json is too large');
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+  const descriptor = fs.openSync(
+    manifestPath,
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
+  );
+  let raw: string;
+  try {
+    const stats = fs.fstatSync(descriptor);
+    const currentPathStats = fs.lstatSync(manifestPath);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino ||
+      stats.size > MAX_EXTENSION_MANIFEST_BYTES
+    ) {
+      throw new Error('Extension manifest.json is invalid or too large');
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_EXTENSION_MANIFEST_BYTES) {
+      const remaining = MAX_EXTENSION_MANIFEST_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(EXTENSION_MANIFEST_READ_CHUNK_BYTES, remaining)
+      );
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_EXTENSION_MANIFEST_BYTES) {
+        throw new Error('Extension manifest.json is too large');
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    raw = Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      // Preserve a manifest read or validation error.
+    }
   }
   const manifest = JSON.parse(raw);
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
     throw new Error('Extension manifest.json must contain a JSON object');
   }
   return manifest as Record<string, unknown>;
+};
+
+const snapshotExtensionArchive = async (
+  archivePath: string,
+  snapshotPath: string
+) => {
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const handle = await fsp.open(
+    archivePath,
+    fs.constants.O_RDONLY | nonBlockingFlag
+  );
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      throw new Error('Extension archive is not a regular file');
+    }
+    if (stats.size > MAX_EXTENSION_DOWNLOAD_BYTES) {
+      throw new Error(
+        `Extension archive exceeds ${MAX_EXTENSION_DOWNLOAD_BYTES} bytes`
+      );
+    }
+    await writeLimitedExtensionStream(
+      handle.createReadStream({ autoClose: false }),
+      snapshotPath
+    );
+    const snapshotStats = await fsp.stat(snapshotPath);
+    return snapshotStats.size;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 };
 
 export class ExtensionArchiveBudget {
@@ -190,36 +266,35 @@ export const extractExtensionArchive = async (
   extractDir: string,
   options: { replaceExisting?: boolean } = {}
 ) => {
-  const archiveStat = await fsp.stat(archivePath);
-  if (!archiveStat.isFile()) {
-    throw new Error('Extension archive is not a regular file');
-  }
-  if (archiveStat.size > MAX_EXTENSION_DOWNLOAD_BYTES) {
-    throw new Error(
-      `Extension archive exceeds ${MAX_EXTENSION_DOWNLOAD_BYTES} bytes`
-    );
-  }
-
-  const offset = await getZipOffset(archivePath, archiveStat.size);
-  const zipPath =
-    offset === 0
-      ? archivePath
-      : path.join(
-          path.dirname(archivePath),
-          `.${path.basename(archivePath)}.${randomUUID()}.zip`
-        );
   const stagingDir = path.join(
     path.dirname(extractDir),
     `.${path.basename(extractDir)}.${randomUUID()}.tmp`
   );
+  const archiveSnapshotPath = path.join(
+    path.dirname(extractDir),
+    `.${path.basename(extractDir)}.${randomUUID()}.archive`
+  );
+  let zipPath: string | null = null;
 
   await fsp.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   await chmodPrivate(stagingDir, 0o700);
 
   try {
+    const archiveSize = await snapshotExtensionArchive(
+      archivePath,
+      archiveSnapshotPath
+    );
+    const offset = await getZipOffset(archiveSnapshotPath, archiveSize);
+    zipPath =
+      offset === 0
+        ? archiveSnapshotPath
+        : path.join(
+            path.dirname(extractDir),
+            `.${path.basename(extractDir)}.${randomUUID()}.zip`
+          );
     if (offset > 0) {
       await writeLimitedExtensionStream(
-        fs.createReadStream(archivePath, { start: offset }),
+        fs.createReadStream(archiveSnapshotPath, { start: offset }),
         zipPath
       );
     }
@@ -270,9 +345,10 @@ export const extractExtensionArchive = async (
       .catch(() => undefined);
     throw error;
   } finally {
-    if (offset > 0) {
+    if (zipPath && zipPath !== archiveSnapshotPath) {
       await fsp.rm(zipPath, { force: true }).catch(() => undefined);
     }
+    await fsp.rm(archiveSnapshotPath, { force: true }).catch(() => undefined);
   }
 };
 

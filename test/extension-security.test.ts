@@ -1,9 +1,9 @@
-import fs from 'node:fs';
+import fs, { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import AdmZip from 'adm-zip';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ExtensionArchiveBudget,
   MAX_EXTENSION_DOWNLOAD_BYTES,
@@ -97,6 +97,66 @@ describe('extension download and extraction safety', () => {
     }
   });
 
+  it('rejects a manifest replaced while it is being opened', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-manifest-')
+    );
+    const manifestPath = path.join(tempDir, 'manifest.json');
+    const replacementPath = path.join(tempDir, 'replacement.json');
+    fs.writeFileSync(manifestPath, '{"version":"1"}');
+    fs.writeFileSync(replacementPath, '{"version":"2"}');
+    const originalOpen = fs.openSync.bind(fs);
+    const openSpy = vi
+      .spyOn(fs, 'openSync')
+      .mockImplementationOnce((...args) => {
+        fs.rmSync(manifestPath);
+        fs.renameSync(replacementPath, manifestPath);
+        return originalOpen(...args);
+      });
+
+    try {
+      expect(() => readExtensionManifest(manifestPath)).toThrow(
+        /invalid or too large/
+      );
+    } finally {
+      openSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rechecks archive size on the opened source file', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-archive-')
+    );
+    const archivePath = path.join(tempDir, 'extension.zip');
+    const replacementPath = path.join(tempDir, 'replacement.zip');
+    const extractDir = path.join(tempDir, 'unpacked');
+    const zip = new AdmZip();
+    zip.addFile('manifest.json', Buffer.from('{}'));
+    zip.writeZip(archivePath);
+    fs.writeFileSync(replacementPath, '{}');
+    fs.truncateSync(replacementPath, MAX_EXTENSION_DOWNLOAD_BYTES + 1);
+    const originalOpen = fsp.open.bind(fsp);
+    const openSpy = vi
+      .spyOn(fsp, 'open')
+      .mockImplementation(async (...args) => {
+        if (args[0] === archivePath) {
+          fs.rmSync(archivePath);
+          fs.renameSync(replacementPath, archivePath);
+        }
+        return originalOpen(...args);
+      });
+
+    try {
+      await expect(
+        extractExtensionArchive(archivePath, extractDir)
+      ).rejects.toThrow(`exceeds ${MAX_EXTENSION_DOWNLOAD_BYTES} bytes`);
+    } finally {
+      openSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('extracts a bounded CRX3 payload after validating its header', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-extension-crx3-')
@@ -136,6 +196,9 @@ describe('extension download and extraction safety', () => {
       expect(fs.existsSync(path.join(extractDir, 'manifest.json'))).toBe(true);
       expect(
         fs.readdirSync(tempDir).some((name) => name.endsWith('.zip'))
+      ).toBe(false);
+      expect(
+        fs.readdirSync(tempDir).some((name) => name.endsWith('.archive'))
       ).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
