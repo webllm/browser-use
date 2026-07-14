@@ -27,6 +27,7 @@ const MAX_READ_STATE_IMAGES = 10;
 const MAX_READ_STATE_IMAGE_CANDIDATES = 100;
 const MAX_READ_STATE_IMAGE_BASE64_CHARS = 20 * 1024 * 1024;
 const MAX_COMPACTION_HISTORY_CHARS = 1024 * 1024;
+const MAX_MESSAGE_TASK_CHARS = 100_000;
 const RESULT_TRUNCATION_NOTICE = '... [Content truncated at 60k characters]';
 const COMPACTION_HISTORY_TRUNCATION_NOTICE =
   '\n<sys>[... additional history omitted for compaction ...]</sys>';
@@ -222,10 +223,16 @@ export class MessageManager {
 
   add_new_task(new_task: string) {
     const normalizedTask = `<follow_up_user_request> ${new_task.trim()} </follow_up_user_request>`;
-    if (!this.task.includes('<initial_user_request>')) {
-      this.task = `<initial_user_request>${this.task}</initial_user_request>`;
+    const currentTask = this.task.includes('<initial_user_request>')
+      ? this.task
+      : `<initial_user_request>${this.task}</initial_user_request>`;
+    const combinedTask = `${currentTask}\n${normalizedTask}`;
+    if (combinedTask.length > MAX_MESSAGE_TASK_CHARS) {
+      throw new RangeError(
+        `Combined task must not exceed ${MAX_MESSAGE_TASK_CHARS} characters`
+      );
     }
-    this.task += `\n${normalizedTask}`;
+    this.task = combinedTask;
     this.state.agent_history_items.push(
       new HistoryItem(null, null, null, null, null, null, normalizedTask)
     );

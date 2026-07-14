@@ -35,6 +35,7 @@ import {
   DOMState,
 } from '../src/dom/views.js';
 import { HistoryTreeProcessor } from '../src/dom/history-tree-processor/service.js';
+import { MAX_TASK_LENGTH } from '../src/agent/cloud-events.js';
 
 const createLlm = (model = 'gpt-test', provider = 'test'): BaseChatModel =>
   ({
@@ -597,6 +598,16 @@ describe('Agent constructor browser session alignment', () => {
           llm_screenshot_size: [8_192, 8_192],
         })
     ).toThrow(/total pixels/);
+  });
+
+  it('rejects oversized initial tasks', () => {
+    expect(
+      () =>
+        new Agent({
+          task: 'x'.repeat(MAX_TASK_LENGTH + 1),
+          llm: createLlm(),
+        })
+    ).toThrow(`task must not exceed ${MAX_TASK_LENGTH} characters`);
   });
 
   it.each([
@@ -1798,6 +1809,29 @@ describe('Agent constructor browser session alignment', () => {
     expect(agent.state.paused).toBe(false);
     expect(agent.eventbus).not.toBe(initialEventBus);
     expect(agent.eventbus.name).toBe('Agent_a1_23');
+
+    await agent.close();
+  });
+
+  it('rejects follow-up tasks that exceed the combined task budget atomically', async () => {
+    const agent = new Agent({
+      task: 'initial task',
+      llm: createLlm(),
+    });
+    const messageManager = (agent as any)._message_manager;
+    const initialTask = 'x'.repeat(MAX_TASK_LENGTH - 100);
+    (agent as any).task = initialTask;
+    messageManager.task = initialTask;
+    const historyLength = messageManager.state.agent_history_items.length;
+
+    expect(() => agent.addNewTask('y'.repeat(100))).toThrow(
+      `Combined task must not exceed ${MAX_TASK_LENGTH} characters`
+    );
+    expect(agent.task).toBe(initialTask);
+    expect(messageManager.task).toBe(initialTask);
+    expect(messageManager.state.agent_history_items).toHaveLength(
+      historyLength
+    );
 
     await agent.close();
   });

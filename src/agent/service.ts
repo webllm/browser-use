@@ -100,6 +100,7 @@ import {
   CreateAgentSessionEvent,
   CreateAgentTaskEvent,
   CreateAgentStepEvent,
+  MAX_TASK_LENGTH,
   UpdateAgentTaskEvent,
 } from './cloud-events.js';
 import { create_history_gif } from './gif.js';
@@ -513,6 +514,18 @@ const normalizeSampleImages = (
   });
 };
 
+const requireAgentTask = (value: string, name = 'task') => {
+  if (typeof value !== 'string') {
+    throw new TypeError(`${name} must be a string`);
+  }
+  if (value.length > MAX_TASK_LENGTH) {
+    throw new RangeError(
+      `${name} must not exceed ${MAX_TASK_LENGTH} characters`
+    );
+  }
+  return value;
+};
+
 const requireBoundedInteger = (
   name: string,
   value: number,
@@ -848,6 +861,7 @@ export class Agent<
     const normalizedMessageCompaction =
       this._normalizeMessageCompactionSetting(message_compaction);
     const normalizedSampleImages = normalizeSampleImages(sample_images);
+    const validatedTask = requireAgentTask(task);
     let resolvedLlmScreenshotSize: [number, number] | null =
       llm_screenshot_size ?? null;
     if (resolvedLlmScreenshotSize !== null) {
@@ -938,7 +952,10 @@ export class Agent<
       this.extraction_schema =
         this._getOutputModelSchemaPayload(this.output_model_schema) ?? null;
     }
-    this.task = this._enhanceTaskWithSchema(task, this.output_model_schema);
+    this.task = this._enhanceTaskWithSchema(
+      validatedTask,
+      this.output_model_schema
+    );
     this.sensitive_data = sensitive_data;
     this.controller = resolvedController;
     const setCoordinateClicking = (this.controller as any)
@@ -1832,8 +1849,9 @@ export class Agent<
   addNewTask(newTask: string): void {
     // Simply delegate to message manager - no need for new task_id or events
     // The task continues with new instructions, it doesn't end and start a new one
-    this.task = newTask;
-    this._message_manager.add_new_task(newTask);
+    const validatedTask = requireAgentTask(newTask, 'newTask');
+    this._message_manager.add_new_task(validatedTask);
+    this.task = validatedTask;
     this.state.follow_up_task = true;
     this.state.stopped = false;
     this.state.paused = false;
@@ -1866,7 +1884,14 @@ export class Agent<
           ? ((outputModelSchema as any).name as string)
           : 'StructuredOutput';
 
-      return `${task}\nExpected output format: ${schemaName}\n${schemaJson}`;
+      const enhancedTask = `${task}\nExpected output format: ${schemaName}\n${schemaJson}`;
+      if (enhancedTask.length > MAX_TASK_LENGTH) {
+        this.logger.warning(
+          `Output schema omitted from task text because the enhanced task would exceed ${MAX_TASK_LENGTH} characters`
+        );
+        return task;
+      }
+      return enhancedTask;
     } catch (error) {
       this.logger.debug(
         `Could not parse output schema for task enhancement: ${
