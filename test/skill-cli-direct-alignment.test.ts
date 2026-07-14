@@ -1277,7 +1277,13 @@ server.listen(0, '127.0.0.1', () => {
     const stateFile = path.join(tempDir, 'state.json');
     const stdout = createWritable();
     const stderr = createWritable();
-    const waitForFunction = vi.fn(async () => {});
+    const waitForText = vi.fn(async () => {});
+    const firstTextMatch = vi.fn(() => ({ waitFor: waitForText }));
+    const visibleTextMatches = vi.fn(() => ({ first: firstTextMatch }));
+    const getByText = vi.fn(() => ({
+      filter: visibleTextMatches,
+      first: firstTextMatch,
+    }));
     const locator = {
       hover: vi.fn(async () => {}),
       dblclick: vi.fn(async () => {}),
@@ -1300,7 +1306,7 @@ server.listen(0, '127.0.0.1', () => {
       send_keys: sendKeys,
       get_current_page: vi.fn(async () => ({
         url: () => 'https://example.com',
-        waitForFunction,
+        getByText,
       })),
       validate_page_after_action: vi.fn(async () => {}),
       event_bus: { stop: vi.fn(async () => {}) },
@@ -1420,7 +1426,13 @@ server.listen(0, '127.0.0.1', () => {
       );
       expect(sendKeys).toHaveBeenCalledWith('super-secret-keys');
       expect(session.wait_for_element).toHaveBeenCalledWith('#app', 2500);
-      expect(waitForFunction).toHaveBeenCalledTimes(1);
+      expect(getByText).toHaveBeenCalledWith('Ready', { exact: false });
+      expect(visibleTextMatches).toHaveBeenCalledWith({ visible: true });
+      expect(firstTextMatch).toHaveBeenCalledTimes(1);
+      expect(waitForText).toHaveBeenCalledWith({
+        state: 'visible',
+        timeout: 5000,
+      });
       expect(locator.hover).toHaveBeenCalledWith({ timeout: 5000 });
       expect(locator.dblclick).toHaveBeenCalledWith({ timeout: 5000 });
       expect(locator.click).toHaveBeenCalledWith({

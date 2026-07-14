@@ -31,6 +31,7 @@ import {
 import {
   evaluateBoundedCliScript,
   readBoundedCliElementData,
+  waitForVisiblePageText,
 } from './page-inspection.js';
 
 export interface DirectModeState {
@@ -1401,16 +1402,11 @@ export const run_direct_command = async (
           throw new Error('Usage: wait text <text>');
         }
         const page = await session.get_current_page?.();
-        if (!page?.waitForFunction) {
+        if (!page?.getByText) {
           throw new Error('No active page available for wait text');
         }
         try {
-          await page.waitForFunction(
-            (needle: string) =>
-              document.body?.innerText?.includes(needle) ?? false,
-            text,
-            { timeout: 5000 }
-          );
+          await waitForVisiblePageText(page, text, 5000);
         } finally {
           await validateDirectPageAfterAction(session, page);
         }

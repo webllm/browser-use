@@ -12,11 +12,45 @@ type PageEvaluator = {
   evaluate: (...args: any[]) => Promise<unknown>;
 };
 
+type VisibleTextPage = {
+  getByText: (
+    text: string,
+    options: { exact: false }
+  ) => {
+    filter: (options: { visible: true }) => {
+      first: () => {
+        waitFor: (options: {
+          state: 'visible';
+          timeout: number;
+        }) => Promise<void>;
+      };
+    };
+    first: () => {
+      waitFor: (options: {
+        state: 'visible';
+        timeout: number;
+      }) => Promise<void>;
+    };
+  };
+};
+
 export type BoundedCliEvaluation = {
   ok: boolean;
   output?: string;
   truncated?: boolean;
   error?: string;
+};
+
+export const waitForVisiblePageText = async (
+  page: VisibleTextPage,
+  text: string,
+  timeout: number
+) => {
+  await page
+    .getByText(text, { exact: false })
+    .filter({ visible: true })
+    .first()
+    .waitFor({ state: 'visible', timeout });
 };
 
 export const evaluateBoundedCliScript = async (

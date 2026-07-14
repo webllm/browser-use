@@ -233,8 +233,15 @@ describe('skill-cli alignment', () => {
     const waitForElementSpy = vi
       .spyOn(session, 'wait_for_element')
       .mockResolvedValue();
+    const waitTextWaitFor = vi.fn(async () => {});
+    const waitTextFirst = vi.fn(() => ({ waitFor: waitTextWaitFor }));
+    const waitTextVisible = vi.fn(() => ({ first: waitTextFirst }));
+    const waitTextGetByText = vi.fn(() => ({
+      filter: waitTextVisible,
+      first: waitTextFirst,
+    }));
     const waitTextPage = {
-      waitForFunction: vi.fn(async () => {}),
+      getByText: waitTextGetByText,
       url: () => 'https://example.com',
     };
     vi.spyOn(session, 'get_current_page').mockResolvedValue(
@@ -333,6 +340,15 @@ describe('skill-cli alignment', () => {
       expect(waitSelector.success).toBe(true);
       expect(waitText.success).toBe(true);
       expect(waitForElementSpy).toHaveBeenCalledWith('#app', 2500);
+      expect(waitTextGetByText).toHaveBeenCalledWith('Ready', {
+        exact: false,
+      });
+      expect(waitTextVisible).toHaveBeenCalledWith({ visible: true });
+      expect(waitTextFirst).toHaveBeenCalledTimes(1);
+      expect(waitTextWaitFor).toHaveBeenCalledWith({
+        state: 'visible',
+        timeout: 2500,
+      });
       expect(validateSpy).toHaveBeenCalledWith(waitTextPage);
       expect(cookiesGet.success).toBe(true);
       expect((cookiesGet.data as any).count).toBe(3);

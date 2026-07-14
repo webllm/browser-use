@@ -15,6 +15,7 @@ import {
 import {
   evaluateBoundedCliScript,
   readBoundedCliElementData,
+  waitForVisiblePageText,
 } from './page-inspection.js';
 
 export interface SkillCliServerOptions {
@@ -401,16 +402,11 @@ export class SkillCliServer {
       }
       const timeout = Number(params.timeout ?? 5000);
       const page = await browser_session.get_current_page();
-      if (!page?.waitForFunction) {
+      if (!page?.getByText) {
         throw new Error('No active page available for wait_text');
       }
       await this._run_with_page_validation(browser_session, () =>
-        page.waitForFunction(
-          (needle: string) =>
-            document.body?.innerText?.includes(needle) ?? false,
-          text,
-          { timeout }
-        )
+        waitForVisiblePageText(page, text, timeout)
       );
       return { waited_for: 'text', text, timeout };
     }
