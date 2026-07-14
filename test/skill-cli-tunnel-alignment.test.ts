@@ -328,6 +328,48 @@ describe('skill-cli tunnel alignment', () => {
     }
   });
 
+  it.runIf(process.platform !== 'win32')(
+    'does not follow a stale tunnel log symlink',
+    async () => {
+      const tunnelDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-tunnel-')
+      );
+      const logPath = path.join(tunnelDir, '3000.log');
+      const victimPath = path.join(tunnelDir, 'victim.txt');
+      fs.writeFileSync(victimPath, 'preserve me');
+      fs.symlinkSync(victimPath, logPath);
+      const spawnImpl = vi.fn(() => {
+        fs.writeFileSync(logPath, 'https://demo.trycloudflare.com');
+        return { pid: 4321, unref: vi.fn() } as any;
+      });
+
+      try {
+        const manager = new TunnelManager({
+          tunnel_dir: tunnelDir,
+          binary_resolver: () => '/usr/bin/cloudflared',
+          spawn_impl: spawnImpl as any,
+          is_process_alive: () => true,
+          get_process_arguments: () => [
+            '/usr/bin/cloudflared',
+            'tunnel',
+            '--url',
+            'http://localhost:3000',
+          ],
+          sleep_impl: vi.fn(async () => {}),
+        });
+
+        await expect(manager.start_tunnel(3000)).resolves.toMatchObject({
+          port: 3000,
+          url: 'https://demo.trycloudflare.com',
+        });
+        expect(fs.readFileSync(victimPath, 'utf8')).toBe('preserve me');
+        expect(fs.lstatSync(logPath).isSymbolicLink()).toBe(false);
+      } finally {
+        fs.rmSync(tunnelDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('stops a tunnel whose ownership metadata cannot be persisted', async () => {
     const tunnelDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-tunnel-')

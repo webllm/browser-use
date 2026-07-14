@@ -158,6 +158,20 @@ export class TunnelManager {
     }
   }
 
+  private create_tunnel_log(logPath: string) {
+    fs.rmSync(logPath, { force: true });
+    const noFollowFlag =
+      process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
+    return fs.openSync(
+      logPath,
+      fs.constants.O_RDWR |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        noFollowFlag,
+      0o600
+    );
+  }
+
   private save_tunnel_info(
     port: number,
     pid: number,
@@ -403,7 +417,7 @@ export class TunnelManager {
 
     this.ensure_tunnel_dir();
     const logPath = this.get_tunnel_log_file(port);
-    const logFd = fs.openSync(logPath, 'w+', 0o600);
+    const logFd = this.create_tunnel_log(logPath);
     if (process.platform !== 'win32') {
       fs.chmodSync(logPath, 0o600);
     }
