@@ -206,6 +206,37 @@ describe('CliMCPServer', () => {
     expect(maxActive).toBe(1);
   });
 
+  it('rejects commands when the serialized execution queue is full', async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const runner = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        await firstBlocked;
+        return 0;
+      })
+      .mockResolvedValue(0);
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxQueuedOperations: 2,
+    });
+
+    const first = server.callTool('browser_exec', { command: 'state' });
+    const second = server.callTool('browser_exec', { command: 'state' });
+    const rejected = await server.callTool('browser_exec', {
+      command: 'state',
+    });
+
+    expect(rejected.isError).toBe(true);
+    expect(textFrom(rejected)).toContain('command queue is full');
+    expect(runner).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(runner).toHaveBeenCalledTimes(2);
+  });
+
   it('returns a full-page screenshot and enforces max_dim', async () => {
     const source = createCanvas(4, 2);
     source.getContext('2d').fillRect(0, 0, 4, 2);

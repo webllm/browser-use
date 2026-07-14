@@ -27,6 +27,7 @@ export interface CliMCPServerOptions {
   maxOutputChars?: number;
   maxScreenshotBytes?: number;
   maxScreenshotPixels?: number;
+  maxQueuedOperations?: number;
 }
 
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000;
@@ -35,6 +36,7 @@ const DEFAULT_MAX_COMMAND_ARGS = 256;
 const MAX_TOOL_NAME_CHARS = 256;
 const DEFAULT_MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_SCREENSHOT_PIXELS = 32 * 1024 * 1024;
+const DEFAULT_MAX_QUEUED_OPERATIONS = 100;
 const SCREENSHOT_JSON_OVERHEAD_CHARS = 4 * 1024;
 
 const instructions = `Use browser_exec for browser-use-direct commands such as open, state, click,
@@ -90,7 +92,9 @@ export class CliMCPServer {
   private readonly maxOutputChars: number;
   private readonly maxScreenshotBytes: number;
   private readonly maxScreenshotPixels: number;
+  private readonly maxQueuedOperations: number;
   private executionTail: Promise<void> = Promise.resolve();
+  private pendingExecutions = 0;
   private restoreConsole: (() => void) | null = null;
   private isRunning = false;
 
@@ -124,6 +128,11 @@ export class CliMCPServer {
       options.maxScreenshotPixels,
       process.env.BROWSER_USE_CLI_MCP_MAX_SCREENSHOT_PIXELS,
       DEFAULT_MAX_SCREENSHOT_PIXELS
+    );
+    this.maxQueuedOperations = parsePositiveInteger(
+      options.maxQueuedOperations,
+      process.env.BROWSER_USE_CLI_MCP_MAX_QUEUED_OPERATIONS,
+      DEFAULT_MAX_QUEUED_OPERATIONS
     );
     this.server = new Server(
       { name, version },
@@ -201,22 +210,32 @@ export class CliMCPServer {
     name: string,
     args: CliMcpArguments
   ): Promise<CallToolResult> {
-    return this.withExecutionLock(async () => {
-      try {
-        if (name.length > MAX_TOOL_NAME_CHARS) {
-          return this.errorResult('Tool name exceeds the maximum length');
+    if (this.pendingExecutions >= this.maxQueuedOperations) {
+      return this.errorResult(
+        `MCP command queue is full (maximum ${this.maxQueuedOperations})`
+      );
+    }
+    this.pendingExecutions += 1;
+    try {
+      return await this.withExecutionLock(async () => {
+        try {
+          if (name.length > MAX_TOOL_NAME_CHARS) {
+            return this.errorResult('Tool name exceeds the maximum length');
+          }
+          if (name === 'browser_exec') {
+            return await this.executeBrowserCommand(args);
+          }
+          if (name === 'browser_screenshot') {
+            return await this.captureBrowserScreenshot(args);
+          }
+          return this.errorResult(`Unknown tool: ${name}`);
+        } catch (error) {
+          return this.errorResult(redactMcpLogMessage(error));
         }
-        if (name === 'browser_exec') {
-          return await this.executeBrowserCommand(args);
-        }
-        if (name === 'browser_screenshot') {
-          return await this.captureBrowserScreenshot(args);
-        }
-        return this.errorResult(`Unknown tool: ${name}`);
-      } catch (error) {
-        return this.errorResult(redactMcpLogMessage(error));
-      }
-    });
+      });
+    } finally {
+      this.pendingExecutions -= 1;
+    }
   }
 
   private async withExecutionLock<T>(operation: () => Promise<T>): Promise<T> {
