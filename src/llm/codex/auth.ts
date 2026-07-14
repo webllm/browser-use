@@ -15,6 +15,7 @@ export const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 export const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 export const CODEX_DEVICE_AUTH_BASE_URL = 'https://auth.openai.com';
 export const CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120;
+const MAX_CODEX_REFRESH_SKEW_SECONDS = 24 * 60 * 60;
 
 const AUTH_STORE_VERSION = 1;
 const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
@@ -551,6 +552,7 @@ export const codexAccessTokenIsExpiring = (
   skewSeconds = CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
   nowMs = Date.now()
 ): boolean => {
+  validateCodexRefreshSkewSeconds(skewSeconds);
   if (!accessToken.trim()) {
     return true;
   }
@@ -559,6 +561,19 @@ export const codexAccessTokenIsExpiring = (
     return false;
   }
   return claims.exp * 1000 <= nowMs + skewSeconds * 1000;
+};
+
+export const validateCodexRefreshSkewSeconds = (value: number): number => {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_CODEX_REFRESH_SKEW_SECONDS
+  ) {
+    throw new RangeError(
+      `refreshSkewSeconds must be an integer between 0 and ${MAX_CODEX_REFRESH_SKEW_SECONDS}.`
+    );
+  }
+  return value;
 };
 
 export const getCodexCloudflareHeaders = (

@@ -17,6 +17,7 @@ import {
   DEFAULT_CODEX_BASE_URL,
   getCodexCloudflareHeaders,
   resolveCodexRuntimeCredentials,
+  validateCodexRefreshSkewSeconds,
 } from './auth.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
@@ -148,7 +149,10 @@ export class ChatCodex implements BaseChatModel {
     this.removeDefaultsFromSchema = removeDefaultsFromSchema;
     this.configDir = configDir;
     this.authStorePath = authStorePath;
-    this.refreshSkewSeconds = refreshSkewSeconds;
+    this.refreshSkewSeconds =
+      refreshSkewSeconds === undefined
+        ? undefined
+        : validateCodexRefreshSkewSeconds(refreshSkewSeconds);
   }
 
   get name(): string {

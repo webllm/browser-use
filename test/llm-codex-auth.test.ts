@@ -428,6 +428,18 @@ describe('Codex auth store', () => {
     expect(codexAccessTokenIsExpiring('opaque-token', 5, nowMs)).toBe(false);
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 86_401])(
+    'rejects unsafe refresh skew %s',
+    (refreshSkewSeconds) => {
+      expect(() =>
+        codexAccessTokenIsExpiring(
+          makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+          refreshSkewSeconds
+        )
+      ).toThrow('refreshSkewSeconds must be an integer between 0 and 86400.');
+    }
+  );
+
   it('runs the Codex device code flow without persisting tokens', async () => {
     const pendingResponse = jsonResponse(403, {});
     const cancelPendingBody = vi.spyOn(pendingResponse.body!, 'cancel');

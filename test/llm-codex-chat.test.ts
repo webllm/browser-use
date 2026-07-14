@@ -79,6 +79,19 @@ describe('ChatCodex', () => {
     }
   );
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 86_401])(
+    'rejects unsafe refreshSkewSeconds value %s',
+    (refreshSkewSeconds) => {
+      expect(
+        () =>
+          new ChatCodex({
+            apiKey: 'token',
+            refreshSkewSeconds,
+          })
+      ).toThrow('refreshSkewSeconds must be an integer between 0 and 86400.');
+    }
+  );
+
   afterEach(async () => {
     vi.restoreAllMocks();
     await Promise.all(
