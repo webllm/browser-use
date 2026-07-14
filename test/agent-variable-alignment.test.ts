@@ -242,6 +242,50 @@ describe('Agent variable alignment', () => {
     expect(JSON.stringify(serialized)).not.toContain('deep-secret');
   });
 
+  it('bounds cyclic and deeply nested history metadata during redaction', () => {
+    const metadata: Record<string, unknown> = {
+      reflected: 'deep-secret',
+      ['deep-secret-key']: 1n,
+    };
+    metadata.self = metadata;
+    let nested = metadata;
+    for (let depth = 0; depth < 110; depth += 1) {
+      const child: Record<string, unknown> = {};
+      nested.child = child;
+      nested = child;
+    }
+    const history = new AgentHistoryList([
+      new AgentHistory(
+        null,
+        [new ActionResult({ metadata })],
+        new BrowserStateHistory('about:blank', 'Blank', [], [])
+      ),
+    ]);
+
+    const serialized = JSON.stringify(
+      history.model_dump({ password: 'deep-secret' })
+    );
+
+    expect(serialized).not.toContain('deep-secret');
+    expect(serialized).toContain('<secret>password</secret>');
+    expect(serialized).toContain('[Circular]');
+    expect(serialized).toContain('[Truncated]');
+  });
+
+  it('bounds cyclic history metadata even without sensitive data', () => {
+    const metadata: Record<string, unknown> = {};
+    metadata.self = metadata;
+    const history = new AgentHistoryList([
+      new AgentHistory(
+        null,
+        [new ActionResult({ metadata })],
+        new BrowserStateHistory('about:blank', 'Blank', [], [])
+      ),
+    ]);
+
+    expect(JSON.stringify(history.model_dump())).toContain('[Circular]');
+  });
+
   it('omits usage from serialized history for python parity', () => {
     const history = createHistory();
     (history as any).usage = { total_tokens: 42 };

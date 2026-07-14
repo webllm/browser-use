@@ -31,6 +31,8 @@ export interface StructuredOutputParser<T = unknown> {
 
 type SensitiveDataMap = Record<string, string | Record<string, string>>;
 export const MAX_AGENT_HISTORY_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_AGENT_HISTORY_VALUE_DEPTH = 100;
+const MAX_AGENT_HISTORY_VALUE_ENTRIES = 100_000;
 
 export const redactSensitiveDataFromString = (
   value: string,
@@ -794,29 +796,84 @@ export class AgentHistory {
     data: T,
     sensitive_data: SensitiveDataMap | null
   ): T {
-    if (!sensitive_data) {
-      return data;
-    }
+    const activeObjects = new WeakSet<object>();
+    let remainingEntries = MAX_AGENT_HISTORY_VALUE_ENTRIES;
 
-    if (typeof data === 'string') {
-      return this._filterSensitiveDataFromString(data, sensitive_data) as T;
-    }
-    if (Array.isArray(data)) {
-      return data.map((item) =>
-        this._filterSensitiveData(item, sensitive_data)
-      ) as T;
-    }
-    if (!data || typeof data !== 'object') {
-      return data;
-    }
+    const visit = (value: unknown, depth: number): unknown => {
+      if (typeof value === 'string') {
+        return sensitive_data
+          ? this._filterSensitiveDataFromString(value, sensitive_data)
+          : value;
+      }
+      if (typeof value === 'bigint') return value.toString();
+      if (typeof value === 'symbol' || typeof value === 'function') {
+        return `[${typeof value}]`;
+      }
+      if (!value || typeof value !== 'object') return value;
+      if (value instanceof Date) return value;
+      if (depth >= MAX_AGENT_HISTORY_VALUE_DEPTH || remainingEntries <= 0) {
+        return '[Truncated]';
+      }
+      if (activeObjects.has(value)) return '[Circular]';
 
-    const filtered = Object.fromEntries(
-      Object.entries(data).map(([key, value]) => [
-        key,
-        this._filterSensitiveData(value, sensitive_data),
-      ])
-    );
-    return filtered as T;
+      activeObjects.add(value);
+      try {
+        if (ArrayBuffer.isView(value)) {
+          return `[Binary ${(value as ArrayBufferView).byteLength} bytes]`;
+        }
+        if (value instanceof ArrayBuffer) {
+          return `[Binary ${value.byteLength} bytes]`;
+        }
+        if (Array.isArray(value)) {
+          const output: unknown[] = [];
+          let index = 0;
+          while (index < value.length && remainingEntries > 0) {
+            remainingEntries -= 1;
+            try {
+              output.push(visit(value[index], depth + 1));
+            } catch {
+              output.push('[Unreadable]');
+            }
+            index += 1;
+          }
+          if (index < value.length) output.push('[Truncated]');
+          return output;
+        }
+
+        const output = Object.create(null) as Record<string, unknown>;
+        let truncated = false;
+        try {
+          const record = value as Record<string, unknown>;
+          for (const rawKey in record) {
+            if (!Object.prototype.hasOwnProperty.call(record, rawKey)) {
+              continue;
+            }
+            if (remainingEntries <= 0) {
+              truncated = true;
+              break;
+            }
+            remainingEntries -= 1;
+            const key = sensitive_data
+              ? this._filterSensitiveDataFromString(rawKey, sensitive_data)
+              : rawKey;
+            if (!key) continue;
+            try {
+              output[key] = visit(record[rawKey], depth + 1);
+            } catch {
+              output[key] = '[Unreadable]';
+            }
+          }
+        } catch {
+          return '[Unreadable]';
+        }
+        if (truncated) output.__browser_use_truncated__ = true;
+        return output;
+      } finally {
+        activeObjects.delete(value);
+      }
+    };
+
+    return visit(data, 0) as T;
   }
 
   toJSON(
@@ -839,9 +896,7 @@ export class AgentHistory {
         : null,
       state_message: this.state_message,
     };
-    return sensitive_data
-      ? AgentHistory._filterSensitiveData(payload, sensitive_data)
-      : payload;
+    return AgentHistory._filterSensitiveData(payload, sensitive_data);
   }
 }
 
