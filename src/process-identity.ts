@@ -126,12 +126,13 @@ export const getProcessArguments: ProcessArgumentsReader = (pid) => {
 
   if (process.platform === 'win32') {
     const details = readWindowsProcessDetails(pid);
-    if (!details?.commandLine) {
+    if (!details?.commandLine || !details.executablePath) {
       return null;
     }
-    const args = details.executablePath
-      ? argumentsAfterExecutable(details.commandLine, details.executablePath)
-      : parseDisplayedCommandLine(details.commandLine);
+    const args = argumentsAfterExecutable(
+      details.commandLine,
+      details.executablePath
+    );
     if (!args) {
       return null;
     }
