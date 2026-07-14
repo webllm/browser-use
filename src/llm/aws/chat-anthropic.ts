@@ -34,6 +34,7 @@ import { ChatInvokeCompletion } from '../views.js';
 import { type Message } from '../messages.js';
 import { AnthropicMessageSerializer } from '../anthropic/serializer.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatAnthropicBedrockConfig {
   /** Model ID, defaults to Claude 3.5 Sonnet */
@@ -105,7 +106,7 @@ export class ChatAnthropicBedrock implements BaseChatModel {
       region,
       ...(credentials ? { credentials } : {}),
       ...(config.maxRetries !== undefined
-        ? { maxAttempts: config.maxRetries }
+        ? { maxAttempts: validateMaxRetries(config.maxRetries, 1) }
         : {}),
     });
   }

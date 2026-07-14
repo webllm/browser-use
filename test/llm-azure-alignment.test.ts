@@ -65,6 +65,15 @@ describe('ChatAzure alignment', () => {
     responsesCreateMock.mockResolvedValue(buildResponsesResponse('resp-ok'));
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 101])(
+    'rejects unsafe maxRetries value %s',
+    (maxRetries) => {
+      expect(() => new ChatAzure({ maxRetries })).toThrow(
+        'maxRetries must be an integer between 0 and 100.'
+      );
+    }
+  );
+
   it('uses chat completions mode for regular models', async () => {
     const customFetch = vi.fn() as unknown as typeof fetch;
     const llm = new ChatAzure({

@@ -66,6 +66,18 @@ describe('AWS Bedrock alignment', () => {
     bedrockSendMock.mockResolvedValue(buildResponse([{ text: 'ok' }]));
   });
 
+  it.each([Number.POSITIVE_INFINITY, 0, -1, 1.5, 101])(
+    'rejects unsafe maxRetries value %s for both Bedrock clients',
+    (maxRetries) => {
+      expect(() => new ChatBedrockConverse({ maxRetries })).toThrow(
+        'maxRetries must be an integer between 1 and 100.'
+      );
+      expect(() => new ChatAnthropicBedrock({ maxRetries })).toThrow(
+        'maxRetries must be an integer between 1 and 100.'
+      );
+    }
+  );
+
   it('passes credentials including AWS session token and inference config', async () => {
     const llm = new ChatBedrockConverse({
       model: 'anthropic.claude-3-5-sonnet-20240620-v1:0',

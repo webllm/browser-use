@@ -11,6 +11,7 @@ import {
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 // Reasoning models that support reasoning_effort parameter
 const DEFAULT_REASONING_MODELS = [
@@ -123,7 +124,7 @@ export class ChatOpenAI implements BaseChatModel {
       project,
       baseURL,
       timeout: timeout ?? undefined,
-      maxRetries,
+      maxRetries: validateMaxRetries(maxRetries),
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,

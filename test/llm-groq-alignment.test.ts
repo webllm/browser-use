@@ -40,6 +40,15 @@ describe('ChatGroq alignment', () => {
     groqCreateMock.mockResolvedValue(buildResponse('ok'));
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 101])(
+    'rejects unsafe maxRetries value %s',
+    (maxRetries) => {
+      expect(() => new ChatGroq({ maxRetries })).toThrow(
+        'maxRetries must be an integer between 0 and 100.'
+      );
+    }
+  );
+
   it('passes generation and service-tier parameters', async () => {
     const llm = new ChatGroq({
       model: 'llama-3.1-70b-versatile',

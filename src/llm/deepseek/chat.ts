@@ -10,6 +10,7 @@ import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { DeepSeekMessageSerializer } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatDeepSeekOptions {
   model?: string;
@@ -55,12 +56,15 @@ export class ChatDeepSeek implements BaseChatModel {
     this.topP = topP;
     this.seed = seed;
 
+    const configuredMaxRetries =
+      (clientParams as any)?.maxRetries ?? maxRetries;
+
     this.client = new OpenAI({
       apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
-      maxRetries,
       ...(clientParams ?? {}),
+      maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(
         (clientParams as any)?.fetchOptions as RequestInit | undefined
       ) as any,

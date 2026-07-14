@@ -86,6 +86,15 @@ describe('ChatAnthropic alignment', () => {
     );
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 101])(
+    'rejects unsafe maxRetries value %s',
+    (maxRetries) => {
+      expect(() => new ChatAnthropic({ maxRetries })).toThrow(
+        'maxRetries must be an integer between 0 and 100.'
+      );
+    }
+  );
+
   it('passes python-aligned client options and invoke params', async () => {
     const fetchMock = vi.fn(
       async () => new Response()

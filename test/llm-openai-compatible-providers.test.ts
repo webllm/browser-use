@@ -65,6 +65,40 @@ describe('OpenAI-compatible providers alignment', () => {
     openaiCreateMock.mockResolvedValue(buildResponse('ok'));
   });
 
+  it('rejects retry counts that can make SDK retries unbounded', () => {
+    const factories = [
+      (maxRetries: number) => new ChatOpenAI({ maxRetries }),
+      (maxRetries: number) =>
+        new ChatOpenAILike({ model: 'test-model', maxRetries }),
+      (maxRetries: number) => new ChatLiteLLM({ maxRetries }),
+      (maxRetries: number) => new ChatDeepSeek({ maxRetries }),
+      (maxRetries: number) => new ChatOpenRouter({ maxRetries }),
+      (maxRetries: number) => new ChatMistral({ maxRetries }),
+      (maxRetries: number) => new ChatCerebras({ maxRetries }),
+      (maxRetries: number) => new ChatVercel({ maxRetries }),
+    ];
+
+    for (const factory of factories) {
+      for (const maxRetries of [Number.POSITIVE_INFINITY, -1, 1.5, 101]) {
+        expect(() => factory(maxRetries)).toThrow(
+          'maxRetries must be an integer between 0 and 100.'
+        );
+      }
+    }
+
+    for (const factory of [
+      (maxRetries: number) =>
+        new ChatDeepSeek({ clientParams: { maxRetries } }),
+      (maxRetries: number) => new ChatMistral({ clientParams: { maxRetries } }),
+      (maxRetries: number) =>
+        new ChatCerebras({ clientParams: { maxRetries } }),
+    ]) {
+      expect(() => factory(Number.POSITIVE_INFINITY)).toThrow(
+        'maxRetries must be an integer between 0 and 100.'
+      );
+    }
+  });
+
   it('allows ChatOpenAILike to pass through ChatOpenAI options', async () => {
     const llm = new ChatOpenAILike({
       model: 'gpt-4o-mini',

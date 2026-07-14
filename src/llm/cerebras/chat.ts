@@ -13,6 +13,7 @@ import {
   type CerebrasMessage,
 } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatCerebrasOptions {
   model?: string;
@@ -66,12 +67,15 @@ export class ChatCerebras implements BaseChatModel {
     this.removeMinItemsFromSchema = removeMinItemsFromSchema;
     this.removeDefaultsFromSchema = removeDefaultsFromSchema;
 
+    const configuredMaxRetries =
+      (clientParams as any)?.maxRetries ?? maxRetries;
+
     this.client = new OpenAI({
       apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
-      maxRetries,
       ...(clientParams ?? {}),
+      maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(
         (clientParams as any)?.fetchOptions as RequestInit | undefined
       ) as any,

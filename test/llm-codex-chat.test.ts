@@ -70,6 +70,15 @@ describe('ChatCodex', () => {
     responsesCreateMock.mockResolvedValue(buildResponse('ok'));
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 101])(
+    'rejects unsafe maxRetries value %s',
+    (maxRetries) => {
+      expect(() => new ChatCodex({ apiKey: 'token', maxRetries })).toThrow(
+        'maxRetries must be an integer between 0 and 100.'
+      );
+    }
+  );
+
   afterEach(async () => {
     vi.restoreAllMocks();
     await Promise.all(

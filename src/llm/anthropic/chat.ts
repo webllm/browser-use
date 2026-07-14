@@ -15,6 +15,7 @@ import {
 } from '../exceptions.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatAnthropicOptions {
   model?: string;
@@ -103,7 +104,7 @@ export class ChatAnthropic implements BaseChatModel {
       authToken,
       baseURL,
       timeout,
-      maxRetries,
+      maxRetries: validateMaxRetries(maxRetries),
       defaultHeaders,
       defaultQuery,
       ...(fetchImplementation ? { fetch: fetchImplementation } : {}),

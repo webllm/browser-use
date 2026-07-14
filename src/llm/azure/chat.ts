@@ -12,6 +12,7 @@ import { ResponsesAPIMessageSerializer } from '../openai/responses-serializer.js
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 const RESPONSES_API_ONLY_MODELS = [
   'gpt-5.1-codex',
@@ -142,7 +143,7 @@ export class ChatAzure implements BaseChatModel {
         azureAdTokenProvider ??
         (azureAdToken ? async () => String(azureAdToken) : undefined),
       timeout: timeout ?? undefined,
-      maxRetries,
+      maxRetries: validateMaxRetries(maxRetries),
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,

@@ -11,6 +11,7 @@ import { zodSchemaToJsonSchema } from '../schema.js';
 import { OpenAIMessageSerializer } from '../openai/serializer.js';
 import { MistralSchemaOptimizer } from './schema.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatMistralOptions {
   model?: string;
@@ -76,15 +77,18 @@ export class ChatMistral implements BaseChatModel {
     this.removeMinItemsFromSchema = removeMinItemsFromSchema;
     this.removeDefaultsFromSchema = removeDefaultsFromSchema;
 
+    const configuredMaxRetries =
+      (clientParams as any)?.maxRetries ?? maxRetries;
+
     this.client = new OpenAI({
       apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
-      maxRetries,
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
       ...(clientParams ?? {}),
+      maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
   }

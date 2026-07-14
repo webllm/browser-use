@@ -10,6 +10,7 @@ import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { GroqMessageSerializer } from './serializer.js';
 import { createNoRedirectFetch } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 const JsonSchemaModels = [
   'meta-llama/llama-4-maverick-17b-128e-instruct',
@@ -71,7 +72,7 @@ export class ChatGroq implements BaseChatModel {
     this.client = new Groq({
       apiKey,
       baseURL,
-      maxRetries,
+      maxRetries: validateMaxRetries(maxRetries),
       fetch: createNoRedirectFetch(fetchImplementation),
     });
   }

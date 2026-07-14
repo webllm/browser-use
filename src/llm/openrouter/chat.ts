@@ -9,6 +9,7 @@ import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { OpenRouterMessageSerializer } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatOpenRouterOptions {
   model?: string;
@@ -76,7 +77,7 @@ export class ChatOpenRouter implements BaseChatModel {
       apiKey,
       baseURL,
       timeout: timeout ?? undefined,
-      maxRetries,
+      maxRetries: validateMaxRetries(maxRetries),
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,

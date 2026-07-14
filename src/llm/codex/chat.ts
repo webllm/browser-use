@@ -19,6 +19,7 @@ import {
   resolveCodexRuntimeCredentials,
 } from './auth.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
+import { validateMaxRetries } from '../retry.js';
 
 export interface ChatCodexOptions {
   model?: string;
@@ -127,7 +128,7 @@ export class ChatCodex implements BaseChatModel {
     this.baseURL =
       (baseURL ?? '').trim().replace(/\/+$/, '') || DEFAULT_CODEX_BASE_URL;
     this.timeout = timeout;
-    this.maxRetries = maxRetries;
+    this.maxRetries = validateMaxRetries(maxRetries);
     this.defaultHeaders = defaultHeaders;
     this.defaultQuery = defaultQuery;
     this.fetchImplementation = fetchImplementation;

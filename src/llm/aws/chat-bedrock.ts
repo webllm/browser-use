@@ -12,6 +12,7 @@ import {
 import { ChatInvokeCompletion } from '../views.js';
 import { type Message } from '../messages.js';
 import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
+import { validateMaxRetries } from '../retry.js';
 import { AWSBedrockMessageSerializer } from './serializer.js';
 
 export interface ChatBedrockConverseOptions {
@@ -87,7 +88,9 @@ export class ChatBedrockConverse implements BaseChatModel {
     this.client = new BedrockRuntimeClient({
       region: bedrockRegion,
       ...(credentials ? { credentials } : {}),
-      ...(maxRetries !== undefined ? { maxAttempts: maxRetries } : {}),
+      ...(maxRetries !== undefined
+        ? { maxAttempts: validateMaxRetries(maxRetries, 1) }
+        : {}),
     });
   }
 
