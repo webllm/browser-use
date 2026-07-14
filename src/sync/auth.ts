@@ -15,6 +15,10 @@ import { uuid7str } from '../utils.js';
 export const TEMP_USER_ID = '99999999-9999-9999-9999-999999999999';
 export const MAX_CLOUD_AUTH_FILE_BYTES = 1024 * 1024;
 export const MAX_DEVICE_ID_FILE_BYTES = MAX_PRIVATE_DEVICE_ID_BYTES;
+export const MAX_SYNC_AUTH_RESPONSE_BYTES = 1024 * 1024;
+export const SYNC_AUTH_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_POLL_DELAY_SECONDS = 300;
+const MAX_POLL_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 const logger = createLogger('browser_use.sync.auth');
 
@@ -91,6 +95,30 @@ const getOrCreateDeviceId = () => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizePollDelay = (value: unknown, fallback: number) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, MAX_POLL_DELAY_SECONDS)
+    : fallback;
+};
+
+const normalizePollTimeout = (value: unknown) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.min(parsed, MAX_POLL_TIMEOUT_SECONDS)
+    : 1800;
+};
+
+const pollSleepMilliseconds = (
+  delaySeconds: number,
+  startedAt: number,
+  timeoutMs: number
+) =>
+  Math.max(
+    0,
+    Math.min(delaySeconds * 1000, timeoutMs - (Date.now() - startedAt))
+  );
+
 const stripTrailingSlash = (input: string) => input.replace(/\/+$/, '');
 
 const terminalWidth = () => Math.max((process.stdout?.columns ?? 80) - 40, 20);
@@ -149,6 +177,9 @@ export class DeviceAuthClient {
     return this.client.post(this.buildUrl(pathname), form, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       maxRedirects: 0,
+      timeout: SYNC_AUTH_REQUEST_TIMEOUT_MS,
+      maxContentLength: MAX_SYNC_AUTH_RESPONSE_BYTES,
+      maxBodyLength: MAX_SYNC_AUTH_RESPONSE_BYTES,
     });
   }
 
@@ -164,8 +195,9 @@ export class DeviceAuthClient {
 
   async poll_for_token(device_code: string, interval = 3, timeout = 1800) {
     const started = Date.now();
-    let delay = interval;
-    while (Date.now() - started < timeout * 1000) {
+    const timeoutMs = normalizePollTimeout(timeout) * 1000;
+    let delay = normalizePollDelay(interval, 3);
+    while (Date.now() - started < timeoutMs) {
       try {
         const response = await this.postForm('/api/v1/oauth/device/token', {
           grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
@@ -174,12 +206,15 @@ export class DeviceAuthClient {
         });
         const data = response.data as Record<string, any>;
         if (data.error === 'authorization_pending') {
-          await sleep(delay * 1000);
+          await sleep(pollSleepMilliseconds(delay, started, timeoutMs));
           continue;
         }
         if (data.error === 'slow_down') {
-          delay = data.interval ?? delay * 2;
-          await sleep(delay * 1000);
+          delay = normalizePollDelay(
+            data.interval,
+            Math.min(delay * 2, MAX_POLL_DELAY_SECONDS)
+          );
+          await sleep(pollSleepMilliseconds(delay, started, timeoutMs));
           continue;
         }
         if (data.error) {
@@ -198,15 +233,18 @@ export class DeviceAuthClient {
           ['authorization_pending', 'slow_down'].includes(payload.error)
         ) {
           if (payload.error === 'slow_down') {
-            delay = payload.interval ?? delay * 2;
+            delay = normalizePollDelay(
+              payload.interval,
+              Math.min(delay * 2, MAX_POLL_DELAY_SECONDS)
+            );
           }
-          await sleep(delay * 1000);
+          await sleep(pollSleepMilliseconds(delay, started, timeoutMs));
           continue;
         }
         logger.debug(`Error polling for token: ${error?.message ?? error}`);
         return null;
       }
-      await sleep(delay * 1000);
+      await sleep(pollSleepMilliseconds(delay, started, timeoutMs));
     }
     return null;
   }

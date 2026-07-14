@@ -7,7 +7,9 @@ import {
   DeviceAuthClient,
   load_cloud_auth_config,
   MAX_CLOUD_AUTH_FILE_BYTES,
+  MAX_SYNC_AUTH_RESPONSE_BYTES,
   save_cloud_api_token,
+  SYNC_AUTH_REQUEST_TIMEOUT_MS,
 } from '../src/sync/auth.js';
 
 describe('DeviceAuthClient alignment', () => {
@@ -51,7 +53,12 @@ describe('DeviceAuthClient alignment', () => {
     expect(form).toBeInstanceOf(URLSearchParams);
     const params = form as URLSearchParams;
     expect(params.get('agent_session_id')).toBe('');
-    expect(post.mock.calls[0]?.[2]).toMatchObject({ maxRedirects: 0 });
+    expect(post.mock.calls[0]?.[2]).toMatchObject({
+      maxRedirects: 0,
+      timeout: SYNC_AUTH_REQUEST_TIMEOUT_MS,
+      maxContentLength: MAX_SYNC_AUTH_RESPONSE_BYTES,
+      maxBodyLength: MAX_SYNC_AUTH_RESPONSE_BYTES,
+    });
   });
 
   it('clear_auth removes cloud auth file instead of writing empty values', async () => {
@@ -162,5 +169,27 @@ describe('DeviceAuthClient alignment', () => {
     expect(client.device_id).toBeTruthy();
     expect(fs.readFileSync(targetFile, 'utf8')).toBe('do-not-overwrite');
     expect(fs.lstatSync(deviceIdFile).isSymbolicLink()).toBe(false);
+  });
+
+  it('normalizes invalid server polling intervals', async () => {
+    vi.useFakeTimers();
+    const post = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { error: 'slow_down', interval: Number.POSITIVE_INFINITY },
+      })
+      .mockResolvedValueOnce({ data: { access_token: 'token' } });
+    const client = new DeviceAuthClient('https://api.example.com', {
+      post,
+    } as any);
+
+    try {
+      const polling = client.poll_for_token('device-code', -1, 10);
+      await vi.advanceTimersByTimeAsync(6000);
+      await expect(polling).resolves.toEqual({ access_token: 'token' });
+      expect(post).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
