@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const MAX_PRIVATE_DEVICE_ID_BYTES = 255;
+export const MAX_PRIVATE_STATE_FILE_BYTES = 64 * 1024 * 1024;
 const PRIVATE_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
 export const ensurePrivateDirectory = (dirPath: string) => {
@@ -17,6 +18,15 @@ export const ensurePrivateDirectory = (dirPath: string) => {
 };
 
 export const readBoundedPrivateFile = (filePath: string, maxBytes: number) => {
+  if (
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > MAX_PRIVATE_STATE_FILE_BYTES
+  ) {
+    throw new RangeError(
+      `maxBytes must be an integer between 1 and ${MAX_PRIVATE_STATE_FILE_BYTES}`
+    );
+  }
   const pathStats = fs.lstatSync(filePath);
   if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
     throw new Error(`Private state path is not a regular file: ${filePath}`);
