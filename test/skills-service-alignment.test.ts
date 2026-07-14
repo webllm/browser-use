@@ -108,7 +108,7 @@ describe('CloudSkillService alignment', () => {
   });
 
   it('loads wildcard skills from only the first page', async () => {
-    const pageItems = Array.from({ length: 100 }, (_, index) =>
+    const pageItems = Array.from({ length: 150 }, (_, index) =>
       makeSkillItem(`skill-${index}`)
     );
     const fetchMock = vi.fn(async () => ({
@@ -127,6 +127,61 @@ describe('CloudSkillService alignment', () => {
     const skills = await service.get_all_skills();
     expect(skills).toHaveLength(100);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds skill metadata before building action schemas', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        items: [
+          {
+            ...makeSkillItem('skill-1', 'x'.repeat(1_000)),
+            description: 'd'.repeat(20_000),
+            parameters: [
+              { name: '__proto__', type: 'string' },
+              ...Array.from({ length: 300 }, (_, index) => ({
+                name: `field_${index}`,
+                type: 'string',
+                description: 'p'.repeat(5_000),
+              })),
+            ],
+          },
+        ],
+      }),
+    }));
+    const service = new CloudSkillService({
+      skill_ids: ['*'],
+      api_key: 'test-key',
+      base_url: 'https://api.test',
+      fetch_impl: fetchMock as any,
+    });
+
+    const [skill] = await service.get_all_skills();
+    expect(skill?.title).toHaveLength(512);
+    expect(skill?.description).toHaveLength(16 * 1024);
+    expect(skill?.parameters).toHaveLength(255);
+    expect(skill?.parameters[0]?.description).toHaveLength(4 * 1024);
+    expect(skill?.parameters.some((param) => param.name === '__proto__')).toBe(
+      false
+    );
+  });
+
+  it('rejects unbounded requested skill IDs', () => {
+    expect(
+      () =>
+        new CloudSkillService({
+          skill_ids: Array(501).fill('skill'),
+          api_key: 'test-key',
+        })
+    ).toThrow(/cannot exceed 500/);
+    expect(
+      () =>
+        new CloudSkillService({
+          skill_ids: ['x'.repeat(257)],
+          api_key: 'test-key',
+        })
+    ).toThrow(/between 1 and 256/);
   });
 
   it('filters explicit skill IDs and excludes unavailable ones', async () => {

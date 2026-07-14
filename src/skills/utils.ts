@@ -48,7 +48,7 @@ export const build_skill_parameters_schema = (
   options: { exclude_cookies?: boolean } = {}
 ): z.ZodObject<Record<string, z.ZodTypeAny>> => {
   const { exclude_cookies = false } = options;
-  const shape: Record<string, z.ZodTypeAny> = {};
+  const shape = Object.create(null) as Record<string, z.ZodTypeAny>;
 
   for (const param of parameters) {
     if (exclude_cookies && param.type === 'cookie') {

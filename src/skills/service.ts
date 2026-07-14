@@ -31,16 +31,75 @@ interface SkillListResponse {
   items?: unknown[];
 }
 
+const MAX_REQUESTED_SKILL_IDS = 500;
+const MAX_SKILL_ID_CHARS = 256;
+const MAX_SKILL_TITLE_CHARS = 512;
+const MAX_SKILL_DESCRIPTION_CHARS = 16 * 1024;
+const MAX_SKILL_PARAMETERS = 256;
+const MAX_SKILL_PARAMETER_NAME_CHARS = 256;
+const MAX_SKILL_PARAMETER_DESCRIPTION_CHARS = 4 * 1024;
+const MAX_SKILL_OUTPUT_SCHEMA_DEPTH = 50;
+const MAX_SKILL_OUTPUT_SCHEMA_ENTRIES = 10_000;
+const MAX_SKILL_OUTPUT_SCHEMA_STRING_CHARS = 64 * 1024;
+
+const boundedTrimmedString = (value: unknown, maxChars: number) =>
+  typeof value === 'string' ? value.slice(0, maxChars).trim() : '';
+
+const isSafeSkillParameterName = (value: string) =>
+  value !== '__proto__' && value !== 'prototype' && value !== 'constructor';
+
+const isBoundedOutputSchema = (root: unknown) => {
+  if (!root || typeof root !== 'object' || Array.isArray(root)) return false;
+  const pending: Array<{ value: unknown; depth: number }> = [
+    { value: root, depth: 0 },
+  ];
+  const seen = new WeakSet<object>();
+  let entries = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (typeof current.value === 'string') {
+      if (current.value.length > MAX_SKILL_OUTPUT_SCHEMA_STRING_CHARS) {
+        return false;
+      }
+      continue;
+    }
+    if (!current.value || typeof current.value !== 'object') continue;
+    if (current.depth >= MAX_SKILL_OUTPUT_SCHEMA_DEPTH) return false;
+    if (seen.has(current.value)) return false;
+    seen.add(current.value);
+    const values = Array.isArray(current.value)
+      ? current.value
+      : Object.entries(current.value as Record<string, unknown>).map(
+          ([key, value]) => {
+            if (key.length > MAX_SKILL_PARAMETER_NAME_CHARS) {
+              return Symbol.for('browser-use.invalid-schema-key');
+            }
+            return value;
+          }
+        );
+    entries += values.length;
+    if (entries > MAX_SKILL_OUTPUT_SCHEMA_ENTRIES) return false;
+    for (const value of values) {
+      if (typeof value === 'symbol') return false;
+      pending.push({ value, depth: current.depth + 1 });
+    }
+  }
+  return true;
+};
+
 const toSkillParameter = (raw: unknown): SkillParameterSchema | null => {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
 
   const record = raw as Record<string, unknown>;
-  const name = typeof record.name === 'string' ? record.name.trim() : '';
-  const type = typeof record.type === 'string' ? record.type.trim() : '';
+  const name = boundedTrimmedString(
+    record.name,
+    MAX_SKILL_PARAMETER_NAME_CHARS
+  );
+  const type = boundedTrimmedString(record.type, 32);
 
-  if (!name || !type) {
+  if (!name || !type || !isSafeSkillParameterName(name)) {
     return null;
   }
 
@@ -61,7 +120,9 @@ const toSkillParameter = (raw: unknown): SkillParameterSchema | null => {
     required:
       typeof record.required === 'boolean' ? record.required : undefined,
     description:
-      typeof record.description === 'string' ? record.description : undefined,
+      typeof record.description === 'string'
+        ? record.description.slice(0, MAX_SKILL_PARAMETER_DESCRIPTION_CHARS)
+        : undefined,
   };
 };
 
@@ -71,26 +132,27 @@ const toSkillDefinition = (raw: unknown): SkillDefinition | null => {
   }
 
   const record = raw as Record<string, unknown>;
-  const id = typeof record.id === 'string' ? record.id.trim() : '';
-  const title = typeof record.title === 'string' ? record.title.trim() : '';
-  const description =
-    typeof record.description === 'string' ? record.description.trim() : '';
+  const id = boundedTrimmedString(record.id, MAX_SKILL_ID_CHARS);
+  const title = boundedTrimmedString(record.title, MAX_SKILL_TITLE_CHARS);
+  const description = boundedTrimmedString(
+    record.description,
+    MAX_SKILL_DESCRIPTION_CHARS
+  );
 
   if (!id || !title) {
     return null;
   }
 
   const parametersRaw = Array.isArray(record.parameters)
-    ? record.parameters
+    ? record.parameters.slice(0, MAX_SKILL_PARAMETERS)
     : [];
   const parameters = parametersRaw
     .map((entry) => toSkillParameter(entry))
     .filter((entry): entry is SkillParameterSchema => entry != null);
 
-  const output_schema =
-    record.output_schema && typeof record.output_schema === 'object'
-      ? (record.output_schema as Record<string, unknown>)
-      : null;
+  const output_schema = isBoundedOutputSchema(record.output_schema)
+    ? (record.output_schema as Record<string, unknown>)
+    : null;
 
   return {
     id,
@@ -111,7 +173,27 @@ export class CloudSkillService implements SkillService {
   private readonly skills = new Map<string, SkillDefinition>();
 
   constructor(options: CloudSkillServiceOptions) {
-    this.skill_ids = options.skill_ids;
+    if (
+      !Array.isArray(options.skill_ids) ||
+      options.skill_ids.length > MAX_REQUESTED_SKILL_IDS
+    ) {
+      throw new RangeError(
+        `skill_ids cannot exceed ${MAX_REQUESTED_SKILL_IDS} entries`
+      );
+    }
+    const normalizedSkillIds = options.skill_ids.map((skillId) => {
+      const normalized = boundedTrimmedString(skillId, MAX_SKILL_ID_CHARS);
+      if (
+        !normalized ||
+        (normalized !== '*' && normalized.length !== skillId.trim().length)
+      ) {
+        throw new RangeError(
+          `skill IDs must contain between 1 and ${MAX_SKILL_ID_CHARS} characters`
+        );
+      }
+      return normalized;
+    });
+    this.skill_ids = Array.from(new Set(normalizedSkillIds));
     this.api_key = options.api_key ?? process.env.BROWSER_USE_API_KEY ?? '';
     this.base_url = options.base_url ?? CONFIG.BROWSER_USE_CLOUD_API_URL;
     this.fetch_impl = options.fetch_impl ?? fetch;
@@ -179,7 +261,9 @@ export class CloudSkillService implements SkillService {
       `/api/v1/skills?${query.toString()}`
     )) as SkillListResponse;
 
-    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const items = Array.isArray(payload?.items)
+      ? payload.items.slice(0, page_size)
+      : [];
     const skills: SkillDefinition[] = [];
 
     for (const item of items) {
