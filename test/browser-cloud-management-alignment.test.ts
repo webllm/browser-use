@@ -135,17 +135,17 @@ describe('browser cloud management alignment', () => {
   });
 
   it('times out stalled cloud management requests', async () => {
-    let requestSignal: AbortSignal | null = null;
+    const requestState: { signal: AbortSignal | null } = { signal: null };
     const client = new CloudManagementClient({
       api_base_url: 'https://api.browser-use.test',
       api_key: 'bu_test_key',
       request_timeout_ms: 5,
       fetch_impl: ((_url, init) => {
-        requestSignal = init?.signal ?? null;
+        requestState.signal = init?.signal ?? null;
         return new Promise<Response>((_resolve, reject) => {
-          requestSignal?.addEventListener(
+          requestState.signal?.addEventListener(
             'abort',
-            () => reject(requestSignal?.reason),
+            () => reject(requestState.signal?.reason),
             { once: true }
           );
         });
@@ -153,6 +153,6 @@ describe('browser cloud management alignment', () => {
     });
 
     await expect(client.list_tasks()).rejects.toThrow('HTTP request timed out');
-    expect(requestSignal?.aborted).toBe(true);
+    expect(requestState.signal?.aborted).toBe(true);
   });
 });

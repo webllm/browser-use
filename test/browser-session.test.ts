@@ -4528,14 +4528,14 @@ describe('BrowserSession PDF Auto Download', () => {
   it('aborts stalled PDF auto-downloads', async () => {
     vi.useFakeTimers();
     const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pdf-'));
-    let requestSignal: AbortSignal | null = null;
+    const requestState: { signal: AbortSignal | null } = { signal: null };
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async (_url, init) =>
         await new Promise<Response>((_resolve, reject) => {
-          requestSignal = init?.signal ?? null;
-          requestSignal?.addEventListener(
+          requestState.signal = init?.signal ?? null;
+          requestState.signal?.addEventListener(
             'abort',
-            () => reject(requestSignal?.reason),
+            () => reject(requestState.signal?.reason),
             { once: true }
           );
         })
@@ -4555,7 +4555,7 @@ describe('BrowserSession PDF Auto Download', () => {
       await vi.advanceTimersByTimeAsync(30_000);
 
       await expect(download).resolves.toBeNull();
-      expect(requestSignal?.aborted).toBe(true);
+      expect(requestState.signal?.aborted).toBe(true);
       expect(fs.readdirSync(downloadsDir)).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
