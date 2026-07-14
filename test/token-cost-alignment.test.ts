@@ -258,6 +258,27 @@ describe('TokenCost alignment', () => {
     }
   });
 
+  it('does not follow symbolic links while reading pricing caches', async () => {
+    if (process.platform === 'win32') return;
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
+    const targetPath = path.join(tempDir, 'target.json');
+    const cachePath = path.join(tempDir, 'pricing.json');
+    fs.writeFileSync(
+      targetPath,
+      JSON.stringify({ timestamp: new Date(), data: {} })
+    );
+    fs.symlinkSync(targetPath, cachePath);
+
+    try {
+      const tokenCost = new TokenCost(true);
+      await expect((tokenCost as any).loadFromCache(cachePath)).rejects.toThrow(
+        'not a regular file'
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('bounds LiteLLM pricing downloads and disables redirects', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
     mockedAxiosGet.mockResolvedValueOnce({ data: {} });
@@ -276,6 +297,15 @@ describe('TokenCost alignment', () => {
           maxRedirects: 0,
         }
       );
+      if (process.platform !== 'win32') {
+        const cacheFiles = fs
+          .readdirSync(tempDir)
+          .filter((file) => file.endsWith('.json'));
+        expect(cacheFiles).toHaveLength(1);
+        expect(
+          fs.statSync(path.join(tempDir, cacheFiles[0]!)).mode & 0o777
+        ).toBe(0o600);
+      }
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

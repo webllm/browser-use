@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { encode } from 'gpt-tokenizer';
 import axios from 'axios';
 import { CONFIG } from '../config.js';
@@ -57,19 +58,37 @@ const xdgCacheHome = () => {
 };
 
 const ensureDir = async (dir: string) => {
-  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') {
+    await fs.promises.chmod(dir, 0o700);
+  }
 };
 
 const readBoundedPricingCache = async (file: string) => {
+  const pathStats = await fs.promises.lstat(file);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new Error(`Pricing cache is not a regular file: ${file}`);
+  }
   const nonBlockingFlag =
     process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
   const handle = await fs.promises.open(
     file,
-    fs.constants.O_RDONLY | nonBlockingFlag
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
   );
   try {
     const stats = await handle.stat();
-    if (!stats.isFile()) {
+    const currentPathStats = await fs.promises.lstat(file);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino
+    ) {
       throw new Error(`Pricing cache is not a regular file: ${file}`);
     }
     if (stats.size > MAX_PRICING_METADATA_BYTES) {
@@ -172,9 +191,23 @@ export class TokenCost {
       if (!jsonFiles.length) {
         return null;
       }
-      const sorted = jsonFiles
-        .map((file) => path.join(this.cacheDir, file))
-        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+      const candidates: Array<{ file: string; mtimeMs: number }> = [];
+      for (const fileName of jsonFiles) {
+        const file = path.join(this.cacheDir, fileName);
+        try {
+          const stats = await fs.promises.lstat(file);
+          if (stats.isSymbolicLink()) {
+            await fs.promises.unlink(file).catch(() => undefined);
+          } else if (stats.isFile()) {
+            candidates.push({ file, mtimeMs: stats.mtimeMs });
+          }
+        } catch {
+          // Ignore entries that disappear during cache discovery.
+        }
+      }
+      const sorted = candidates
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .map((candidate) => candidate.file);
 
       for (const file of sorted) {
         const isValid = await this.isCacheValid(file);
@@ -220,15 +253,20 @@ export class TokenCost {
         data: response.data,
       };
       await ensureDir(this.cacheDir);
-      const fileName = `pricing_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      const fileName = `pricing_${new Date().toISOString().replace(/[:.]/g, '-')}_${randomUUID()}.json`;
       const serializedCache = JSON.stringify(cached);
       if (
         Buffer.byteLength(serializedCache, 'utf8') <= MAX_PRICING_METADATA_BYTES
       ) {
-        await fs.promises.writeFile(
-          path.join(this.cacheDir, fileName),
-          serializedCache
-        );
+        const cachePath = path.join(this.cacheDir, fileName);
+        await fs.promises.writeFile(cachePath, serializedCache, {
+          encoding: 'utf8',
+          mode: 0o600,
+          flag: 'wx',
+        });
+        if (process.platform !== 'win32') {
+          await fs.promises.chmod(cachePath, 0o600);
+        }
       }
     } catch (error) {
       logger.debug(
