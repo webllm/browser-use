@@ -142,6 +142,13 @@ const EMPTY_DOM_RETRY_DELAY_MS = 250;
 const REMOTE_RECONNECT_DELAYS_MS = [1000, 2000, 4000] as const;
 const REMOTE_RECONNECT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+const requireFiniteBrowserActionNumber = (value: number, name: string) => {
+  if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
+    throw new BrowserError(`${name} must be a finite safe number`);
+  }
+  return value;
+};
+
 const chmodPrivateFileBestEffort = (filePath: string) => {
   if (process.platform === 'win32') {
     return;
@@ -3705,6 +3712,8 @@ export class BrowserSession {
   ) {
     const signal = options.signal ?? null;
     this._throwIfAborted(signal);
+    requireFiniteBrowserActionNumber(coordinate_x, 'coordinate_x');
+    requireFiniteBrowserActionNumber(coordinate_y, 'coordinate_y');
     const page = await this._withAbort(this.get_current_page(), signal);
     await this.validate_page_after_action(page, signal);
     if (!page?.mouse?.click) {
@@ -3732,7 +3741,12 @@ export class BrowserSession {
   ) {
     const signal = options.signal ?? null;
     this._throwIfAborted(signal);
-    const normalizedAmount = Math.max(Math.floor(Math.abs(amount)), 0);
+    const normalizedAmount = Math.max(
+      Math.floor(
+        Math.abs(requireFiniteBrowserActionNumber(amount, 'scroll amount'))
+      ),
+      0
+    );
     if (normalizedAmount === 0) {
       return;
     }

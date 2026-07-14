@@ -2484,6 +2484,38 @@ esac
     expect(scrollContainerSpy).toHaveBeenLastCalledWith(-250);
   });
 
+  it('rejects non-finite coordinate and scroll action inputs', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const fakePage = {
+      mouse: { click: vi.fn(async () => {}) },
+      evaluate: vi.fn(async () => false),
+      url: vi.fn(() => 'https://example.com'),
+      title: vi.fn(async () => 'Example'),
+      waitForLoadState: vi.fn(async () => {}),
+    } as any;
+    const getPage = vi
+      .spyOn(session, 'get_current_page')
+      .mockResolvedValue(fakePage);
+
+    await expect(session.click_coordinates(Infinity, 10)).rejects.toThrow(
+      'coordinate_x must be a finite safe number'
+    );
+    await expect(session.click_coordinates(10, Number.NaN)).rejects.toThrow(
+      'coordinate_y must be a finite safe number'
+    );
+    await expect(session.scroll('down', Number.NaN)).rejects.toThrow(
+      'scroll amount must be a finite safe number'
+    );
+    await expect(session.scroll('down', Number.MAX_VALUE)).rejects.toThrow(
+      'scroll amount must be a finite safe number'
+    );
+    expect(getPage).not.toHaveBeenCalled();
+    expect(fakePage.mouse.click).not.toHaveBeenCalled();
+    expect(fakePage.evaluate).not.toHaveBeenCalled();
+  });
+
   it('switches tabs by 4-char tab_id aliases', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({}),
