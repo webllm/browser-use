@@ -208,6 +208,19 @@ describe('ChatBrowserUse alignment', () => {
     expect(() => new ChatBrowserUse({ model })).toThrow(/Invalid model/);
   });
 
+  it.each([
+    ['non-finite timeout', { timeout: Number.POSITIVE_INFINITY }],
+    ['NaN timeout', { timeout: Number.NaN }],
+    ['zero timeout', { timeout: 0 }],
+    ['non-finite retries', { maxRetries: Number.POSITIVE_INFINITY }],
+    ['fractional retries', { maxRetries: 1.5 }],
+    ['excessive retries', { maxRetries: 101 }],
+    ['non-finite base delay', { retryBaseDelay: Number.NaN }],
+    ['non-finite maximum delay', { retryMaxDelay: Number.POSITIVE_INFINITY }],
+  ])('rejects %s', (_label, options) => {
+    expect(() => new ChatBrowserUse(options)).toThrow(RangeError);
+  });
+
   it('sends structured output schema and parses structured completion', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createFetchResponse(200, {

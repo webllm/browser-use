@@ -24,6 +24,8 @@ const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const VALID_MODELS = new Set(['bu-latest', 'bu-1-0', 'bu-2-0']);
 const PROVIDER_PREFIXED_MODEL = /^[^/\s]+\/\S+$/;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MAX_RETRY_ATTEMPTS = 100;
 
 class HttpStatusError extends Error {
   constructor(
@@ -64,6 +66,20 @@ const getJsonErrorDetail = (value: unknown): string => {
   } catch {
     return '';
   }
+};
+
+const requireFiniteRange = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be a finite number between ${minimum} and ${maximum}.`
+    );
+  }
+  return value;
 };
 
 export class ChatBrowserUse implements BaseChatModel {
@@ -111,10 +127,36 @@ export class ChatBrowserUse implements BaseChatModel {
 
     this.apiKey = apiKey;
     this.baseUrl = baseUrl.replace(/\/+$/, '');
-    this.timeoutMs = Math.max(1, Math.round(timeout * 1000));
-    this.maxRetries = Math.max(1, Math.trunc(maxRetries));
-    this.retryBaseDelay = Math.max(0.001, retryBaseDelay);
-    this.retryMaxDelay = Math.max(this.retryBaseDelay, retryMaxDelay);
+    const boundedTimeout = requireFiniteRange(
+      'timeout',
+      timeout,
+      0.001,
+      MAX_TIMER_DELAY_MS / 1000
+    );
+    this.timeoutMs = Math.max(1, Math.round(boundedTimeout * 1000));
+    if (
+      !Number.isSafeInteger(maxRetries) ||
+      maxRetries < 1 ||
+      maxRetries > MAX_RETRY_ATTEMPTS
+    ) {
+      throw new RangeError(
+        `maxRetries must be an integer between 1 and ${MAX_RETRY_ATTEMPTS}.`
+      );
+    }
+    this.maxRetries = maxRetries;
+    this.retryBaseDelay = requireFiniteRange(
+      'retryBaseDelay',
+      retryBaseDelay,
+      0.001,
+      MAX_TIMER_DELAY_MS / 1000
+    );
+    const boundedRetryMaxDelay = requireFiniteRange(
+      'retryMaxDelay',
+      retryMaxDelay,
+      0.001,
+      MAX_TIMER_DELAY_MS / 1000
+    );
+    this.retryMaxDelay = Math.max(this.retryBaseDelay, boundedRetryMaxDelay);
     this.fast = fast;
     this.fetchImplementation = fetchImplementation;
   }
@@ -387,9 +429,9 @@ export class ChatBrowserUse implements BaseChatModel {
             this.retryMaxDelay
           );
           const jitter = Math.random() * delaySeconds * 0.1;
-          const sleepMs = Math.max(
-            1,
-            Math.round((delaySeconds + jitter) * 1000)
+          const sleepMs = Math.min(
+            MAX_TIMER_DELAY_MS,
+            Math.max(1, Math.round((delaySeconds + jitter) * 1000))
           );
           await sleep(sleepMs);
           continue;
