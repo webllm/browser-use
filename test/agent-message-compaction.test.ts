@@ -10,7 +10,7 @@ import {
   MessageManagerState,
 } from '../src/agent/message-manager/views.js';
 import { MessageManager } from '../src/agent/message-manager/service.js';
-import { SystemMessage } from '../src/llm/messages.js';
+import { SystemMessage, type Message } from '../src/llm/messages.js';
 import type { FileSystem } from '../src/filesystem/file-system.js';
 
 const createLlm = (completion = 'ok', model = 'gpt-test'): BaseChatModel =>
@@ -171,6 +171,54 @@ describe('Agent message compaction', () => {
     } finally {
       await agent.close();
     }
+  });
+
+  it('bounds the history text sent to the compaction model', async () => {
+    const { manager, state } = createBoundedHistoryManager();
+    for (let step = 1; step <= 12; step += 1) {
+      state.agent_history_items.push(
+        new HistoryItem(
+          step,
+          null,
+          `${String(step).padStart(2, '0')}-${'x'.repeat(128 * 1024)}`,
+          null,
+          null,
+          null,
+          null
+        )
+      );
+    }
+    const invoke = vi.fn(async (_messages: Message[]) => ({
+      completion: 'bounded',
+      usage: null,
+    }));
+    const llm = {
+      ...createLlm('bounded', 'compact-model'),
+      ainvoke: invoke,
+    } as unknown as BaseChatModel;
+
+    await manager.maybe_compact_messages(
+      llm,
+      {
+        enabled: true,
+        compact_every_n_steps: 1,
+        trigger_char_count: 1,
+        trigger_token_count: null,
+        chars_per_token: 4,
+        keep_last_items: 2,
+        summary_max_chars: 200,
+        include_read_state: false,
+        compaction_llm: null,
+      },
+      new AgentStepInfo(1, 20)
+    );
+
+    const messages = invoke.mock.calls[0]?.[0] ?? [];
+    const compactionInput = messages[1]?.text ?? '';
+    expect(compactionInput.length).toBeLessThanOrEqual(1024 * 1024 + 50);
+    expect(compactionInput).toContain(
+      'additional history omitted for compaction'
+    );
   });
 });
 

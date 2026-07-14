@@ -26,7 +26,10 @@ const MAX_ACTION_RESULTS_PER_STEP = 1_000;
 const MAX_READ_STATE_IMAGES = 10;
 const MAX_READ_STATE_IMAGE_CANDIDATES = 100;
 const MAX_READ_STATE_IMAGE_BASE64_CHARS = 20 * 1024 * 1024;
+const MAX_COMPACTION_HISTORY_CHARS = 1024 * 1024;
 const RESULT_TRUNCATION_NOTICE = '... [Content truncated at 60k characters]';
+const COMPACTION_HISTORY_TRUNCATION_NOTICE =
+  '\n<sys>[... additional history omitted for compaction ...]</sys>';
 
 const createBoundedTextAccumulator = (maxChars: number) => {
   const chunks: string[] = [];
@@ -57,6 +60,52 @@ const createBoundedTextAccumulator = (maxChars: number) => {
       return `${value.slice(0, maxChars - RESULT_TRUNCATION_NOTICE.length - 1)}\n${RESULT_TRUNCATION_NOTICE}`;
     },
   };
+};
+
+const measureHistoryUntil = (
+  historyItems: HistoryItem[],
+  targetChars: number
+) => {
+  let chars = 0;
+  for (let index = 0; index < historyItems.length; index += 1) {
+    if (index > 0) chars += 1;
+    const itemText = historyItems[index]?.to_string() ?? '';
+    const remaining = targetChars - chars;
+    if (itemText.length >= remaining) {
+      return { reached: true, chars: targetChars };
+    }
+    chars += itemText.length;
+  }
+  return { reached: chars >= targetChars, chars };
+};
+
+const renderBoundedCompactionHistory = (historyItems: HistoryItem[]) => {
+  const contentLimit =
+    MAX_COMPACTION_HISTORY_CHARS - COMPACTION_HISTORY_TRUNCATION_NOTICE.length;
+  const chunks: string[] = [];
+  let chars = 0;
+
+  for (let index = 0; index < historyItems.length; index += 1) {
+    const itemText = historyItems[index]?.to_string() ?? '';
+    const prefix = index > 0 ? '\n' : '';
+    const remaining = contentLimit - chars;
+    if (prefix.length + itemText.length > remaining) {
+      if (remaining > 0) {
+        const boundedPrefix = prefix.slice(0, remaining);
+        chunks.push(boundedPrefix);
+        chars += boundedPrefix.length;
+        if (chars < contentLimit) {
+          chunks.push(itemText.slice(0, contentLimit - chars));
+        }
+      }
+      chunks.push(COMPACTION_HISTORY_TRUNCATION_NOTICE);
+      return chunks.join('');
+    }
+    chunks.push(prefix, itemText);
+    chars += prefix.length + itemText.length;
+  }
+
+  return chunks.join('');
 };
 
 export class MessageManager {
@@ -397,17 +446,15 @@ export class MessageManager {
     }
 
     const historyItems = this.state.agent_history_items;
-    const fullHistoryText = historyItems
-      .map((item) => item.to_string())
-      .join('\n')
-      .trim();
     const triggerCharCount = settings.trigger_char_count ?? 40000;
-    if (fullHistoryText.length < triggerCharCount) {
+    const measuredHistory = measureHistoryUntil(historyItems, triggerCharCount);
+    if (!measuredHistory.reached) {
       return false;
     }
+    const boundedHistoryText = renderBoundedCompactionHistory(historyItems);
 
     logger.debug(
-      `Compacting message history (items=${historyItems.length}, chars=${fullHistoryText.length})`
+      `Compacting message history (items=${historyItems.length}, chars>=${measuredHistory.chars}, input_chars=${boundedHistoryText.length})`
     );
 
     const compactionSections: string[] = [];
@@ -417,7 +464,7 @@ export class MessageManager {
       );
     }
     compactionSections.push(
-      `<agent_history>\n${fullHistoryText}\n</agent_history>`
+      `<agent_history>\n${boundedHistoryText}\n</agent_history>`
     );
     if (settings.include_read_state && this.state.read_state_description) {
       compactionSections.push(
