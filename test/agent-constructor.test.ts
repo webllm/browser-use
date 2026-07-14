@@ -14,7 +14,12 @@ import {
   ModelProviderError,
   ModelRateLimitError,
 } from '../src/llm/exceptions.js';
-import { UserMessage } from '../src/llm/messages.js';
+import {
+  ContentPartImageParam,
+  ContentPartTextParam,
+  ImageURL,
+  UserMessage,
+} from '../src/llm/messages.js';
 import { BrowserSession } from '../src/browser/session.js';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { DEFAULT_FILE_SYSTEM_PATH } from '../src/filesystem/file-system.js';
@@ -592,6 +597,39 @@ describe('Agent constructor browser session alignment', () => {
           llm_screenshot_size: [8_192, 8_192],
         })
     ).toThrow(/total pixels/);
+  });
+
+  it.each([
+    [new Array(21).fill(null).map(() => new ContentPartTextParam('x'))],
+    [
+      new Array(11)
+        .fill(null)
+        .map(
+          () =>
+            new ContentPartImageParam(
+              new ImageURL('https://example.com/image.png')
+            )
+        ),
+    ],
+    [[new ContentPartTextParam('x'.repeat(64 * 1024 + 1))]],
+    [
+      [
+        new ContentPartImageParam(
+          new ImageURL(
+            `data:image/png;base64,${'x'.repeat(8 * 1024 * 1024 + 1)}`
+          )
+        ),
+      ],
+    ],
+  ])('rejects excessive sample image context', (sampleImages) => {
+    expect(
+      () =>
+        new Agent({
+          task: 'invalid sample images',
+          llm: createLlm(),
+          sample_images: sampleImages,
+        })
+    ).toThrow(RangeError);
   });
 
   it('only disables vision automatically for grok-3/grok-code models', async () => {

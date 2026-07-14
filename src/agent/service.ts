@@ -65,6 +65,7 @@ import {
   AssistantMessage,
   ContentPartImageParam,
   ContentPartTextParam,
+  ImageURL,
   SystemMessage,
   UserMessage,
 } from '../llm/messages.js';
@@ -414,11 +415,102 @@ const MAX_LLM_SCREENSHOT_PIXELS = 25_000_000;
 const MAX_SKILL_ACTION_RESULT_CHARS = 256 * 1024;
 const MAX_SKILL_ACTION_MEMORY_CHARS = 60_000;
 const MAX_SKILL_ACTION_ERROR_CHARS = 64 * 1024;
+const MAX_SAMPLE_IMAGE_PARTS = 20;
+const MAX_SAMPLE_IMAGES = 10;
+const MAX_SAMPLE_IMAGE_TEXT_CHARS = 64 * 1024;
+const MAX_SAMPLE_IMAGE_TOTAL_TEXT_CHARS = 256 * 1024;
+const MAX_SAMPLE_IMAGE_URL_CHARS = 8 * 1024 * 1024;
+const MAX_SAMPLE_IMAGE_TOTAL_CHARS = 20 * 1024 * 1024;
 
 const truncateSkillActionText = (value: string, maxChars: number) => {
   if (value.length <= maxChars) return value;
   const notice = '\n... [Skill result truncated]';
   return `${value.slice(0, Math.max(0, maxChars - notice.length))}${notice}`;
+};
+
+const normalizeSampleImages = (
+  sampleImages: Array<ContentPartTextParam | ContentPartImageParam> | null
+) => {
+  if (sampleImages == null) return null;
+  if (!Array.isArray(sampleImages)) {
+    throw new TypeError('sample_images must be an array or null');
+  }
+  if (sampleImages.length > MAX_SAMPLE_IMAGE_PARTS) {
+    throw new RangeError(
+      `sample_images must contain at most ${MAX_SAMPLE_IMAGE_PARTS} parts`
+    );
+  }
+
+  let imageCount = 0;
+  let textChars = 0;
+  let totalChars = 0;
+  return sampleImages.map((part, index) => {
+    if (part instanceof ContentPartTextParam) {
+      if (typeof part.text !== 'string') {
+        throw new TypeError(`sample_images[${index}].text must be a string`);
+      }
+      if (part.text.length > MAX_SAMPLE_IMAGE_TEXT_CHARS) {
+        throw new RangeError(
+          `sample_images[${index}].text exceeds ${MAX_SAMPLE_IMAGE_TEXT_CHARS} characters`
+        );
+      }
+      textChars += part.text.length;
+      totalChars += part.text.length;
+      if (textChars > MAX_SAMPLE_IMAGE_TOTAL_TEXT_CHARS) {
+        throw new RangeError(
+          `sample_images text exceeds ${MAX_SAMPLE_IMAGE_TOTAL_TEXT_CHARS} characters`
+        );
+      }
+      if (totalChars > MAX_SAMPLE_IMAGE_TOTAL_CHARS) {
+        throw new RangeError('sample_images content is too large');
+      }
+      return new ContentPartTextParam(part.text);
+    }
+
+    if (!(part instanceof ContentPartImageParam)) {
+      throw new TypeError(
+        `sample_images[${index}] must be a text or image content part`
+      );
+    }
+    imageCount += 1;
+    if (imageCount > MAX_SAMPLE_IMAGES) {
+      throw new RangeError(
+        `sample_images must contain at most ${MAX_SAMPLE_IMAGES} images`
+      );
+    }
+    const imageUrl = part.image_url;
+    if (!imageUrl || typeof imageUrl.url !== 'string') {
+      throw new TypeError(
+        `sample_images[${index}].image_url.url must be a string`
+      );
+    }
+    if (imageUrl.url.length > MAX_SAMPLE_IMAGE_URL_CHARS) {
+      throw new RangeError(
+        `sample_images[${index}].image_url.url exceeds ${MAX_SAMPLE_IMAGE_URL_CHARS} characters`
+      );
+    }
+    if (!['auto', 'low', 'high'].includes(imageUrl.detail)) {
+      throw new TypeError(
+        `sample_images[${index}].image_url.detail is invalid`
+      );
+    }
+    if (
+      !['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(
+        imageUrl.media_type
+      )
+    ) {
+      throw new TypeError(
+        `sample_images[${index}].image_url.media_type is invalid`
+      );
+    }
+    totalChars += imageUrl.url.length;
+    if (totalChars > MAX_SAMPLE_IMAGE_TOTAL_CHARS) {
+      throw new RangeError('sample_images content is too large');
+    }
+    return new ContentPartImageParam(
+      new ImageURL(imageUrl.url, imageUrl.detail, imageUrl.media_type)
+    );
+  });
 };
 
 const requireBoundedInteger = (
@@ -755,6 +847,7 @@ export class Agent<
     );
     const normalizedMessageCompaction =
       this._normalizeMessageCompactionSetting(message_compaction);
+    const normalizedSampleImages = normalizeSampleImages(sample_images);
     let resolvedLlmScreenshotSize: [number, number] | null =
       llm_screenshot_size ?? null;
     if (resolvedLlmScreenshotSize !== null) {
@@ -1027,7 +1120,7 @@ export class Agent<
       this.settings.vision_detail_level,
       this.settings.include_tool_call_examples,
       this.settings.include_recent_events,
-      sample_images ?? null,
+      normalizedSampleImages,
       resolvedLlmScreenshotSize
     );
 
