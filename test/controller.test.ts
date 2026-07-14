@@ -832,6 +832,33 @@ describe('Controller Integration Tests', () => {
   });
 
   describe('Built-in Actions Patterns', () => {
+    it('runs find_elements through a real Playwright page in transformed source builds', async () => {
+      await page.setContent(`
+        <main>
+          <a data-kind="docs">Browser Use documentation</a>
+        </main>
+      `);
+      const controller = new Controller();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+        validate_page_after_action: vi.fn(async () => undefined),
+      };
+
+      const result = await controller.registry.execute_action(
+        'find_elements',
+        {
+          selector: 'a',
+          attributes: ['data-kind'],
+          max_results: 1,
+          include_text: true,
+        },
+        { browser_session: browserSession as any }
+      );
+
+      expect(result.extracted_content).toContain('Browser Use documentation');
+      expect(result.extracted_content).toContain('data-kind="docs"');
+    });
+
     it('go_to_url pattern navigates to URL', async () => {
       const registry = new Registry();
 
