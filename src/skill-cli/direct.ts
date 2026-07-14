@@ -632,18 +632,34 @@ const waitForProcessTargetExit = async (target: number) => {
   return !isProcessTargetAlive(target);
 };
 
-const terminateFailedDirectLaunch = async (pid: number) => {
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(pid), '/T'], {
+export const DIRECT_PROCESS_TERMINATION_TIMEOUT_MS = 5_000;
+
+interface DirectLaunchTerminationOptions {
+  platform?: NodeJS.Platform;
+  spawn_impl?: typeof spawnSync;
+  wait_for_exit?: (target: number) => Promise<boolean>;
+}
+
+export const terminateFailedDirectLaunch = async (
+  pid: number,
+  options: DirectLaunchTerminationOptions = {}
+) => {
+  const platform = options.platform ?? process.platform;
+  const spawnImpl = options.spawn_impl ?? spawnSync;
+  const waitForExit = options.wait_for_exit ?? waitForProcessTargetExit;
+  if (platform === 'win32') {
+    spawnImpl('taskkill', ['/PID', String(pid), '/T'], {
       stdio: 'ignore',
+      timeout: DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
     });
-    if (await waitForProcessTargetExit(pid)) {
+    if (await waitForExit(pid)) {
       return true;
     }
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    spawnImpl('taskkill', ['/PID', String(pid), '/T', '/F'], {
       stdio: 'ignore',
+      timeout: DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
     });
-    return waitForProcessTargetExit(pid);
+    return waitForExit(pid);
   }
 
   let target = -pid;

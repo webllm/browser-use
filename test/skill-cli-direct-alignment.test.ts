@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
 import {
   clear_direct_state,
+  DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
   DIRECT_STATE_FILE,
   defaultLocalLauncher,
   load_direct_state,
@@ -13,6 +14,7 @@ import {
   resolveDirectBrowserExecutable,
   run_direct_command,
   save_direct_state,
+  terminateFailedDirectLaunch,
 } from '../src/skill-cli/direct.js';
 import { systemChrome } from '../src/browser/session.js';
 
@@ -31,6 +33,42 @@ const createWritable = () => {
 };
 
 describe('skill-cli direct alignment', () => {
+  it('bounds Windows browser termination commands', async () => {
+    const spawnImpl =
+      vi.fn() as unknown as typeof import('node:child_process').spawnSync;
+    const waitForExit = vi
+      .fn<(target: number) => Promise<boolean>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await expect(
+      terminateFailedDirectLaunch(1234, {
+        platform: 'win32',
+        spawn_impl: spawnImpl,
+        wait_for_exit: waitForExit,
+      })
+    ).resolves.toBe(true);
+
+    expect(spawnImpl).toHaveBeenNthCalledWith(
+      1,
+      'taskkill',
+      ['/PID', '1234', '/T'],
+      {
+        stdio: 'ignore',
+        timeout: DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
+      }
+    );
+    expect(spawnImpl).toHaveBeenNthCalledWith(
+      2,
+      'taskkill',
+      ['/PID', '1234', '/T', '/F'],
+      {
+        stdio: 'ignore',
+        timeout: DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
+      }
+    );
+  });
+
   it('uses a user-private default state file instead of a shared tmp file', () => {
     expect(DIRECT_STATE_FILE).not.toBe(
       path.join(os.tmpdir(), 'browser-use-direct.json')
