@@ -409,9 +409,6 @@ export const save_direct_state = (
       mode: 0o600,
       flag: 'wx',
     });
-    if (process.platform !== 'win32') {
-      fs.chmodSync(tempPath, 0o600);
-    }
     fs.renameSync(tempPath, state_file);
     renamed = true;
   } finally {

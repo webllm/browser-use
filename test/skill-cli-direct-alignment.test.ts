@@ -173,6 +173,30 @@ describe('skill-cli direct alignment', () => {
     }
   );
 
+  it.runIf(process.platform !== 'win32')(
+    'does not reopen an exclusively-created temporary state path for chmod',
+    () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const stateFile = path.join(tempDir, 'state.json');
+      const chmodSpy = vi.spyOn(fs, 'chmodSync');
+
+      try {
+        save_direct_state(
+          { mode: 'local', cdp_url: 'http://127.0.0.1:9222' },
+          stateFile
+        );
+
+        expect(chmodSpy).not.toHaveBeenCalled();
+        expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+      } finally {
+        chmodSpy.mockRestore();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('retains the previous direct-mode state when atomic replacement fails', () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

@@ -200,9 +200,6 @@ export class TunnelManager {
         mode: 0o600,
         flag: 'wx',
       });
-      if (process.platform !== 'win32') {
-        fs.chmodSync(tempPath, 0o600);
-      }
       fs.renameSync(tempPath, targetPath);
       renamed = true;
     } finally {

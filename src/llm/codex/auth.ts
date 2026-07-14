@@ -308,7 +308,6 @@ const writeStore = async (
       mode: 0o600,
       flag: 'wx',
     });
-    await chmodPrivatePath(tmpPath, 0o600);
     await fs.rename(tmpPath, authStorePath);
     renamed = true;
   } finally {

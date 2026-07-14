@@ -22,12 +22,6 @@ const createPrivateDirectory = (dirPath: string) => {
   chmodPrivatePath(dirPath, 0o700);
 };
 
-const chmodPrivateFile = async (filePath: string) => {
-  if (process.platform !== 'win32') {
-    await fs.promises.chmod(filePath, 0o600);
-  }
-};
-
 export class ScreenshotService {
   private screenshotsDir: string;
 
@@ -54,7 +48,6 @@ export class ScreenshotService {
         flag: 'wx',
         mode: 0o600,
       });
-      await chmodPrivateFile(temporaryPath);
       await fs.promises.rename(temporaryPath, filepath);
     } finally {
       await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});

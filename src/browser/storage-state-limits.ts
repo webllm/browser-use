@@ -68,12 +68,6 @@ export const serializeBoundedStorageState = (
   return serialized;
 };
 
-const chmodPrivateFile = (filePath: string) => {
-  if (process.platform !== 'win32') {
-    fs.chmodSync(filePath, 0o600);
-  }
-};
-
 const readBoundedStorageStateBuffer = (
   filePath: string,
   rejectSymlinks = false
@@ -176,7 +170,6 @@ export const writeBoundedStorageStateFile = (
     fs.fsyncSync(handle);
     fs.closeSync(handle);
     handle = null;
-    chmodPrivateFile(temporaryPath);
 
     if (options.backup !== false) {
       try {
@@ -191,7 +184,6 @@ export const writeBoundedStorageStateFile = (
           fs.fsyncSync(backupHandle);
           fs.closeSync(backupHandle);
           backupHandle = null;
-          chmodPrivateFile(backupTemporaryPath);
           fs.renameSync(backupTemporaryPath, backupPath);
           backupRenamed = true;
         } finally {

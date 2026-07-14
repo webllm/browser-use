@@ -14,12 +14,6 @@ export const MAX_EXTENSION_DOWNLOAD_REDIRECTS = 5;
 export const EXTENSION_DOWNLOAD_TIMEOUT_MS = 30_000;
 const EXTENSION_MANIFEST_READ_CHUNK_BYTES = 64 * 1024;
 
-const chmodPrivate = async (targetPath: string, mode: number) => {
-  if (process.platform !== 'win32') {
-    await fsp.chmod(targetPath, mode);
-  }
-};
-
 const assertSafeArchivePath = (entryName: string) => {
   if (
     !entryName ||
@@ -312,7 +306,6 @@ export const writeLimitedExtensionStream = async (
       fs.createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }),
       { signal }
     );
-    await chmodPrivate(temporaryPath, 0o600);
     await fsp.rename(temporaryPath, outputPath);
   } catch (error) {
     await fsp.rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -372,7 +365,6 @@ export const extractExtensionArchive = async (
   let zipPath: string | null = null;
 
   await fsp.mkdir(stagingDir, { recursive: true, mode: 0o700 });
-  await chmodPrivate(stagingDir, 0o700);
 
   try {
     const archiveSize = await snapshotExtensionArchive(
