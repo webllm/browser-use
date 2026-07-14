@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
   CloudSkillService,
+  MAX_SKILL_EXECUTION_REQUEST_BYTES,
   MAX_SKILL_EXECUTION_RESPONSE_BYTES,
 } from '../src/skills/service.js';
 
@@ -268,6 +269,45 @@ describe('CloudSkillService alignment', () => {
     expect(result.error).toContain(
       `maximum size of ${MAX_SKILL_EXECUTION_RESPONSE_BYTES.toLocaleString()} bytes`
     );
+  });
+
+  it('rejects oversized skill execution requests before sending them', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        items: [
+          {
+            ...makeSkillItem('skill-1'),
+            parameters: [
+              {
+                name: 'query',
+                type: 'string',
+                required: true,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const service = new CloudSkillService({
+      skill_ids: ['skill-1'],
+      api_key: 'test-key',
+      base_url: 'https://api.test',
+      fetch_impl: fetchMock as any,
+    });
+
+    const result = await service.execute_skill({
+      skill_id: 'skill-1',
+      parameters: {
+        query: 'x'.repeat(MAX_SKILL_EXECUTION_REQUEST_BYTES + 1),
+      },
+      cookies: [],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Skill execution request exceeds');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not forward cookie parameters to a redirect target', async () => {

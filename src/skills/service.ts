@@ -42,6 +42,7 @@ const MAX_SKILL_OUTPUT_SCHEMA_DEPTH = 50;
 const MAX_SKILL_OUTPUT_SCHEMA_ENTRIES = 10_000;
 const MAX_SKILL_OUTPUT_SCHEMA_STRING_CHARS = 64 * 1024;
 const MAX_SKILL_LIST_RESPONSE_BYTES = 4 * 1024 * 1024;
+export const MAX_SKILL_EXECUTION_REQUEST_BYTES = 1024 * 1024;
 export const MAX_SKILL_EXECUTION_RESPONSE_BYTES = 1024 * 1024;
 const MAX_SKILL_EXECUTION_ERROR_CHARS = 64 * 1024;
 
@@ -432,11 +433,20 @@ export class CloudSkillService implements SkillService {
     }
 
     try {
+      const requestBody = JSON.stringify({ parameters: validated.data });
+      if (
+        Buffer.byteLength(requestBody, 'utf8') >
+        MAX_SKILL_EXECUTION_REQUEST_BYTES
+      ) {
+        throw new Error(
+          `Skill execution request exceeds ${MAX_SKILL_EXECUTION_REQUEST_BYTES.toLocaleString()} bytes`
+        );
+      }
       const response = (await this.requestJson(
         `/api/v1/skills/${encodeURIComponent(input.skill_id)}/execute`,
         {
           method: 'POST',
-          body: JSON.stringify({ parameters: validated.data }),
+          body: requestBody,
         },
         MAX_SKILL_EXECUTION_RESPONSE_BYTES
       )) as Record<string, unknown>;
@@ -468,7 +478,7 @@ export class CloudSkillService implements SkillService {
           : String(error);
       return {
         success: false,
-        error: `Failed to execute skill: ${errorText}`,
+        error: `Failed to execute skill: ${errorText.slice(0, MAX_SKILL_EXECUTION_ERROR_CHARS)}`,
       };
     }
   }
