@@ -887,6 +887,73 @@ esac
     expect(session._owns_browser_resources).toBe(false);
   });
 
+  it('discovers only the debugging port declared by the requested browser PID', async () => {
+    const session = new BrowserSession();
+    const args = [
+      '/opt/chrome',
+      '--remote-debugging-port=9222',
+      '--remote-debugging-port=9333',
+    ];
+    (session as any)._getProcessArguments = vi.fn(() => [...args]);
+    (session as any)._probeLocalCdpWebSocketUrl = vi.fn(async (port) =>
+      port === 9333 ? 'ws://127.0.0.1:9333/devtools/browser/browser-id' : null
+    );
+
+    await expect((session as any)._discoverCdpUrl(1234)).resolves.toBe(
+      'ws://127.0.0.1:9333/devtools/browser/browser-id'
+    );
+    expect((session as any)._probeLocalCdpWebSocketUrl).toHaveBeenCalledWith(
+      9333
+    );
+  });
+
+  it('resolves a zero debugging port from the requested browser profile', async () => {
+    const session = new BrowserSession();
+    const args = [
+      '/opt/chrome',
+      '--remote-debugging-port=0',
+      '--user-data-dir',
+      '/tmp/browser-profile',
+    ];
+    (session as any)._getProcessArguments = vi.fn(() => [...args]);
+    (session as any)._readDevToolsActivePort = vi.fn(() => ({
+      port: 9444,
+      browserPath: '/devtools/browser/browser-id',
+    }));
+    (session as any)._probeLocalCdpWebSocketUrl = vi.fn(async () =>
+      Promise.resolve('ws://127.0.0.1:9444/devtools/browser/browser-id')
+    );
+
+    await expect((session as any)._discoverCdpUrl(1234)).resolves.toBe(
+      'ws://127.0.0.1:9444/devtools/browser/browser-id'
+    );
+    expect((session as any)._readDevToolsActivePort).toHaveBeenCalledWith(
+      path.join('/tmp/browser-profile', 'DevToolsActivePort')
+    );
+  });
+
+  it('rejects a CDP endpoint when the requested PID changes during discovery', async () => {
+    const session = new BrowserSession();
+    (session as any)._getProcessArguments = vi
+      .fn()
+      .mockReturnValueOnce(['/opt/chrome', '--remote-debugging-port=9333'])
+      .mockReturnValueOnce(['/opt/other', '--remote-debugging-port=9333']);
+    (session as any)._probeLocalCdpWebSocketUrl = vi.fn(async () =>
+      Promise.resolve('ws://127.0.0.1:9333/devtools/browser/browser-id')
+    );
+
+    await expect((session as any)._discoverCdpUrl(1234)).resolves.toBeNull();
+  });
+
+  it('does not scan unrelated ports when the requested PID has no debugging flag', async () => {
+    const session = new BrowserSession();
+    (session as any)._getProcessArguments = vi.fn(() => ['/opt/chrome']);
+    (session as any)._probeLocalCdpWebSocketUrl = vi.fn(async () => null);
+
+    await expect((session as any)._discoverCdpUrl(1234)).resolves.toBeNull();
+    expect((session as any)._probeLocalCdpWebSocketUrl).not.toHaveBeenCalled();
+  });
+
   it('normalizes pid values before tracking child processes', () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({}),

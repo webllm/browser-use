@@ -8,7 +8,10 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
-import { discoverLocalCdpWebSocketUrl } from '../browser/cdp-discovery.js';
+import {
+  discoverLocalCdpWebSocketUrl,
+  readDevToolsActivePort,
+} from '../browser/cdp-discovery.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
   extractBoundedPageHtml,
@@ -514,37 +517,6 @@ const extractDirectModeArgs = (argv: string[]) => {
     useRemote,
     args: argv.slice(index),
   };
-};
-
-const MAX_DEVTOOLS_ACTIVE_PORT_BYTES = 4 * 1024;
-
-const readDevToolsActivePort = (activePortPath: string) => {
-  try {
-    const stats = fs.lstatSync(activePortPath);
-    if (!stats.isFile() || stats.size > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
-      return null;
-    }
-    const raw = fs.readFileSync(activePortPath, 'utf8');
-    if (Buffer.byteLength(raw, 'utf8') > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
-      return null;
-    }
-    const [portText, browserPath] = raw.split(/\r?\n/, 2);
-    if (!/^\d+$/.test(portText ?? '')) {
-      return null;
-    }
-    const port = Number(portText);
-    if (
-      !Number.isSafeInteger(port) ||
-      port < 1 ||
-      port > 65_535 ||
-      !/^\/devtools\/browser\/[^/\s]+$/.test(browserPath ?? '')
-    ) {
-      return null;
-    }
-    return { port, browserPath };
-  } catch {
-    return null;
-  }
 };
 
 const waitForLocalCdpEndpoint = async (

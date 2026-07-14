@@ -42,12 +42,19 @@ import {
   normalizeDropdownOptions,
   serializeDropdownOptions,
 } from './dropdown-options.js';
-import { getProcessCommandLine } from '../process-identity.js';
+import {
+  getProcessArguments,
+  getProcessCommandLine,
+} from '../process-identity.js';
 import {
   readBoundedStorageStateFile,
   serializeBoundedStorageState,
 } from './storage-state-limits.js';
-import { discoverLocalCdpWebSocketUrl } from './cdp-discovery.js';
+import {
+  discoverLocalCdpWebSocketUrl,
+  readDevToolsActivePort,
+  type DevToolsActivePort,
+} from './cdp-discovery.js';
 import {
   EventBus,
   type EventDispatchOptions,
@@ -2754,26 +2761,116 @@ export class BrowserSession {
 
   /**
    * Discover CDP URL from browser PID
-   * Tries common ports and checks for debugging endpoints
+   * Probes only the debugging endpoint declared by that process.
    */
   private async _discoverCdpUrl(browserPid: number): Promise<string | null> {
-    const commonPorts = [9222, 9223, 9224, 9225];
-
-    for (const port of commonPorts) {
-      const webSocketDebuggerUrl = await discoverLocalCdpWebSocketUrl({
-        host: 'localhost',
-        port,
-      });
-      if (webSocketDebuggerUrl) {
-        this.logger.debug(`Found CDP endpoint on port ${port}`);
-        return webSocketDebuggerUrl;
-      }
+    const initialArguments = this._getProcessArguments(browserPid);
+    if (!initialArguments) {
+      this.logger.warning(
+        `Could not inspect command arguments for browser PID ${browserPid}`
+      );
+      return null;
     }
 
-    this.logger.warning(
-      `Could not discover CDP URL for PID ${browserPid} on common ports`
+    const rawPort = this._getProcessArgument(
+      initialArguments,
+      '--remote-debugging-port'
     );
-    return null;
+    if (!rawPort || !/^\d+$/.test(rawPort)) {
+      this.logger.warning(
+        `Browser PID ${browserPid} does not declare a remote debugging port`
+      );
+      return null;
+    }
+
+    const declaredPort = Number(rawPort);
+    let target: DevToolsActivePort | null = null;
+    if (declaredPort === 0) {
+      const userDataDir = this._getProcessArgument(
+        initialArguments,
+        '--user-data-dir'
+      );
+      if (userDataDir && path.isAbsolute(userDataDir)) {
+        target = this._readDevToolsActivePort(
+          path.join(userDataDir, 'DevToolsActivePort')
+        );
+      }
+    } else if (
+      Number.isSafeInteger(declaredPort) &&
+      declaredPort > 0 &&
+      declaredPort <= 65_535
+    ) {
+      target = { port: declaredPort, browserPath: '' };
+    }
+
+    if (!target) {
+      this.logger.warning(
+        `Could not resolve the debugging endpoint for browser PID ${browserPid}`
+      );
+      return null;
+    }
+
+    const webSocketDebuggerUrl = await this._probeLocalCdpWebSocketUrl(
+      target.port
+    );
+    if (!webSocketDebuggerUrl) {
+      this.logger.warning(
+        `Could not discover CDP URL for PID ${browserPid} on declared port ${target.port}`
+      );
+      return null;
+    }
+    if (
+      target.browserPath &&
+      new URL(webSocketDebuggerUrl).pathname !== target.browserPath
+    ) {
+      this.logger.warning(
+        `CDP browser path did not match browser PID ${browserPid}`
+      );
+      return null;
+    }
+
+    const currentArguments = this._getProcessArguments(browserPid);
+    if (
+      !currentArguments ||
+      currentArguments.length !== initialArguments.length ||
+      currentArguments.some(
+        (argument, index) => argument !== initialArguments[index]
+      )
+    ) {
+      this.logger.warning(
+        `Browser PID ${browserPid} changed while discovering its CDP endpoint`
+      );
+      return null;
+    }
+
+    this.logger.debug(`Found CDP endpoint on port ${target.port}`);
+    return webSocketDebuggerUrl;
+  }
+
+  private _getProcessArgument(args: string[], name: string): string | null {
+    let value: string | null = null;
+    for (let index = 0; index < args.length; index += 1) {
+      const argument = args[index];
+      if (argument === name) {
+        value = args[index + 1] ?? null;
+      }
+      if (argument?.startsWith(`${name}=`)) {
+        value = argument.slice(name.length + 1);
+      }
+    }
+    return value;
+  }
+
+  private _getProcessArguments(pid: number): string[] | null {
+    return getProcessArguments(pid);
+  }
+
+  private _readDevToolsActivePort(filePath: string) {
+    return readDevToolsActivePort(filePath);
+  }
+
+  private _probeLocalCdpWebSocketUrl(port: number) {
+    return discoverLocalCdpWebSocketUrl({ host: 'localhost', port });
   }
 
   private async _shutdown_browser_session() {

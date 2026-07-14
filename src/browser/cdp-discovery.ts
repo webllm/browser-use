@@ -1,8 +1,47 @@
+import fs from 'node:fs';
 import { readBoundedResponseJson } from '../http-response.js';
 
 const MAX_CDP_VERSION_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_CDP_PROBE_TIMEOUT_MS = 1_000;
+const MAX_DEVTOOLS_ACTIVE_PORT_BYTES = 4 * 1024;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+export interface DevToolsActivePort {
+  port: number;
+  browserPath: string;
+}
+
+export const readDevToolsActivePort = (
+  activePortPath: string
+): DevToolsActivePort | null => {
+  try {
+    const stats = fs.lstatSync(activePortPath);
+    if (!stats.isFile() || stats.size > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+      return null;
+    }
+    const raw = fs.readFileSync(activePortPath, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > MAX_DEVTOOLS_ACTIVE_PORT_BYTES) {
+      return null;
+    }
+    const [portText, rawBrowserPath] = raw.split(/\r?\n/, 2);
+    const browserPath = rawBrowserPath ?? '';
+    if (!/^\d+$/.test(portText ?? '')) {
+      return null;
+    }
+    const port = Number(portText);
+    if (
+      !Number.isSafeInteger(port) ||
+      port < 1 ||
+      port > 65_535 ||
+      !/^\/devtools\/browser\/[^/\s]+$/.test(browserPath)
+    ) {
+      return null;
+    }
+    return { port, browserPath };
+  } catch {
+    return null;
+  }
+};
 
 const isExpectedLocalWebSocketUrl = (value: unknown, port: number) => {
   if (typeof value !== 'string') {
