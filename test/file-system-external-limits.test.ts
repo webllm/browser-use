@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   FileSystem,
   MAX_EXTERNAL_IMAGE_BYTES,
@@ -93,6 +93,41 @@ describe('FileSystem external file safety limits', () => {
         expect(result.message).toContain('is not a regular file');
         expect(result.message).not.toContain('secret');
       } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects external files replaced between validation and open',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-external-race-')
+      );
+      const filePath = path.join(tempDir, 'input.txt');
+      const replacementPath = path.join(tempDir, 'replacement.txt');
+      fs.writeFileSync(filePath, 'expected');
+      fs.writeFileSync(replacementPath, 'replacement-secret');
+
+      const originalOpen = fs.promises.open.bind(fs.promises);
+      const openSpy = vi
+        .spyOn(fs.promises, 'open')
+        .mockImplementation(async (...args) => {
+          if (args[0] === filePath) {
+            fs.renameSync(replacementPath, filePath);
+          }
+          return originalOpen(...args);
+        });
+
+      try {
+        const result = await new FileSystem(
+          tempDir,
+          false
+        ).read_file_structured(filePath, true);
+        expect(result.message).toContain('changed while opening');
+        expect(result.message).not.toContain('replacement-secret');
+      } finally {
+        openSpy.mockRestore();
         fs.rmSync(tempDir, { recursive: true, force: true });
       }
     }

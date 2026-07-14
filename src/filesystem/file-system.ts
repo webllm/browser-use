@@ -1,5 +1,6 @@
 import fsSync from 'node:fs';
 import { promises as fsp } from 'node:fs';
+import type { Stats } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -196,6 +197,7 @@ export const MAX_EXTERNAL_DOCX_BYTES = 10 * 1024 * 1024;
 export const MAX_EXTERNAL_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_EXTERNAL_TEXT_READ_BYTES = 256 * 1024;
 const MAX_EXTERNAL_TEXT_CHARS = 60_000;
+const EXTERNAL_FILE_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_DOCX_ARCHIVE_ENTRIES = 2_000;
 const MAX_DOCX_ENTRY_BYTES = 20 * 1024 * 1024;
 const MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
@@ -363,14 +365,17 @@ const buildDocxBuffer = (content: string): Buffer => {
   return zip.toBuffer();
 };
 
-const readDocxText = async (filePath: string): Promise<string> => {
-  const extractDir = path.join(os.tmpdir(), `browser-use-docx-${randomUUID()}`);
-  await fsp.mkdir(extractDir, { recursive: true, mode: 0o700 });
+const readDocxText = async (archive: Buffer): Promise<string> => {
+  const tempDir = path.join(os.tmpdir(), `browser-use-docx-${randomUUID()}`);
+  const extractDir = path.join(tempDir, 'content');
+  const archivePath = path.join(tempDir, 'input.docx');
   let entryCount = 0;
   let uncompressedBytes = 0;
 
   try {
-    await extract(filePath, {
+    await fsp.mkdir(extractDir, { recursive: true, mode: 0o700 });
+    await writePrivateBufferFileAsync(archivePath, archive);
+    await extract(archivePath, {
       dir: extractDir,
       onEntry(entry) {
         entryCount += 1;
@@ -419,7 +424,7 @@ const readDocxText = async (filePath: string): Promise<string> => {
     return lines.join('\n').trim();
   } finally {
     await fsp
-      .rm(extractDir, { recursive: true, force: true })
+      .rm(tempDir, { recursive: true, force: true })
       .catch(() => undefined);
   }
 };
@@ -434,21 +439,117 @@ const truncateExternalText = (content: string) => {
   };
 };
 
-const readExternalTextPrefix = async (filename: string, fileSize: number) => {
-  const bytesToRead = Math.min(fileSize, MAX_EXTERNAL_TEXT_READ_BYTES);
-  const buffer = Buffer.alloc(bytesToRead);
-  const handle = await fsp.open(filename, 'r');
-  try {
-    const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
-    const decoded = buffer.subarray(0, bytesRead).toString('utf-8');
-    const truncatedText = truncateExternalText(decoded);
-    return {
-      content: truncatedText.content,
-      truncated: truncatedText.truncated || bytesRead < fileSize,
-    };
-  } finally {
-    await handle.close();
+type ExternalFileHandle = Awaited<ReturnType<typeof fsp.open>>;
+type ExternalFileStats = Stats;
+
+const hasSameFileIdentity = (
+  left: Pick<ExternalFileStats, 'dev' | 'ino'>,
+  right: Pick<ExternalFileStats, 'dev' | 'ino'>
+) => left.dev === right.dev && left.ino === right.ino;
+
+const openExternalFileSnapshot = async (
+  filename: string
+): Promise<{ handle: ExternalFileHandle; stats: ExternalFileStats }> => {
+  const pathStats = await fsp.lstat(filename);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new FileSystemError(
+      `Error: File '${filename}' is not a regular file.`
+    );
   }
+
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fsSync.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fsSync.constants.O_NOFOLLOW ?? 0);
+  const handle = await fsp.open(
+    filename,
+    fsSync.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
+  );
+  try {
+    const stats = await handle.stat();
+    const currentPathStats = await fsp.lstat(filename);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      !hasSameFileIdentity(pathStats, stats) ||
+      !hasSameFileIdentity(currentPathStats, stats)
+    ) {
+      throw new FileSystemError(
+        `Error: File '${filename}' changed while opening.`
+      );
+    }
+    return { handle, stats };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
+  }
+};
+
+const verifyExternalFileUnchanged = async (
+  filename: string,
+  handle: ExternalFileHandle,
+  initialStats: ExternalFileStats
+) => {
+  const finalStats = await handle.stat();
+  if (
+    !hasSameFileIdentity(initialStats, finalStats) ||
+    finalStats.size !== initialStats.size ||
+    finalStats.mtimeMs !== initialStats.mtimeMs ||
+    finalStats.ctimeMs !== initialStats.ctimeMs
+  ) {
+    throw new FileSystemError(
+      `Error: File '${filename}' changed while it was being read.`
+    );
+  }
+};
+
+const readExternalBuffer = async (
+  filename: string,
+  handle: ExternalFileHandle,
+  stats: ExternalFileStats,
+  maxBytes: number
+) => {
+  if (stats.size > maxBytes) {
+    throw new FileSystemError(
+      `Error: File '${filename}' exceeds the safe read limit.`
+    );
+  }
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  while (totalBytes < stats.size) {
+    const chunk = Buffer.allocUnsafe(
+      Math.min(EXTERNAL_FILE_READ_CHUNK_BYTES, stats.size - totalBytes)
+    );
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, totalBytes);
+    if (bytesRead === 0) break;
+    chunks.push(chunk.subarray(0, bytesRead));
+    totalBytes += bytesRead;
+  }
+  await verifyExternalFileUnchanged(filename, handle, stats);
+  if (totalBytes !== stats.size) {
+    throw new FileSystemError(
+      `Error: File '${filename}' changed while it was being read.`
+    );
+  }
+  return Buffer.concat(chunks, totalBytes);
+};
+
+const readExternalTextPrefix = async (
+  filename: string,
+  handle: ExternalFileHandle,
+  stats: ExternalFileStats
+) => {
+  const bytesToRead = Math.min(stats.size, MAX_EXTERNAL_TEXT_READ_BYTES);
+  const buffer = Buffer.alloc(bytesToRead);
+  const { bytesRead } = await handle.read(buffer, 0, bytesToRead, 0);
+  await verifyExternalFileUnchanged(filename, handle, stats);
+  const decoded = buffer.subarray(0, bytesRead).toString('utf-8');
+  const truncatedText = truncateExternalText(decoded);
+  return {
+    content: truncatedText.content,
+    truncated: truncatedText.truncated || bytesRead < stats.size,
+  };
 };
 
 export class FileSystemError extends Error {}
@@ -803,6 +904,7 @@ export class FileSystem {
     };
 
     if (externalFile) {
+      let externalHandle: ExternalFileHandle | null = null;
       try {
         const base = path.basename(filename);
         const idx = base.lastIndexOf('.');
@@ -814,11 +916,9 @@ export class FileSystem {
         }
 
         const extension = base.slice(idx + 1).toLowerCase();
-        const fileStat = await fsp.lstat(filename);
-        if (!fileStat.isFile()) {
-          result.message = `Error: File '${filename}' is not a regular file.`;
-          return result;
-        }
+        const snapshot = await openExternalFileSnapshot(filename);
+        externalHandle = snapshot.handle;
+        const fileStat = snapshot.stats;
         if (fileStat.size > MAX_EXTERNAL_FILE_BYTES) {
           result.message =
             `Error: File '${filename}' is too large to read safely ` +
@@ -840,7 +940,8 @@ export class FileSystem {
         if (textExtensions.includes(extension)) {
           const { content, truncated } = await readExternalTextPrefix(
             filename,
-            fileStat.size
+            externalHandle,
+            fileStat
           );
           const truncationNote = truncated
             ? '\n[File content was truncated to the safe read limit.]'
@@ -857,7 +958,12 @@ export class FileSystem {
             return result;
           }
           const MAX_CHARS = 60000;
-          const buffer = await fsp.readFile(filename);
+          const buffer = await readExternalBuffer(
+            filename,
+            externalHandle,
+            fileStat,
+            MAX_EXTERNAL_PDF_BYTES
+          );
           const pdf = await extractPdfTextByPage(buffer);
           const numPages = pdf.numPages;
           const pageTexts = pdf.pageTexts;
@@ -1002,7 +1108,13 @@ export class FileSystem {
               `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_DOCX_BYTES.toLocaleString()} bytes).`;
             return result;
           }
-          const extracted = await readDocxText(filename);
+          const buffer = await readExternalBuffer(
+            filename,
+            externalHandle,
+            fileStat,
+            MAX_EXTERNAL_DOCX_BYTES
+          );
+          const extracted = await readDocxText(buffer);
           const { content, truncated } = truncateExternalText(extracted);
           const truncationNote = truncated
             ? '\n[Document content was truncated to the safe read limit.]'
@@ -1022,7 +1134,12 @@ export class FileSystem {
               `(${fileStat.size.toLocaleString()} bytes; limit ${MAX_EXTERNAL_IMAGE_BYTES.toLocaleString()} bytes).`;
             return result;
           }
-          const fileBuffer = await fsp.readFile(filename);
+          const fileBuffer = await readExternalBuffer(
+            filename,
+            externalHandle,
+            fileStat,
+            MAX_EXTERNAL_IMAGE_BYTES
+          );
           result.message = `Read image file ${filename}.`;
           result.images = [
             {
@@ -1044,9 +1161,15 @@ export class FileSystem {
           result.message = `Error: Permission denied to read file '${filename}'.`;
           return result;
         }
+        if (error instanceof FileSystemError) {
+          result.message = error.message;
+          return result;
+        }
         result.message =
           `Error: Could not read file '${filename}'. ${error instanceof Error ? error.message : ''}`.trim();
         return result;
+      } finally {
+        await externalHandle?.close().catch(() => undefined);
       }
     }
 
