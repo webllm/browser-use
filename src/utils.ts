@@ -550,6 +550,35 @@ export interface RetryOptions {
   onRetry?: (error: Error, attempt: number, nextDelayMs: number) => void;
 }
 
+export const MAX_RETRY_ASYNC_ATTEMPTS = 100;
+export const MAX_RETRY_ASYNC_DELAY_MS = 2_147_483_647;
+
+const requireRetryInteger = (
+  value: number,
+  name: string,
+  min: number,
+  max: number
+) => {
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new RangeError(
+      `${name} must be an integer between ${min} and ${max}`
+    );
+  }
+  return value;
+};
+
+const requireRetryNumber = (
+  value: number,
+  name: string,
+  min: number,
+  max: number
+) => {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new RangeError(`${name} must be between ${min} and ${max}`);
+  }
+  return value;
+};
+
 /**
  * Retry an async function with configurable attempts and delays
  * Implements exponential backoff with jitter
@@ -569,14 +598,39 @@ export async function retryAsync<T>(
   fn: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<T> {
-  const {
-    maxAttempts = 3,
-    delayMs = 1000,
-    backoffMultiplier = 1,
-    maxDelayMs = 30000,
-    shouldRetry = () => true,
-    onRetry,
-  } = options;
+  const configured = {
+    maxAttempts: options.maxAttempts ?? 3,
+    delayMs: options.delayMs ?? 1000,
+    backoffMultiplier: options.backoffMultiplier ?? 1,
+    maxDelayMs: options.maxDelayMs ?? 30000,
+    shouldRetry: options.shouldRetry ?? (() => true),
+    onRetry: options.onRetry,
+  };
+  const maxAttempts = requireRetryInteger(
+    configured.maxAttempts,
+    'maxAttempts',
+    1,
+    MAX_RETRY_ASYNC_ATTEMPTS
+  );
+  const delayMs = requireRetryNumber(
+    configured.delayMs,
+    'delayMs',
+    0,
+    MAX_RETRY_ASYNC_DELAY_MS
+  );
+  const backoffMultiplier = requireRetryNumber(
+    configured.backoffMultiplier,
+    'backoffMultiplier',
+    0,
+    Number.MAX_VALUE
+  );
+  const maxDelayMs = requireRetryNumber(
+    configured.maxDelayMs,
+    'maxDelayMs',
+    0,
+    MAX_RETRY_ASYNC_DELAY_MS
+  );
+  const { shouldRetry, onRetry } = configured;
 
   let lastError: Error | null = null;
 
@@ -593,7 +647,11 @@ export async function retryAsync<T>(
       }
 
       // Calculate delay with exponential backoff and jitter
-      const baseDelay = delayMs * Math.pow(backoffMultiplier, attempt - 1);
+      const calculatedBaseDelay =
+        delayMs === 0 ? 0 : delayMs * Math.pow(backoffMultiplier, attempt - 1);
+      const baseDelay = Number.isFinite(calculatedBaseDelay)
+        ? Math.min(calculatedBaseDelay, maxDelayMs)
+        : maxDelayMs;
       const jitter = Math.random() * 0.3 * baseDelay; // Add up to 30% jitter
       const nextDelay = Math.min(baseDelay + jitter, maxDelayMs);
 
