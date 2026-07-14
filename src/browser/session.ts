@@ -6497,8 +6497,18 @@ export class BrowserSession {
     protocol: string,
     policy: 'allow' | 'prohibit'
   ) {
-    const matchedHost = domains.has(hostVariant) || domains.has(hostAlt);
-    if (!matchedHost) {
+    const exactMatch = domains.has(hostVariant);
+    const alternateMatch = domains.has(hostAlt);
+    const allowedWwwRootVariant =
+      policy === 'allow' &&
+      hostVariant.startsWith('www.') &&
+      hostAlt.split('.').length === 2 &&
+      alternateMatch;
+    if (
+      !exactMatch &&
+      !allowedWwwRootVariant &&
+      !(policy === 'prohibit' && alternateMatch)
+    ) {
       return false;
     }
     // Set-optimized entries are exact hostnames without explicit schemes.

@@ -264,6 +264,29 @@ describe('Allowed Domains Security', () => {
     expect((session as any)._is_url_allowed('https://unknown.example')).toBe(
       false
     );
+    expect(
+      (session as any)._is_url_allowed('https://www.site-1.example.com')
+    ).toBe(false);
+  });
+
+  it('does not reverse-expand explicit www entries in optimized allowlists', () => {
+    const domains = Array.from({ length: 120 }, (_, idx) => {
+      return `site-${idx}.example.com`;
+    });
+    domains[0] = 'www.only.example.com';
+
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        allowed_domains: domains,
+      }),
+    });
+
+    expect(
+      (session as any)._is_url_allowed('https://www.only.example.com')
+    ).toBe(true);
+    expect((session as any)._is_url_allowed('https://only.example.com')).toBe(
+      false
+    );
   });
 
   it('uses optimized prohibited sets for large blocklists', () => {
