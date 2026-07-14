@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { runTunnelCommand } from '../src/cli.js';
 import { TunnelManager } from '../src/skill-cli/tunnel.js';
@@ -385,8 +386,12 @@ describe('skill-cli tunnel alignment', () => {
       const manager = new TunnelManager({
         tunnel_dir: tunnelDir,
         is_process_alive: () => true,
-        get_process_command_line: () =>
-          `"${binaryPath}" tunnel --url http://localhost:3000`,
+        get_process_arguments: () => [
+          binaryPath,
+          'tunnel',
+          '--url',
+          'http://localhost:3000',
+        ],
         kill_process: killProcessSpy,
       });
 
@@ -401,6 +406,75 @@ describe('skill-cli tunnel alignment', () => {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'preserves executable boundaries when the tunnel path contains spaces',
+    async () => {
+      const tunnelDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-tunnel-')
+      );
+      const infoPath = path.join(tunnelDir, '3000.json');
+      const logPath = path.join(tunnelDir, '3000.log');
+      const binaryPath = path.join(tunnelDir, 'cloud flare');
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          'setInterval(() => {}, 1000)',
+          'tunnel',
+          '--url',
+          'http://localhost:3000',
+        ],
+        {
+          argv0: binaryPath,
+          stdio: 'ignore',
+        }
+      );
+      await new Promise<void>((resolve, reject) => {
+        child.once('spawn', resolve);
+        child.once('error', reject);
+      });
+      fs.writeFileSync(
+        infoPath,
+        JSON.stringify({
+          port: 3000,
+          pid: child.pid,
+          url: 'https://demo.trycloudflare.com',
+          binary_path: binaryPath,
+        }),
+        'utf8'
+      );
+      fs.writeFileSync(logPath, 'tunnel log', 'utf8');
+      const killProcessSpy = vi.fn(async () => true);
+
+      try {
+        const manager = new TunnelManager({
+          tunnel_dir: tunnelDir,
+          kill_process: killProcessSpy,
+        });
+
+        await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+          stopped: 3000,
+          url: 'https://demo.trycloudflare.com',
+        });
+        expect(killProcessSpy).toHaveBeenCalledWith(
+          child.pid,
+          expect.any(Function)
+        );
+        expect(fs.existsSync(infoPath)).toBe(false);
+        expect(fs.existsSync(logPath)).toBe(false);
+      } finally {
+        if (child.exitCode == null && child.pid) {
+          const exited = new Promise<void>((resolve) =>
+            child.once('exit', () => resolve())
+          );
+          child.kill('SIGKILL');
+          await exited;
+        }
+        fs.rmSync(tunnelDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('does not terminate a reused PID with a different process signature', async () => {
     const tunnelDir = fs.mkdtempSync(

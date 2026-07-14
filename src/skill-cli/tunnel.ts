@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { getProcessCommandLine } from '../process-identity.js';
+import {
+  getProcessArguments,
+  type ProcessArgumentsReader,
+} from '../process-identity.js';
 
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
@@ -27,7 +30,7 @@ const findSystemBinary = (binary: string) => {
   );
 };
 
-const parseCommandLine = (commandLine: string) =>
+const parseCommandLineTokens = (commandLine: string) =>
   (commandLine.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((arg) => {
     if (
       arg.length >= 2 &&
@@ -38,6 +41,38 @@ const parseCommandLine = (commandLine: string) =>
     }
     return arg;
   });
+
+const parseCommandLine = (
+  commandLine: string,
+  expectedExecutablePath?: string
+) => {
+  const executablePath = expectedExecutablePath?.trim();
+  if (executablePath) {
+    const prefixes = [
+      executablePath,
+      `"${executablePath}"`,
+      `'${executablePath}'`,
+    ];
+    const comparableCommandLine =
+      process.platform === 'win32' ? commandLine.toLowerCase() : commandLine;
+    for (const prefix of prefixes) {
+      const comparablePrefix =
+        process.platform === 'win32' ? prefix.toLowerCase() : prefix;
+      if (comparableCommandLine === comparablePrefix) {
+        return [executablePath];
+      }
+      if (comparableCommandLine.startsWith(`${comparablePrefix} `)) {
+        return [
+          executablePath,
+          ...parseCommandLineTokens(
+            commandLine.slice(prefix.length).trimStart()
+          ),
+        ];
+      }
+    }
+  }
+  return parseCommandLineTokens(commandLine);
+};
 
 type TunnelInfo = {
   port: number;
@@ -92,6 +127,8 @@ export interface TunnelManagerOptions {
     pid: number,
     is_still_owned?: () => boolean
   ) => Promise<boolean>;
+  get_process_arguments?: ProcessArgumentsReader;
+  /** @deprecated Prefer get_process_arguments so executable boundaries survive. */
   get_process_command_line?: (pid: number) => string | null;
 }
 
@@ -105,9 +142,7 @@ export class TunnelManager {
     pid: number,
     is_still_owned?: () => boolean
   ) => Promise<boolean>;
-  private readonly get_process_command_line_impl: (
-    pid: number
-  ) => string | null;
+  private readonly get_process_arguments_impl: ProcessArgumentsReader;
   private binary_path: string | null = null;
 
   constructor(options: TunnelManagerOptions = {}) {
@@ -121,8 +156,16 @@ export class TunnelManager {
       options.kill_process ??
       ((pid, isStillOwned) =>
         default_kill_process(pid, isStillOwned, this.sleep_impl));
-    this.get_process_command_line_impl =
-      options.get_process_command_line ?? getProcessCommandLine;
+    this.get_process_arguments_impl = options.get_process_arguments
+      ? options.get_process_arguments
+      : options.get_process_command_line
+        ? (pid, expectedExecutablePath) => {
+            const commandLine = options.get_process_command_line?.(pid);
+            return commandLine
+              ? parseCommandLine(commandLine, expectedExecutablePath)
+              : null;
+          }
+        : getProcessArguments;
   }
 
   private get_tunnel_file(port: number) {
@@ -221,17 +264,16 @@ export class TunnelManager {
   private get_tunnel_process_ownership(
     info: TunnelInfo
   ): TunnelProcessOwnership {
-    let commandLine: string | null = null;
+    let args: string[] | null = null;
     try {
-      commandLine = this.get_process_command_line_impl(info.pid);
+      args = this.get_process_arguments_impl(info.pid, info.binary_path.trim());
     } catch {
       return 'unverified';
     }
-    if (!commandLine) {
+    if (!args) {
       return 'unverified';
     }
 
-    const args = parseCommandLine(commandLine);
     if (args.length < 4) {
       return 'not_owned';
     }
