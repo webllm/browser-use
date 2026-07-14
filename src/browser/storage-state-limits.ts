@@ -194,7 +194,6 @@ export const writeBoundedStorageStateFile = (
           chmodPrivateFile(backupTemporaryPath);
           fs.renameSync(backupTemporaryPath, backupPath);
           backupRenamed = true;
-          chmodPrivateFile(backupPath);
         } finally {
           if (backupHandle !== null) {
             try {
@@ -214,7 +213,6 @@ export const writeBoundedStorageStateFile = (
 
     fs.renameSync(temporaryPath, filePath);
     renamed = true;
-    chmodPrivateFile(filePath);
   } finally {
     if (handle !== null) {
       try {

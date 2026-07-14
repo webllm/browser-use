@@ -414,9 +414,6 @@ export const save_direct_state = (
     }
     fs.renameSync(tempPath, state_file);
     renamed = true;
-    if (process.platform !== 'win32') {
-      fs.chmodSync(state_file, 0o600);
-    }
   } finally {
     if (!renamed) {
       fs.rmSync(tempPath, { force: true });

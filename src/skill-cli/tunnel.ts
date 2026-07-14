@@ -205,9 +205,6 @@ export class TunnelManager {
       }
       fs.renameSync(tempPath, targetPath);
       renamed = true;
-      if (process.platform !== 'win32') {
-        fs.chmodSync(targetPath, 0o600);
-      }
     } finally {
       if (!renamed) {
         fs.rmSync(tempPath, { force: true });

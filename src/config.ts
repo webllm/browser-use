@@ -206,7 +206,6 @@ const write_private_config_file = (config_path: string, config: unknown) => {
     fd = null;
 
     fs.renameSync(temp_path, config_path);
-    chmod_private(config_path, 0o600);
 
     if (process.platform !== 'win32') {
       let parent_fd: number | null = null;

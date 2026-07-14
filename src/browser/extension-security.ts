@@ -314,7 +314,6 @@ export const writeLimitedExtensionStream = async (
     );
     await chmodPrivate(temporaryPath, 0o600);
     await fsp.rename(temporaryPath, outputPath);
-    await chmodPrivate(outputPath, 0o600);
   } catch (error) {
     await fsp.rm(temporaryPath, { force: true }).catch(() => undefined);
     throw error;
@@ -434,7 +433,6 @@ export const extractExtensionArchive = async (
     }
 
     await fsp.rename(stagingDir, extractDir);
-    await chmodPrivate(extractDir, 0o700);
   } catch (error) {
     await fsp
       .rm(stagingDir, { recursive: true, force: true })

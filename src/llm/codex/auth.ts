@@ -311,7 +311,6 @@ const writeStore = async (
     await chmodPrivatePath(tmpPath, 0o600);
     await fs.rename(tmpPath, authStorePath);
     renamed = true;
-    await chmodPrivatePath(authStorePath, 0o600);
   } finally {
     if (!renamed) {
       await fs.rm(tmpPath, { force: true });

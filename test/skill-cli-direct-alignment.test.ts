@@ -140,6 +140,39 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it.runIf(process.platform !== 'win32')(
+    'does not chmod a path swapped after atomic state replacement',
+    () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-direct-')
+      );
+      const stateFile = path.join(tempDir, 'state.json');
+      const outsideFile = path.join(tempDir, 'outside.txt');
+      fs.writeFileSync(outsideFile, 'keep-private-mode', { mode: 0o640 });
+      const originalRename = fs.renameSync.bind(fs);
+      const renameSpy = vi
+        .spyOn(fs, 'renameSync')
+        .mockImplementationOnce((source, destination) => {
+          originalRename(source, destination);
+          fs.rmSync(destination);
+          fs.symlinkSync(outsideFile, destination);
+        });
+
+      try {
+        save_direct_state(
+          { mode: 'local', cdp_url: 'http://127.0.0.1:9222' },
+          stateFile
+        );
+
+        expect(fs.lstatSync(stateFile).isSymbolicLink()).toBe(true);
+        expect(fs.statSync(outsideFile).mode & 0o777).toBe(0o640);
+      } finally {
+        renameSpy.mockRestore();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('retains the previous direct-mode state when atomic replacement fails', () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
