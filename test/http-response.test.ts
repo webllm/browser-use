@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_MAX_HTTP_RESPONSE_BYTES,
   HttpResponseTooLargeError,
+  MAX_HTTP_REQUEST_TIMEOUT_MS,
   readBoundedResponseJson,
   readBoundedResponseText,
   runWithHttpTimeout,
@@ -90,5 +91,23 @@ describe('bounded HTTP responses', () => {
     upstream.abort(new Error('caller cancelled'));
 
     await expect(request).rejects.toThrow('caller cancelled');
+  });
+
+  it('clamps deadlines to the maximum supported timer delay', async () => {
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const upstream = new AbortController();
+    const request = runWithHttpTimeout(
+      async () => await new Promise<never>(() => undefined),
+      MAX_HTTP_REQUEST_TIMEOUT_MS + 1_000,
+      upstream.signal
+    );
+
+    expect(timeoutSpy).toHaveBeenCalledWith(
+      expect.any(Function),
+      MAX_HTTP_REQUEST_TIMEOUT_MS
+    );
+    upstream.abort(new Error('test complete'));
+    await expect(request).rejects.toThrow('test complete');
+    timeoutSpy.mockRestore();
   });
 });

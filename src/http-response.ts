@@ -1,5 +1,6 @@
 export const DEFAULT_MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
+export const MAX_HTTP_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
 export class HttpResponseTooLargeError extends Error {
   constructor(public readonly maxBytes: number) {
@@ -46,7 +47,7 @@ const normalizeResponseLimit = (maxBytes: number) =>
 
 const normalizeRequestTimeout = (timeoutMs: number) =>
   Number.isFinite(timeoutMs) && timeoutMs > 0
-    ? Math.max(1, Math.floor(timeoutMs))
+    ? Math.min(MAX_HTTP_REQUEST_TIMEOUT_MS, Math.max(1, Math.floor(timeoutMs)))
     : DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
 
 export const runWithHttpTimeout = async <T>(
