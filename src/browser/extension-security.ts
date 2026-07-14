@@ -9,7 +9,7 @@ export const MAX_EXTENSION_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 export const MAX_EXTENSION_ARCHIVE_ENTRIES = 10_000;
 export const MAX_EXTENSION_ENTRY_BYTES = 100 * 1024 * 1024;
 export const MAX_EXTENSION_UNCOMPRESSED_BYTES = 250 * 1024 * 1024;
-const MAX_EXTENSION_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_EXTENSION_MANIFEST_BYTES = 1024 * 1024;
 
 const chmodPrivate = async (targetPath: string, mode: number) => {
   if (process.platform !== 'win32') {
@@ -32,6 +32,24 @@ const assertSafeArchivePath = (entryName: string) => {
   if (parts.some((part) => part === '..')) {
     throw new Error(`Unsafe extension archive path: ${entryName}`);
   }
+};
+
+export const readExtensionManifest = (
+  manifestPath: string
+): Record<string, unknown> => {
+  const stats = fs.lstatSync(manifestPath);
+  if (!stats.isFile() || stats.size > MAX_EXTENSION_MANIFEST_BYTES) {
+    throw new Error('Extension manifest.json is invalid or too large');
+  }
+  const raw = fs.readFileSync(manifestPath, 'utf8');
+  if (Buffer.byteLength(raw, 'utf8') > MAX_EXTENSION_MANIFEST_BYTES) {
+    throw new Error('Extension manifest.json is too large');
+  }
+  const manifest = JSON.parse(raw);
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error('Extension manifest.json must contain a JSON object');
+  }
+  return manifest as Record<string, unknown>;
 };
 
 export class ExtensionArchiveBudget {

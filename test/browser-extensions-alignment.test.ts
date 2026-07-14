@@ -5,6 +5,7 @@ import path from 'node:path';
 import { ReadableStream } from 'node:stream/web';
 import AdmZip from 'adm-zip';
 import { loadOrInstallExtension } from '../src/browser/extensions.js';
+import { MAX_EXTENSION_MANIFEST_BYTES } from '../src/browser/extension-security.js';
 
 const modeOf = (targetPath: string) => fs.statSync(targetPath).mode & 0o777;
 
@@ -94,6 +95,28 @@ describe('Browser extension cache alignment', () => {
       if (process.platform !== 'win32') {
         expect(modeOf(unpackedPath)).toBe(0o700);
       }
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized manifests in user-provided unpacked extensions', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-unpacked-')
+    );
+    const unpackedPath = path.join(tempDir, 'unpacked');
+    fs.mkdirSync(unpackedPath);
+    const manifestPath = path.join(unpackedPath, 'manifest.json');
+    fs.writeFileSync(manifestPath, '{}');
+    fs.truncateSync(manifestPath, MAX_EXTENSION_MANIFEST_BYTES + 1);
+
+    try {
+      await expect(
+        loadOrInstallExtension({
+          name: 'Oversized Extension',
+          unpacked_path: unpackedPath,
+        })
+      ).rejects.toThrow(/too large/);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

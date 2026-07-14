@@ -8,9 +8,11 @@ import {
   ExtensionArchiveBudget,
   MAX_EXTENSION_DOWNLOAD_BYTES,
   MAX_EXTENSION_ENTRY_BYTES,
+  MAX_EXTENSION_MANIFEST_BYTES,
   MAX_EXTENSION_UNCOMPRESSED_BYTES,
   assertExtensionContentLength,
   extractExtensionArchive,
+  readExtensionManifest,
   writeLimitedExtensionStream,
 } from '../src/browser/extension-security.js';
 
@@ -76,6 +78,23 @@ describe('extension download and extraction safety', () => {
           MAX_EXTENSION_UNCOMPRESSED_BYTES - 2 * MAX_EXTENSION_ENTRY_BYTES + 1,
       })
     ).toThrow(/expands beyond/);
+  });
+
+  it('rejects oversized and non-object extension manifests', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-manifest-')
+    );
+    const manifestPath = path.join(tempDir, 'manifest.json');
+    try {
+      fs.writeFileSync(manifestPath, '{}');
+      fs.truncateSync(manifestPath, MAX_EXTENSION_MANIFEST_BYTES + 1);
+      expect(() => readExtensionManifest(manifestPath)).toThrow(/too large/);
+
+      fs.writeFileSync(manifestPath, '[]');
+      expect(() => readExtensionManifest(manifestPath)).toThrow(/JSON object/);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('extracts a bounded CRX3 payload after validating its header', async () => {

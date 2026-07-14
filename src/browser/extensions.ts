@@ -12,6 +12,7 @@ import { createLogger } from '../logging-config.js';
 import {
   assertExtensionContentLength,
   extractExtensionArchive,
+  readExtensionManifest,
   redactExtensionUrl,
   writeLimitedExtensionStream,
 } from './extension-security.js';
@@ -210,14 +211,17 @@ export async function loadOrInstallExtension(
   // Helper functions
   const readManifest = () => {
     if (fs.existsSync(manifestPath)) {
-      return JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      return readExtensionManifest(manifestPath);
     }
     return null;
   };
 
   const readVersion = () => {
     const manifest = readManifest();
-    return manifest?.version || null;
+    const version = manifest?.version;
+    return typeof version === 'string' && version.trim()
+      ? version.trim()
+      : null;
   };
 
   ext.read_manifest = readManifest;
