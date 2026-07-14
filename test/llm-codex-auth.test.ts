@@ -12,6 +12,7 @@ import {
   getCodexCloudflareHeaders,
   importCodexCliTokens,
   loginCodexDeviceCode,
+  MAX_CODEX_AUTH_FILE_BYTES,
   readCodexTokens,
   refreshCodexOAuth,
   resolveCodexRuntimeCredentials,
@@ -152,6 +153,47 @@ describe('Codex auth store', () => {
     );
 
     await expect(importCodexCliTokens({ codexHome })).resolves.toBeNull();
+  });
+
+  it('rejects oversized Codex CLI auth files during import', async () => {
+    const codexHome = await makeTempDir();
+    const authPath = path.join(codexHome, 'auth.json');
+    await fs.writeFile(authPath, '{}');
+    await fs.truncate(authPath, MAX_CODEX_AUTH_FILE_BYTES + 1);
+
+    await expect(importCodexCliTokens({ codexHome })).resolves.toBeNull();
+  });
+
+  it('reports oversized browser-use Codex auth stores', async () => {
+    const configDir = await makeTempDir();
+    const authPath = path.join(configDir, 'auth.json');
+    await fs.writeFile(authPath, '{}');
+    await fs.truncate(authPath, MAX_CODEX_AUTH_FILE_BYTES + 1);
+
+    await expect(getCodexAuthStatus({ configDir })).resolves.toMatchObject({
+      authenticated: false,
+      error: {
+        code: 'codex_auth_store_invalid_file',
+        relogin_required: true,
+      },
+    });
+  });
+
+  it('does not persist oversized Codex token state', async () => {
+    const configDir = await makeTempDir();
+
+    await expect(
+      saveCodexTokens(
+        {
+          access_token: 'x'.repeat(MAX_CODEX_AUTH_FILE_BYTES),
+          refresh_token: 'refresh',
+        },
+        { configDir }
+      )
+    ).rejects.toMatchObject({ code: 'codex_auth_store_too_large' });
+    await expect(
+      fs.stat(path.join(configDir, 'auth.json'))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('refreshes expiring access tokens under the browser-use lock', async () => {

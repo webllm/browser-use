@@ -16,6 +16,7 @@ const AUTH_STORE_VERSION = 1;
 const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
 const MAX_CODEX_AUTH_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CODEX_AUTH_ERROR_BYTES = 64 * 1024;
+export const MAX_CODEX_AUTH_FILE_BYTES = 1024 * 1024;
 
 export interface CodexTokens {
   access_token: string;
@@ -163,17 +164,63 @@ const normalizeStore = (store: CodexAuthStore): CodexAuthStore => ({
   version: AUTH_STORE_VERSION,
   ...store,
   providers:
-    store.providers && typeof store.providers === 'object'
+    store.providers &&
+    typeof store.providers === 'object' &&
+    !Array.isArray(store.providers)
       ? store.providers
       : {},
 });
 
+const readBoundedAuthFile = async (
+  filePath: string,
+  label: string,
+  code: string
+): Promise<string> => {
+  const stats = await fs.lstat(filePath);
+  if (!stats.isFile()) {
+    throw new CodexAuthError(`${label} is not a regular file.`, code, true);
+  }
+  if (stats.size > MAX_CODEX_AUTH_FILE_BYTES) {
+    throw new CodexAuthError(
+      `${label} exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
+      code,
+      true
+    );
+  }
+  const raw = await fs.readFile(filePath, 'utf-8');
+  if (Buffer.byteLength(raw, 'utf8') > MAX_CODEX_AUTH_FILE_BYTES) {
+    throw new CodexAuthError(
+      `${label} exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
+      code,
+      true
+    );
+  }
+  return raw;
+};
+
 const readStore = async (authStorePath: string): Promise<CodexAuthStore> => {
   try {
-    const raw = await fs.readFile(authStorePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      return normalizeStore({});
+    const raw = await readBoundedAuthFile(
+      authStorePath,
+      'Codex auth store',
+      'codex_auth_store_invalid_file'
+    );
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new CodexAuthError(
+        'Codex auth store contains invalid JSON.',
+        'codex_auth_store_invalid_json',
+        true
+      );
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new CodexAuthError(
+        'Codex auth store must contain a JSON object.',
+        'codex_auth_store_invalid_shape',
+        true
+      );
     }
     return normalizeStore(parsed as CodexAuthStore);
   } catch (error) {
@@ -191,7 +238,14 @@ const writeStore = async (
 ): Promise<void> => {
   await ensurePrivateDirectory(path.dirname(authStorePath));
   const tmpPath = `${authStorePath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.writeFile(tmpPath, JSON.stringify(normalizeStore(store), null, 2), {
+  const serializedStore = JSON.stringify(normalizeStore(store), null, 2);
+  if (Buffer.byteLength(serializedStore, 'utf8') > MAX_CODEX_AUTH_FILE_BYTES) {
+    throw new CodexAuthError(
+      `Codex auth store exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
+      'codex_auth_store_too_large'
+    );
+  }
+  await fs.writeFile(tmpPath, serializedStore, {
     encoding: 'utf-8',
     mode: 0o600,
   });
@@ -455,8 +509,15 @@ export const importCodexCliTokens = async (
     : path.join(path.resolve(expandHome(codexHome)), 'auth.json');
 
   try {
-    const raw = await fs.readFile(authPath, 'utf-8');
+    const raw = await readBoundedAuthFile(
+      authPath,
+      'Codex CLI auth file',
+      'codex_cli_auth_invalid_file'
+    );
     const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
     const tokens = parsed?.tokens;
     if (!tokens || typeof tokens !== 'object') {
       return null;
