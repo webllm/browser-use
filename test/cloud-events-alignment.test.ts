@@ -136,6 +136,64 @@ describe('cloud events alignment', () => {
     );
   });
 
+  it('bounds cyclic and deeply nested values while redacting cloud state', () => {
+    const cyclicState: Record<string, unknown> = {
+      reflected: 'deep-secret',
+    };
+    cyclicState.self = cyclicState;
+    cyclicState['deep-secret-key'] = 1n;
+    let nested = cyclicState;
+    for (let depth = 0; depth < 60; depth += 1) {
+      const child: Record<string, unknown> = {};
+      nested.child = child;
+      nested = child;
+    }
+
+    const event = UpdateAgentTaskEvent.fromAgent({
+      task_id: 'task-cyclic',
+      session_id: 'session-cyclic',
+      task: 'task',
+      llm: { model_name: 'model' },
+      sensitive_data: { password: 'deep-secret' },
+      state: {
+        stopped: false,
+        paused: false,
+        n_steps: 1,
+        model_dump: () => cyclicState,
+      },
+      history: {
+        final_result: () => null,
+        is_done: () => false,
+      },
+      browser_session: { id: 'browser-cyclic' },
+      _task_start_time: 1_760_000_000,
+    } as any).toJSON();
+
+    const serialized = JSON.stringify(event.agent_state);
+    expect(serialized).not.toContain('deep-secret');
+    expect(serialized).toContain('<secret>password</secret>');
+    expect(serialized).toContain('[Circular]');
+    expect(serialized).toContain('[Truncated]');
+  });
+
+  it('caps nested cloud action collections before serialization', () => {
+    const actions = Array.from({ length: 10_100 }, (_, index) => ({ index }));
+    const event = CreateAgentStepEvent.fromAgentStep(
+      {
+        task_id: 'task-many-actions',
+        state: { n_steps: 1 },
+        cloud_sync: { auth_client: { device_id: 'device-many-actions' } },
+      } as any,
+      { current_state: {}, action: [] } as any,
+      [],
+      actions,
+      { screenshot: null, url: 'https://example.com' }
+    );
+
+    expect(event.actions.length).toBeLessThan(actions.length);
+    expect(event.actions.at(-1)).toBe('[Truncated]');
+  });
+
   it('UpdateAgentSessionEvent serializes optional update fields', () => {
     const stoppedAt = new Date('2026-02-10T10:11:12.000Z');
     const event = new UpdateAgentSessionEvent({

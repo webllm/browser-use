@@ -16,6 +16,9 @@ const MAX_ID_LENGTH = 255;
 const MAX_FEEDBACK_TYPE_LENGTH = 10;
 const MAX_FILE_NAME_LENGTH = 255;
 const MAX_CONTENT_TYPE_LENGTH = 100;
+const MAX_REDACTED_VALUE_DEPTH = 50;
+const MAX_REDACTED_VALUE_ENTRIES = 10_000;
+const MAX_REDACTED_VALUE_KEY_LENGTH = 1_024;
 
 const logger = createLogger('browser_use.agent.cloud_events');
 
@@ -124,24 +127,96 @@ const getBrowserProfile = (agent: AgentReference) =>
   agent.browser_profile ?? agent.browser_session?.browser_profile ?? null;
 
 const redactAgentValue = (agent: AgentReference, value: unknown): unknown => {
-  if (typeof value === 'string') {
-    return redactSensitiveDataFromString(value, agent.sensitive_data ?? null);
-  }
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactAgentValue(agent, entry));
-  }
-  if (value && typeof value === 'object') {
-    if (value instanceof Date) {
-      return value;
+  const activeObjects = new WeakSet<object>();
+  let remainingEntries = MAX_REDACTED_VALUE_ENTRIES;
+
+  const visit = (entry: unknown, depth: number): unknown => {
+    if (typeof entry === 'string') {
+      return redactSensitiveDataFromString(
+        entry.slice(0, MAX_STRING_LENGTH),
+        agent.sensitive_data ?? null
+      ).slice(0, MAX_STRING_LENGTH);
     }
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        redactAgentValue(agent, entry),
-      ])
-    );
-  }
-  return value;
+    if (typeof entry === 'bigint') {
+      return entry.toString();
+    }
+    if (typeof entry === 'symbol' || typeof entry === 'function') {
+      return `[${typeof entry}]`;
+    }
+    if (!entry || typeof entry !== 'object') {
+      return entry;
+    }
+    if (entry instanceof Date) {
+      return entry;
+    }
+    if (depth >= MAX_REDACTED_VALUE_DEPTH || remainingEntries <= 0) {
+      return '[Truncated]';
+    }
+    if (activeObjects.has(entry)) {
+      return '[Circular]';
+    }
+
+    activeObjects.add(entry);
+    try {
+      if (ArrayBuffer.isView(entry)) {
+        return `[Binary ${(entry as ArrayBufferView).byteLength} bytes]`;
+      }
+      if (entry instanceof ArrayBuffer) {
+        return `[Binary ${entry.byteLength} bytes]`;
+      }
+      if (Array.isArray(entry)) {
+        const output: unknown[] = [];
+        let index = 0;
+        while (index < entry.length && remainingEntries > 0) {
+          remainingEntries -= 1;
+          try {
+            output.push(visit(entry[index], depth + 1));
+          } catch {
+            output.push('[Unreadable]');
+          }
+          index += 1;
+        }
+        if (index < entry.length) {
+          output.push('[Truncated]');
+        }
+        return output;
+      }
+
+      const output = Object.create(null) as Record<string, unknown>;
+      let truncated = false;
+      try {
+        const record = entry as Record<string, unknown>;
+        for (const rawKey in record) {
+          if (!Object.prototype.hasOwnProperty.call(record, rawKey)) continue;
+          if (remainingEntries <= 0) {
+            truncated = true;
+            break;
+          }
+          const key = redactSensitiveDataFromString(
+            rawKey.slice(0, MAX_REDACTED_VALUE_KEY_LENGTH),
+            agent.sensitive_data ?? null
+          ).slice(0, MAX_REDACTED_VALUE_KEY_LENGTH);
+          remainingEntries -= 1;
+          if (!key) continue;
+          try {
+            output[key] = visit(record[rawKey], depth + 1);
+          } catch {
+            output[key] = '[Unreadable]';
+          }
+        }
+      } catch {
+        return '[Unreadable]';
+      }
+      if (truncated) {
+        output.__browser_use_truncated__ = true;
+      }
+      return output;
+    } finally {
+      activeObjects.delete(entry);
+    }
+  };
+
+  return visit(value, 0);
 };
 
 const redactAgentString = (agent: AgentReference, value: string) =>
