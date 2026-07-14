@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BaseChatModel } from '../src/llm/base.js';
 import { Agent } from '../src/agent/service.js';
-import { ActionLoopDetector, compute_action_hash } from '../src/agent/views.js';
+import {
+  ActionLoopDetector,
+  AgentState,
+  compute_action_hash,
+} from '../src/agent/views.js';
 
 const createLlm = (): BaseChatModel =>
   ({
@@ -99,6 +103,50 @@ describe('Action loop detection', () => {
     });
 
     expect(compute_action_hash('custom', params)).toMatch(/^[a-f0-9]{12}$/);
+  });
+
+  it('hydrates and bounds serialized loop detector state', () => {
+    const repeatedHash = 'a'.repeat(12);
+    const state = new AgentState({
+      loop_detector: {
+        window_size: 2,
+        recent_action_hashes: Array(20).fill(repeatedHash),
+        recent_page_fingerprints: Array.from({ length: 10 }, (_, index) => ({
+          url: `https://example.com/${index}`,
+          element_count: index,
+          text_hash: String(index),
+        })),
+        max_repetition_count: 999,
+        most_repeated_hash: 'untrusted',
+        consecutive_stagnant_pages: 3,
+      } as any,
+    });
+
+    expect(state.loop_detector.recent_action_hashes).toHaveLength(2);
+    expect(state.loop_detector.max_repetition_count).toBe(2);
+    expect(state.loop_detector.most_repeated_hash).toBe(repeatedHash);
+    expect(state.loop_detector.recent_page_fingerprints).toHaveLength(5);
+    expect(state.loop_detector.recent_page_fingerprints[0]?.equals).toBeTypeOf(
+      'function'
+    );
+    expect(() =>
+      state.loop_detector.record_page_state(
+        'https://example.com/9',
+        'different hash input',
+        9
+      )
+    ).not.toThrow();
+  });
+
+  it('rejects invalid loop windows without retaining unbounded hashes', () => {
+    const detector = new ActionLoopDetector({
+      window_size: 0,
+      recent_action_hashes: Array(100).fill('b'.repeat(12)),
+    });
+
+    expect(detector.window_size).toBe(20);
+    expect(detector.recent_action_hashes).toHaveLength(20);
+    expect(() => detector.set_window_size(0)).toThrow(RangeError);
   });
 
   it('emits repeated-action nudge at threshold', () => {

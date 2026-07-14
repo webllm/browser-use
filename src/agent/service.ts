@@ -87,6 +87,7 @@ import {
   defaultMessageCompactionSettings,
   normalizeMessageCompactionSettings,
   redactSensitiveDataFromString,
+  MAX_ACTION_LOOP_WINDOW,
 } from './views.js';
 import type { StructuredOutputParser } from './views.js';
 import {
@@ -407,7 +408,6 @@ const MAX_AGENT_FAILURES = 10_000;
 const MAX_AGENT_ACTIONS_PER_STEP = 1_000;
 const MAX_AGENT_HISTORY_ITEMS = 100_000;
 const MAX_AGENT_PLANNING_THRESHOLD = 1_000_000;
-const MAX_AGENT_LOOP_DETECTION_WINDOW = 10_000;
 const MAX_AGENT_URL_SHORTENING_LIMIT = 1_000_000;
 const MAX_LLM_SCREENSHOT_DIMENSION = 8_192;
 const MAX_LLM_SCREENSHOT_PIXELS = 25_000_000;
@@ -736,7 +736,7 @@ export class Agent<
       'loop_detection_window',
       loop_detection_window,
       1,
-      MAX_AGENT_LOOP_DETECTION_WINDOW
+      MAX_ACTION_LOOP_WINDOW
     );
     const validatedUrlShorteningLimit = requireBoundedInteger(
       '_url_shortening_limit',
@@ -963,7 +963,9 @@ export class Agent<
     }
 
     this.state = params.injected_agent_state || new AgentState();
-    this.state.loop_detector.window_size = this.settings.loop_detection_window;
+    this.state.loop_detector.set_window_size(
+      this.settings.loop_detection_window
+    );
     this.history = new AgentHistoryList([], null);
     this.telemetry = productTelemetry;
 

@@ -43,6 +43,11 @@ const MAX_ACTION_HASH_ENTRIES = 10_000;
 const MAX_ACTION_HASH_SERIALIZED_CHARS = 128 * 1024;
 const MAX_ACTION_HASH_FIELD_CHARS = 64 * 1024;
 const MAX_ACTION_HASH_NAME_CHARS = 512;
+export const MAX_ACTION_LOOP_WINDOW = 10_000;
+const MAX_PAGE_FINGERPRINTS = 5;
+const MAX_PAGE_FINGERPRINT_URL_CHARS = 16 * 1024;
+const MAX_PAGE_FINGERPRINT_HASH_CHARS = 128;
+const MAX_STAGNANT_PAGE_COUNT = 1_000_000;
 
 export const redactSensitiveDataFromString = (
   value: string,
@@ -550,12 +555,71 @@ export class ActionLoopDetector {
   consecutive_stagnant_pages: number;
 
   constructor(init?: Partial<ActionLoopDetector>) {
-    this.window_size = init?.window_size ?? 20;
-    this.recent_action_hashes = init?.recent_action_hashes ?? [];
-    this.recent_page_fingerprints = init?.recent_page_fingerprints ?? [];
-    this.max_repetition_count = init?.max_repetition_count ?? 0;
-    this.most_repeated_hash = init?.most_repeated_hash ?? null;
-    this.consecutive_stagnant_pages = init?.consecutive_stagnant_pages ?? 0;
+    const requestedWindow = init?.window_size;
+    this.window_size =
+      Number.isSafeInteger(requestedWindow) &&
+      (requestedWindow as number) >= 1 &&
+      (requestedWindow as number) <= MAX_ACTION_LOOP_WINDOW
+        ? (requestedWindow as number)
+        : 20;
+    this.recent_action_hashes = Array.isArray(init?.recent_action_hashes)
+      ? init.recent_action_hashes
+          .filter(
+            (hash): hash is string =>
+              typeof hash === 'string' && /^[a-f0-9]{12}$/.test(hash)
+          )
+          .slice(-this.window_size)
+      : [];
+    this.recent_page_fingerprints = Array.isArray(
+      init?.recent_page_fingerprints
+    )
+      ? init.recent_page_fingerprints
+          .flatMap((candidate) => {
+            if (!candidate || typeof candidate !== 'object') return [];
+            const value = candidate as unknown as Record<string, unknown>;
+            const url =
+              typeof value.url === 'string'
+                ? value.url.slice(0, MAX_PAGE_FINGERPRINT_URL_CHARS)
+                : '';
+            const elementCount =
+              Number.isSafeInteger(value.element_count) &&
+              (value.element_count as number) >= 0
+                ? (value.element_count as number)
+                : 0;
+            const textHash =
+              typeof value.text_hash === 'string'
+                ? value.text_hash.slice(0, MAX_PAGE_FINGERPRINT_HASH_CHARS)
+                : '';
+            return [new PageFingerprint(url, elementCount, textHash)];
+          })
+          .slice(-MAX_PAGE_FINGERPRINTS)
+      : [];
+    this.max_repetition_count = 0;
+    this.most_repeated_hash = null;
+    this.consecutive_stagnant_pages =
+      Number.isSafeInteger(init?.consecutive_stagnant_pages) &&
+      (init?.consecutive_stagnant_pages as number) >= 0 &&
+      (init?.consecutive_stagnant_pages as number) <= MAX_STAGNANT_PAGE_COUNT
+        ? (init?.consecutive_stagnant_pages as number)
+        : 0;
+    this.update_repetition_stats();
+  }
+
+  set_window_size(windowSize: number) {
+    if (
+      !Number.isSafeInteger(windowSize) ||
+      windowSize < 1 ||
+      windowSize > MAX_ACTION_LOOP_WINDOW
+    ) {
+      throw new RangeError(
+        `window_size must be an integer between 1 and ${MAX_ACTION_LOOP_WINDOW}`
+      );
+    }
+    this.window_size = windowSize;
+    if (this.recent_action_hashes.length > windowSize) {
+      this.recent_action_hashes = this.recent_action_hashes.slice(-windowSize);
+    }
+    this.update_repetition_stats();
   }
 
   record_action(action_name: string, params: Record<string, unknown>) {
@@ -573,13 +637,18 @@ export class ActionLoopDetector {
     const fp = PageFingerprint.from_browser_state(url, dom_text, element_count);
     const last = this.recent_page_fingerprints.at(-1);
     if (last && last.equals(fp)) {
-      this.consecutive_stagnant_pages += 1;
+      this.consecutive_stagnant_pages = Math.min(
+        MAX_STAGNANT_PAGE_COUNT,
+        this.consecutive_stagnant_pages + 1
+      );
     } else {
       this.consecutive_stagnant_pages = 0;
     }
     this.recent_page_fingerprints.push(fp);
-    if (this.recent_page_fingerprints.length > 5) {
-      this.recent_page_fingerprints = this.recent_page_fingerprints.slice(-5);
+    if (this.recent_page_fingerprints.length > MAX_PAGE_FINGERPRINTS) {
+      this.recent_page_fingerprints = this.recent_page_fingerprints.slice(
+        -MAX_PAGE_FINGERPRINTS
+      );
     }
   }
 
@@ -798,10 +867,7 @@ export class AgentState {
     if (init?.loop_detector instanceof ActionLoopDetector) {
       this.loop_detector = init.loop_detector;
     } else if (init?.loop_detector) {
-      this.loop_detector = Object.assign(
-        new ActionLoopDetector(),
-        init.loop_detector
-      );
+      this.loop_detector = new ActionLoopDetector(init.loop_detector);
     } else {
       this.loop_detector = new ActionLoopDetector();
     }
