@@ -9,6 +9,9 @@ loadEnv({ quiet: true });
 
 const logger = createLogger('browser_use.config');
 
+export const MAX_CONFIG_FILE_BYTES = 1024 * 1024;
+const CONFIG_READ_CHUNK_BYTES = 64 * 1024;
+
 const expand_user = (value: string) =>
   value.replace(/^~(?=$|\/|\\)/, os.homedir());
 
@@ -99,6 +102,61 @@ const chmod_private = (target: string, mode: number) => {
     fs.chmodSync(target, mode);
   } catch {
     /* noop */
+  }
+};
+
+const fchmod_private = (fd: number, mode: number) => {
+  if (process.platform === 'win32') {
+    return;
+  }
+  try {
+    fs.fchmodSync(fd, mode);
+  } catch {
+    /* noop */
+  }
+};
+
+const read_private_config_file = (config_path: string): string => {
+  let fd: number | null = null;
+  try {
+    const nonBlocking =
+      process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+    fd = fs.openSync(config_path, fs.constants.O_RDONLY | nonBlocking);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new Error(`Config path is not a regular file: ${config_path}`);
+    }
+    fchmod_private(fd, 0o600);
+    if (stats.size > MAX_CONFIG_FILE_BYTES) {
+      throw new Error(
+        `Config file exceeds ${MAX_CONFIG_FILE_BYTES} bytes: ${config_path}`
+      );
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_CONFIG_FILE_BYTES) {
+      const remaining = MAX_CONFIG_FILE_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(CONFIG_READ_CHUNK_BYTES, remaining)
+      );
+      const bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes > MAX_CONFIG_FILE_BYTES) {
+      throw new Error(
+        `Config file exceeds ${MAX_CONFIG_FILE_BYTES} bytes: ${config_path}`
+      );
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    if (fd !== null) {
+      fs.closeSync(fd);
+    }
   }
 };
 
@@ -597,9 +655,8 @@ const load_and_migrate_config = (config_path: string): DBStyleConfigJSON => {
 
   let raw: unknown;
   try {
-    raw = JSON.parse(fs.readFileSync(config_path, 'utf-8'));
+    raw = JSON.parse(read_private_config_file(config_path));
   } catch (error) {
-    chmod_private(config_path, 0o600);
     throw new Error(
       `Failed to load config from ${config_path}: ${(error as Error).message}. Existing config was not modified. Repair or remove the file before retrying.`,
       { cause: error }
@@ -607,11 +664,9 @@ const load_and_migrate_config = (config_path: string): DBStyleConfigJSON => {
   }
 
   if (looks_like_new_format(raw)) {
-    chmod_private(config_path, 0o600);
     return sanitize_db_config(raw as DBStyleConfigJSON);
   }
 
-  chmod_private(config_path, 0o600);
   throw new Error(
     `Unsupported legacy config format at ${config_path}. Existing config was not modified. Migrate, back up, or remove the file before retrying.`
   );

@@ -187,6 +187,65 @@ describe('Config alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it('rejects oversized config files without reading or replacing them', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    const configPath = path.join(tempDir, 'config.json');
+    try {
+      const { MAX_CONFIG_FILE_BYTES } = await importConfigModule();
+      fs.writeFileSync(configPath, 'x');
+      fs.truncateSync(configPath, MAX_CONFIG_FILE_BYTES + 1);
+
+      await withEnv(
+        {
+          BROWSER_USE_CONFIG_DIR: tempDir,
+          BROWSER_USE_CONFIG_PATH: configPath,
+        },
+        async () => {
+          const { CONFIG } = await importConfigModule();
+          expect(() => CONFIG.get_default_profile()).toThrow(
+            new RegExp(`exceeds ${MAX_CONFIG_FILE_BYTES} bytes`)
+          );
+        }
+      );
+
+      expect(fs.statSync(configPath).size).toBe(MAX_CONFIG_FILE_BYTES + 1);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-file config paths without changing directory permissions', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    const configPath = path.join(tempDir, 'config.json');
+    try {
+      fs.mkdirSync(configPath, { mode: 0o700 });
+
+      await withEnv(
+        {
+          BROWSER_USE_CONFIG_DIR: tempDir,
+          BROWSER_USE_CONFIG_PATH: configPath,
+        },
+        async () => {
+          const { CONFIG } = await importConfigModule();
+          expect(() => CONFIG.get_default_profile()).toThrow(
+            /not a regular file/
+          );
+        }
+      );
+
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o700);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('preserves unsupported legacy config instead of deleting it', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-config-')
