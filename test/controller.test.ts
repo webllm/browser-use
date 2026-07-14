@@ -832,6 +832,47 @@ describe('Controller Integration Tests', () => {
   });
 
   describe('Built-in Actions Patterns', () => {
+    it('keeps search_page phrases intact across inline elements', async () => {
+      await page.setContent(`
+        <main>
+          <p>Pay <strong>now</strong></p>
+          <p>Later</p>
+          <span>browser</span><strong>-use</strong>
+        </main>
+      `);
+      const controller = new Controller();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+        validate_page_after_action: vi.fn(async () => undefined),
+      };
+
+      const phraseResult = await controller.registry.execute_action(
+        'search_page',
+        { pattern: 'Pay now' },
+        { browser_session: browserSession as any }
+      );
+      const adjacentInlineResult = await controller.registry.execute_action(
+        'search_page',
+        { pattern: 'browser-use' },
+        { browser_session: browserSession as any }
+      );
+      const crossBlockResult = await controller.registry.execute_action(
+        'search_page',
+        { pattern: 'nowLater' },
+        { browser_session: browserSession as any }
+      );
+
+      expect(phraseResult.extracted_content).toContain(
+        'Found 1 matches for "Pay now"'
+      );
+      expect(adjacentInlineResult.extracted_content).toContain(
+        'Found 1 matches for "browser-use"'
+      );
+      expect(crossBlockResult.extracted_content).toBe(
+        'No matches found for "nowLater".'
+      );
+    });
+
     it('runs find_elements through a real Playwright page in transformed source builds', async () => {
       await page.setContent(`
         <main>

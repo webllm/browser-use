@@ -112,7 +112,7 @@ const MAX_EVALUATE_RESULT_CHARS = 20_000;
 const MAX_EVALUATE_IMAGE_CHARS = 5 * 1024 * 1024;
 const MAX_EVALUATE_IMAGES = 4;
 const MAX_SEARCH_SOURCE_CHARS = 1_000_000;
-const MAX_SEARCH_TEXT_NODES = 100_000;
+const MAX_SEARCH_DOM_NODES = 100_000;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_SEARCH_CONTEXT_CHARS = 2_000;
 const MAX_SEARCH_MATCH_CHARS = 4_096;
@@ -2128,11 +2128,11 @@ You will be given a query and the markdown of a webpage that has been filtered t
           ({
             cssScope,
             maxSourceChars,
-            maxTextNodes,
+            maxDomNodes,
           }: {
             cssScope: string | null;
             maxSourceChars: number;
-            maxTextNodes: number;
+            maxDomNodes: number;
           }) => {
             let sourceNode: Element | null;
             try {
@@ -2153,34 +2153,126 @@ You will be given a query and the markdown of a webpage that has been filtered t
                 truncated: false,
               };
             }
+            const blockTags = new Set([
+              'ADDRESS',
+              'ARTICLE',
+              'ASIDE',
+              'BLOCKQUOTE',
+              'DD',
+              'DETAILS',
+              'DIALOG',
+              'DIV',
+              'DL',
+              'DT',
+              'FIELDSET',
+              'FIGCAPTION',
+              'FIGURE',
+              'FOOTER',
+              'FORM',
+              'H1',
+              'H2',
+              'H3',
+              'H4',
+              'H5',
+              'H6',
+              'HEADER',
+              'HGROUP',
+              'HR',
+              'LI',
+              'MAIN',
+              'NAV',
+              'OL',
+              'P',
+              'PRE',
+              'SECTION',
+              'SUMMARY',
+              'TABLE',
+              'TBODY',
+              'TD',
+              'TFOOT',
+              'TH',
+              'THEAD',
+              'TR',
+              'UL',
+            ]);
+            const skippedTags = new Set([
+              'SCRIPT',
+              'STYLE',
+              'NOSCRIPT',
+              'TEMPLATE',
+            ]);
+            const blockOwners = new WeakMap<Element, Element>();
+            const skippedElements = new WeakSet<Element>();
+            blockOwners.set(sourceNode, sourceNode);
+            if (skippedTags.has(sourceNode.tagName)) {
+              skippedElements.add(sourceNode);
+            }
+
             const chunks: string[] = [];
             let remaining = Math.max(0, maxSourceChars);
             let visited = 0;
             let truncated = false;
             const walker = document.createTreeWalker(
               sourceNode,
-              NodeFilter.SHOW_TEXT
+              NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
             );
+            let previousBlockOwner: Element | null = null;
+            let pendingBlockBreak = false;
+            let hasText = false;
             let node = walker.nextNode();
-            while (node && remaining > 0 && visited < maxTextNodes) {
+            while (node && remaining > 0 && visited < maxDomNodes) {
               visited += 1;
-              const parentName = node.parentElement?.tagName?.toLowerCase();
-              if (
-                !['script', 'style', 'noscript', 'template'].includes(
-                  parentName ?? ''
-                )
-              ) {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const element = node as Element;
+                const parent = element.parentElement;
+                const parentSkipped = Boolean(
+                  parent && skippedElements.has(parent)
+                );
+                if (parentSkipped || skippedTags.has(element.tagName)) {
+                  skippedElements.add(element);
+                }
+                const parentBlockOwner =
+                  (parent && blockOwners.get(parent)) || sourceNode;
+                blockOwners.set(
+                  element,
+                  blockTags.has(element.tagName) ? element : parentBlockOwner
+                );
+                if (
+                  hasText &&
+                  (element.tagName === 'BR' || blockTags.has(element.tagName))
+                ) {
+                  pendingBlockBreak = true;
+                }
+              } else {
+                const parent = node.parentElement;
+                if (!parent || skippedElements.has(parent)) {
+                  node = walker.nextNode();
+                  continue;
+                }
                 const raw = node.nodeValue ?? '';
-                const piece = raw.slice(0, remaining);
-                if (piece) {
-                  chunks.push(piece);
-                  remaining -= piece.length;
-                  if (remaining > 0) {
+                if (raw) {
+                  const blockOwner = blockOwners.get(parent) || sourceNode;
+                  if (
+                    hasText &&
+                    (pendingBlockBreak || blockOwner !== previousBlockOwner)
+                  ) {
                     chunks.push('\n');
                     remaining -= 1;
                   }
+                  if (remaining <= 0) {
+                    truncated = true;
+                    break;
+                  }
+                  const piece = raw.slice(0, remaining);
+                  if (piece) {
+                    chunks.push(piece);
+                    remaining -= piece.length;
+                    hasText = true;
+                    previousBlockOwner = blockOwner;
+                    pendingBlockBreak = false;
+                  }
+                  if (piece.length < raw.length) truncated = true;
                 }
-                if (piece.length < raw.length) truncated = true;
               }
               node = walker.nextNode();
             }
@@ -2190,7 +2282,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
           {
             cssScope: params.css_scope ?? null,
             maxSourceChars: MAX_SEARCH_SOURCE_CHARS,
-            maxTextNodes: MAX_SEARCH_TEXT_NODES,
+            maxDomNodes: MAX_SEARCH_DOM_NODES,
           }
         )) as SearchPageSource | null;
       } finally {
