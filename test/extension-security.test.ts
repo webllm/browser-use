@@ -190,7 +190,7 @@ describe('extension download and extraction safety', () => {
     }
   });
 
-  it('rechecks archive size on the opened source file', async () => {
+  it('rejects an archive replaced while it is being opened', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-extension-archive-')
     );
@@ -216,12 +216,36 @@ describe('extension download and extraction safety', () => {
     try {
       await expect(
         extractExtensionArchive(archivePath, extractDir)
-      ).rejects.toThrow(`exceeds ${MAX_EXTENSION_DOWNLOAD_BYTES} bytes`);
+      ).rejects.toThrow(/changed while opening/);
     } finally {
       openSpy.mockRestore();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'does not follow extension archive symlinks',
+    async () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-extension-archive-link-')
+      );
+      const targetPath = path.join(tempDir, 'target.zip');
+      const archivePath = path.join(tempDir, 'extension.zip');
+      const extractDir = path.join(tempDir, 'unpacked');
+      const zip = new AdmZip();
+      zip.addFile('manifest.json', Buffer.from('{}'));
+      zip.writeZip(targetPath);
+      fs.symlinkSync(targetPath, archivePath);
+
+      try {
+        await expect(
+          extractExtensionArchive(archivePath, extractDir)
+        ).rejects.toThrow(/not a regular file/);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('extracts a bounded CRX3 payload after validating its header', async () => {
     const tempDir = fs.mkdtempSync(

@@ -102,16 +102,31 @@ const snapshotExtensionArchive = async (
   archivePath: string,
   snapshotPath: string
 ) => {
+  const pathStats = await fsp.lstat(archivePath);
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    throw new Error('Extension archive is not a regular file');
+  }
   const nonBlockingFlag =
     process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fs.constants.O_NOFOLLOW ?? 0);
   const handle = await fsp.open(
     archivePath,
-    fs.constants.O_RDONLY | nonBlockingFlag
+    fs.constants.O_RDONLY | nonBlockingFlag | noFollowFlag
   );
   try {
     const stats = await handle.stat();
-    if (!stats.isFile()) {
-      throw new Error('Extension archive is not a regular file');
+    const currentPathStats = await fsp.lstat(archivePath);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile() ||
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino
+    ) {
+      throw new Error('Extension archive changed while opening');
     }
     if (stats.size > MAX_EXTENSION_DOWNLOAD_BYTES) {
       throw new Error(
@@ -122,7 +137,23 @@ const snapshotExtensionArchive = async (
       handle.createReadStream({ autoClose: false }),
       snapshotPath
     );
+    const finalStats = await handle.stat();
+    const finalPathStats = await fsp.lstat(archivePath);
     const snapshotStats = await fsp.stat(snapshotPath);
+    if (
+      finalPathStats.isSymbolicLink() ||
+      !finalPathStats.isFile() ||
+      finalStats.dev !== stats.dev ||
+      finalStats.ino !== stats.ino ||
+      finalPathStats.dev !== stats.dev ||
+      finalPathStats.ino !== stats.ino ||
+      finalStats.size !== stats.size ||
+      finalStats.mtimeMs !== stats.mtimeMs ||
+      finalStats.ctimeMs !== stats.ctimeMs ||
+      snapshotStats.size !== stats.size
+    ) {
+      throw new Error('Extension archive changed while being copied');
+    }
     return snapshotStats.size;
   } finally {
     await handle.close().catch(() => undefined);
