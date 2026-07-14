@@ -38,6 +38,11 @@ const MAX_SENSITIVE_SECRET_CHARS = 64 * 1024;
 const MAX_SENSITIVE_KEY_CHARS = 256;
 const MAX_AGENT_HISTORY_VALUE_DEPTH = 100;
 const MAX_AGENT_HISTORY_VALUE_ENTRIES = 100_000;
+const MAX_ACTION_HASH_DEPTH = 50;
+const MAX_ACTION_HASH_ENTRIES = 10_000;
+const MAX_ACTION_HASH_SERIALIZED_CHARS = 128 * 1024;
+const MAX_ACTION_HASH_FIELD_CHARS = 64 * 1024;
+const MAX_ACTION_HASH_NAME_CHARS = 512;
 
 export const redactSensitiveDataFromString = (
   value: string,
@@ -255,30 +260,215 @@ export class PageFingerprint {
   }
 }
 
-const stableSerialize = (value: unknown): string => {
-  if (value === null || value === undefined) {
-    return '';
+const stableSerialize = (root: unknown): string => {
+  const chunks: string[] = [];
+  const activeObjects = new WeakSet<object>();
+  let outputLength = 0;
+  let entriesVisited = 0;
+  let truncated = false;
+
+  const append = (value: string) => {
+    const remaining = MAX_ACTION_HASH_SERIALIZED_CHARS - outputLength;
+    if (remaining <= 0) {
+      truncated = true;
+      return;
+    }
+    const bounded = value.slice(0, remaining);
+    chunks.push(bounded);
+    outputLength += bounded.length;
+    if (bounded.length < value.length) truncated = true;
+  };
+
+  const consumeEntry = () => {
+    if (entriesVisited >= MAX_ACTION_HASH_ENTRIES) {
+      append('[Truncated]');
+      truncated = true;
+      return false;
+    }
+    entriesVisited += 1;
+    return true;
+  };
+
+  const appendString = (value: string, prefix: string) => {
+    append(`${prefix}${value.length}:`);
+    append(value.slice(0, MAX_ACTION_HASH_FIELD_CHARS));
+    if (value.length > MAX_ACTION_HASH_FIELD_CHARS) append('[FieldTruncated]');
+  };
+
+  const visit = (value: unknown, depth: number): void => {
+    if (truncated) return;
+    if (value === null) {
+      append('null');
+      return;
+    }
+    if (value === undefined) {
+      append('undefined');
+      return;
+    }
+    if (typeof value === 'string') {
+      appendString(value, 's');
+      return;
+    }
+    if (typeof value === 'number') {
+      append(`n:${Object.is(value, -0) ? '-0' : String(value)}`);
+      return;
+    }
+    if (typeof value === 'boolean') {
+      append(value ? 'b:1' : 'b:0');
+      return;
+    }
+    if (typeof value === 'bigint') {
+      append('bigint');
+      return;
+    }
+    if (typeof value === 'symbol' || typeof value === 'function') {
+      append(`[${typeof value}]`);
+      return;
+    }
+    if (depth >= MAX_ACTION_HASH_DEPTH) {
+      append('[MaxDepth]');
+      return;
+    }
+    if (activeObjects.has(value)) {
+      append('[Circular]');
+      return;
+    }
+
+    activeObjects.add(value);
+    try {
+      if (ArrayBuffer.isView(value)) {
+        append(`[Binary:${value.byteLength}]`);
+        return;
+      }
+      if (value instanceof ArrayBuffer) {
+        append(`[Binary:${value.byteLength}]`);
+        return;
+      }
+      if (value instanceof Date) {
+        append(
+          `date:${Number.isNaN(value.getTime()) ? 'invalid' : value.getTime()}`
+        );
+        return;
+      }
+      if (Array.isArray(value)) {
+        append('[');
+        let index = 0;
+        while (index < value.length && !truncated) {
+          if (!consumeEntry()) break;
+          if (index > 0) append(',');
+          append(`${index}:`);
+          const descriptor = Object.getOwnPropertyDescriptor(
+            value,
+            String(index)
+          );
+          if (!descriptor) {
+            append('[Hole]');
+          } else if ('value' in descriptor) {
+            visit(descriptor.value, depth + 1);
+          } else {
+            append('[Accessor]');
+          }
+          index += 1;
+        }
+        if (index < value.length && !truncated) {
+          append('[Truncated]');
+          truncated = true;
+        }
+        append(']');
+        return;
+      }
+
+      const record = value as Record<string, unknown>;
+      const entries: Array<{
+        key: string;
+        sortKey: string;
+        descriptor: PropertyDescriptor;
+      }> = [];
+      let collectedKeyChars = 0;
+      let collectionTruncated = false;
+      for (const key in record) {
+        if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+        if (entries.length >= MAX_ACTION_HASH_ENTRIES - entriesVisited) {
+          collectionTruncated = true;
+          break;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(record, key);
+        if (!descriptor?.enumerable) continue;
+        const sortKey = key.slice(0, MAX_ACTION_HASH_FIELD_CHARS);
+        if (
+          collectedKeyChars + sortKey.length >
+          MAX_ACTION_HASH_SERIALIZED_CHARS
+        ) {
+          collectionTruncated = true;
+          break;
+        }
+        collectedKeyChars += sortKey.length;
+        entries.push({ key, sortKey, descriptor });
+      }
+      entries.sort(
+        (left, right) =>
+          left.sortKey.localeCompare(right.sortKey) ||
+          left.key.length - right.key.length
+      );
+      append('{');
+      for (let index = 0; index < entries.length && !truncated; index += 1) {
+        if (!consumeEntry()) break;
+        if (index > 0) append(',');
+        const { key, descriptor } = entries[index]!;
+        appendString(key, 'k');
+        append(':');
+        if ('value' in descriptor) {
+          visit(descriptor.value, depth + 1);
+        } else {
+          append('[Accessor]');
+        }
+      }
+      if (collectionTruncated && !truncated) {
+        append('[Truncated]');
+        truncated = true;
+      }
+      append('}');
+    } catch {
+      append('[Unreadable]');
+    } finally {
+      activeObjects.delete(value);
+    }
+  };
+
+  visit(root, 0);
+  const serialized = chunks.join('');
+  if (!truncated) return serialized;
+  const marker = '[Truncated]';
+  return `${serialized.slice(0, MAX_ACTION_HASH_SERIALIZED_CHARS - marker.length)}${marker}`;
+};
+
+const boundedActionHashString = (value: unknown, maxChars: number) => {
+  if (value === null || value === undefined) return '';
+  if (
+    typeof value !== 'string' &&
+    typeof value !== 'number' &&
+    typeof value !== 'boolean'
+  ) {
+    return `[${typeof value}]`;
   }
-  if (typeof value !== 'object') {
-    return String(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableSerialize(item)).join(',')}]`;
-  }
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, entryValue]) => entryValue !== null && entryValue !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b));
-  return `{${entries
-    .map(([key, entryValue]) => `${key}:${stableSerialize(entryValue)}`)
-    .join(',')}}`;
+  const normalized = String(value);
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}[Truncated:${normalized.length}]`;
 };
 
 const normalizeActionForHash = (
   action_name: string,
   params: Record<string, unknown>
 ) => {
+  action_name = boundedActionHashString(
+    action_name,
+    MAX_ACTION_HASH_NAME_CHARS
+  );
   if (action_name === 'search' || action_name === 'search_google') {
-    const query = String(params.query ?? '');
+    const query = boundedActionHashString(
+      params.query,
+      MAX_ACTION_HASH_FIELD_CHARS
+    );
     const tokens = Array.from(
       new Set(
         query
@@ -288,12 +478,12 @@ const normalizeActionForHash = (
           .filter(Boolean)
       )
     ).sort();
-    const engine =
-      typeof params.engine === 'string' && params.engine.trim()
-        ? params.engine.trim().toLowerCase()
-        : action_name === 'search_google'
-          ? 'google'
-          : 'google';
+    const boundedEngine = boundedActionHashString(params.engine, 256);
+    const engine = boundedEngine.trim()
+      ? boundedEngine.trim().toLowerCase()
+      : action_name === 'search_google'
+        ? 'google'
+        : 'google';
     return `search|${engine}|${tokens.join('|')}`;
   }
 
@@ -302,18 +492,21 @@ const normalizeActionForHash = (
     action_name === 'click_element' ||
     action_name === 'click_element_by_index'
   ) {
-    return `click|${String(params.index ?? '')}`;
+    return `click|${boundedActionHashString(params.index, 128)}`;
   }
 
   if (action_name === 'input' || action_name === 'input_text') {
-    const text = String(params.text ?? '')
+    const text = boundedActionHashString(
+      params.text,
+      MAX_ACTION_HASH_FIELD_CHARS
+    )
       .trim()
       .toLowerCase();
-    return `input|${String(params.index ?? '')}|${text}`;
+    return `input|${boundedActionHashString(params.index, 128)}|${text}`;
   }
 
   if (action_name === 'navigate' || action_name === 'go_to_url') {
-    return `navigate|${String(params.url ?? '')}`;
+    return `navigate|${boundedActionHashString(params.url, MAX_ACTION_HASH_FIELD_CHARS)}`;
   }
 
   if (action_name.startsWith('scroll')) {
@@ -325,7 +518,7 @@ const normalizeActionForHash = (
         : action_name.includes('up')
           ? 'up'
           : 'down';
-    const index = String(params.index ?? '');
+    const index = boundedActionHashString(params.index, 128);
     return `scroll|${direction}|${index}`;
   }
 
@@ -336,7 +529,12 @@ export const compute_action_hash = (
   action_name: string,
   params: Record<string, unknown>
 ) => {
-  const normalized = normalizeActionForHash(action_name, params);
+  let normalized: string;
+  try {
+    normalized = normalizeActionForHash(action_name, params);
+  } catch {
+    normalized = `${boundedActionHashString(action_name, MAX_ACTION_HASH_NAME_CHARS)}|[Unreadable]`;
+  }
   return createHash('sha256')
     .update(normalized, 'utf8')
     .digest('hex')

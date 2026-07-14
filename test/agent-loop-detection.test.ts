@@ -69,6 +69,38 @@ describe('Action loop detection', () => {
     expect(scrollHash).toBe(scrollDownHash);
   });
 
+  it('bounds cyclic and deeply nested custom action parameters', () => {
+    const cyclic: Record<string, unknown> = { value: 'same' };
+    cyclic.self = cyclic;
+
+    const deeplyNested: Record<string, unknown> = {};
+    let cursor = deeplyNested;
+    for (let depth = 0; depth < 5_000; depth += 1) {
+      const child: Record<string, unknown> = {};
+      cursor.child = child;
+      cursor = child;
+    }
+
+    const cyclicHash = compute_action_hash('custom', cyclic);
+    expect(cyclicHash).toMatch(/^[a-f0-9]{12}$/);
+    expect(compute_action_hash('custom', cyclic)).toBe(cyclicHash);
+    expect(compute_action_hash('custom', deeplyNested)).toMatch(
+      /^[a-f0-9]{12}$/
+    );
+  });
+
+  it('does not invoke action parameter accessors while hashing', () => {
+    const params: Record<string, unknown> = { safe: 'value' };
+    Object.defineProperty(params, 'secret', {
+      enumerable: true,
+      get() {
+        throw new Error('accessor should not run');
+      },
+    });
+
+    expect(compute_action_hash('custom', params)).toMatch(/^[a-f0-9]{12}$/);
+  });
+
   it('emits repeated-action nudge at threshold', () => {
     const detector = new ActionLoopDetector({ window_size: 20 });
     for (let i = 0; i < 5; i += 1) {
