@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readBoundedCdpPdf } from '../src/browser/pdf-output.js';
+import {
+  MAX_SAVED_PDF_BYTES,
+  readBoundedCdpPdf,
+} from '../src/browser/pdf-output.js';
 
 describe('bounded CDP PDF output', () => {
   it('reads and closes a CDP stream in bounded chunks', async () => {
@@ -57,4 +60,25 @@ describe('bounded CDP PDF output', () => {
       )
     ).rejects.toThrow('maximum size');
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'uses the safe default for invalid byte limit %s',
+    async (invalidLimit) => {
+      const send = vi.fn();
+      const byteLength = vi
+        .spyOn(Buffer, 'byteLength')
+        .mockReturnValue(MAX_SAVED_PDF_BYTES + 1);
+      try {
+        await expect(
+          readBoundedCdpPdf(
+            { send },
+            { data: Buffer.from('pdf').toString('base64') },
+            invalidLimit
+          )
+        ).rejects.toThrow('maximum size');
+      } finally {
+        byteLength.mockRestore();
+      }
+    }
+  );
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_MAX_HTTP_RESPONSE_BYTES,
   HttpResponseTooLargeError,
   readBoundedResponseJson,
   readBoundedResponseText,
@@ -34,4 +35,23 @@ describe('bounded HTTP responses', () => {
       )
     ).rejects.toBeInstanceOf(HttpResponseTooLargeError);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'uses the safe default for invalid byte limit %s',
+    async (invalidLimit) => {
+      const text = vi.fn(async () => 'never read');
+      await expect(
+        readBoundedResponseText(
+          {
+            headers: {
+              get: () => String(DEFAULT_MAX_HTTP_RESPONSE_BYTES + 1),
+            },
+            text,
+          },
+          invalidLimit
+        )
+      ).rejects.toBeInstanceOf(HttpResponseTooLargeError);
+      expect(text).not.toHaveBeenCalled();
+    }
+  );
 });

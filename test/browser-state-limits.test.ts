@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  boundBrowserStateText,
   MAX_BROWSER_STATE_MESSAGE_CHARS,
   MAX_BROWSER_STATE_TABS,
   MAX_BROWSER_STATE_TITLE_CHARS,
@@ -10,6 +11,13 @@ import { BrowserStateSummary } from '../src/browser/views.js';
 import { DOMElementNode, DOMState } from '../src/dom/views.js';
 
 describe('browser state metadata limits', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'fails closed for invalid generic text limit %s',
+    (invalidLimit) => {
+      expect(boundBrowserStateText('sensitive', invalidLimit)).toBe('');
+    }
+  );
+
   it('bounds page-controlled metadata before it reaches consumers', () => {
     const root = new DOMElementNode(true, null, 'body', '/body', {}, []);
     const state = new BrowserStateSummary(new DOMState(root, {}), {

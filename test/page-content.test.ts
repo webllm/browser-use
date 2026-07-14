@@ -58,6 +58,29 @@ describe('bounded page HTML extraction', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    'uses the safe default for invalid character limit %s',
+    async (invalidLimit) => {
+      const evaluate = vi.fn(async (_fn: unknown, limits: any) => ({
+        html: 'safe',
+        truncated: false,
+        visitedNodes: 1,
+        sourceUrl: '',
+        rootFound: true,
+        maxOutputChars: limits.maxOutputChars,
+      }));
+
+      await extractBoundedPageHtml({ evaluate }, invalidLimit);
+
+      expect(evaluate).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({
+          maxOutputChars: MAX_MAIN_PAGE_HTML_CHARS,
+        })
+      );
+    }
+  );
+
   it('passes a bounded selector to the page serializer', async () => {
     const evaluate = vi.fn(async (_fn: unknown, limits: any) => ({
       html: '<main>content</main>',

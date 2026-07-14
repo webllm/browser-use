@@ -31,11 +31,16 @@ const assertTextSize = (text: string, maxBytes: number) => {
   }
 };
 
+const normalizeResponseLimit = (maxBytes: number) =>
+  Number.isFinite(maxBytes)
+    ? Math.max(1, Math.floor(maxBytes))
+    : DEFAULT_MAX_HTTP_RESPONSE_BYTES;
+
 export const readBoundedResponseText = async (
   response: ResponseLike,
   maxBytes = DEFAULT_MAX_HTTP_RESPONSE_BYTES
 ): Promise<string> => {
-  const boundedMaxBytes = Math.max(1, Math.floor(maxBytes));
+  const boundedMaxBytes = normalizeResponseLimit(maxBytes);
   assertContentLength(response, boundedMaxBytes);
 
   if (response.body?.getReader) {
@@ -80,6 +85,6 @@ export const readBoundedResponseJson = async (
   }
   const payload = await response.json();
   const rendered = JSON.stringify(payload);
-  assertTextSize(rendered ?? 'null', Math.max(1, Math.floor(maxBytes)));
+  assertTextSize(rendered ?? 'null', normalizeResponseLimit(maxBytes));
   return payload;
 };

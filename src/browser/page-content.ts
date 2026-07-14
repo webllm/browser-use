@@ -32,7 +32,9 @@ export const extractBoundedPageHtml = async (
   maxChars: number,
   options: BoundedPageHtmlOptions = {}
 ): Promise<BoundedPageHtml> => {
-  const boundedMaxChars = Math.max(0, Math.floor(maxChars));
+  const boundedMaxChars = Number.isFinite(maxChars)
+    ? Math.max(0, Math.floor(maxChars))
+    : MAX_MAIN_PAGE_HTML_CHARS;
   const selector =
     options.selector?.trim().slice(0, MAX_PAGE_HTML_SELECTOR_CHARS) || null;
   if (typeof source.evaluate === 'function') {

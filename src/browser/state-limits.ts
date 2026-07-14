@@ -12,7 +12,10 @@ export const boundBrowserStateText = (
   maxChars: number
 ): string => {
   if (typeof value !== 'string') return '';
-  return value.slice(0, Math.max(0, maxChars));
+  const boundedMaxChars = Number.isFinite(maxChars)
+    ? Math.max(0, Math.floor(maxChars))
+    : 0;
+  return value.slice(0, boundedMaxChars);
 };
 
 export const boundBrowserStateUrl = (value: unknown): string =>
