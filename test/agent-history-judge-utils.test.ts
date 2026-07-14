@@ -75,4 +75,30 @@ describe('AgentHistoryList judgement and trace helpers', () => {
     expect(steps[0]).toContain('Found release notes');
     expect(steps[0]).toContain('Second action failed');
   });
+
+  it('stops formatting agent steps at the requested character budget', () => {
+    const history = new AgentHistoryList();
+    history.add_item(
+      new AgentHistory(
+        null,
+        [new ActionResult({ extracted_content: 'x'.repeat(1_000) })],
+        new BrowserStateHistory('https://example.com', 'Example', [], [], null)
+      )
+    );
+    history.add_item(
+      new AgentHistory(
+        null,
+        [new ActionResult({ extracted_content: 'unread-tail' })],
+        new BrowserStateHistory('https://example.com', 'Example', [], [], null)
+      )
+    );
+
+    const steps = history.agent_steps(64);
+
+    expect(steps.join('')).toHaveLength(64);
+    expect(steps.join('')).not.toContain('unread-tail');
+    expect(() => history.agent_steps(Number.POSITIVE_INFINITY)).toThrow(
+      'max_chars must be a non-negative integer or null'
+    );
+  });
 });

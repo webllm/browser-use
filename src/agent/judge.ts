@@ -10,6 +10,9 @@ import { readBoundedScreenshotFileSync } from '../screenshots/file.js';
 
 const MAX_JUDGE_SCREENSHOTS = 10;
 const MAX_JUDGE_SCREENSHOT_BYTES = 20 * 1024 * 1024;
+export const MAX_JUDGE_TEXT_CHARS = 40_000;
+const MAX_SIMPLE_JUDGE_TEXT_CHARS = 20_000;
+const MAX_JUDGE_CURRENT_DATE_CHARS = 128;
 
 const truncateText = (
   text: string,
@@ -23,6 +26,24 @@ const truncateText = (
     return `...[text truncated]${text.slice(-(maxLength - 20))}`;
   }
   return `${text.slice(0, maxLength - 23)}...[text truncated]...`;
+};
+
+const joinTextBounded = (values: string[], maxLength: number) => {
+  const chunks: string[] = [];
+  let remaining = maxLength;
+  for (let index = 0; index < values.length && remaining > 0; index += 1) {
+    if (index > 0) {
+      const separator = '\n'.slice(0, remaining);
+      chunks.push(separator);
+      remaining -= separator.length;
+      if (remaining <= 0) break;
+    }
+    const value = values[index] ?? '';
+    const bounded = value.slice(0, remaining);
+    chunks.push(bounded);
+    remaining -= bounded.length;
+  }
+  return chunks.join('');
 };
 
 export interface ConstructJudgeMessagesOptions {
@@ -54,9 +75,18 @@ export const construct_judge_messages = (
     use_vision = true,
   } = options;
 
-  const task_truncated = truncateText(task, 40000);
-  const final_result_truncated = truncateText(final_result, 40000);
-  const steps_text_truncated = truncateText(agent_steps.join('\n'), 40000);
+  const task_truncated = truncateText(task, MAX_JUDGE_TEXT_CHARS);
+  const final_result_truncated = truncateText(
+    final_result,
+    MAX_JUDGE_TEXT_CHARS
+  );
+  const steps_text_truncated = truncateText(
+    joinTextBounded(agent_steps, MAX_JUDGE_TEXT_CHARS + 1),
+    MAX_JUDGE_TEXT_CHARS
+  );
+  const ground_truth_truncated = ground_truth
+    ? truncateText(ground_truth, MAX_JUDGE_TEXT_CHARS)
+    : null;
 
   const encoded_images: ContentPartImageParam[] = [];
   if (use_vision !== false) {
@@ -89,7 +119,7 @@ export const construct_judge_messages = (
     }
   }
 
-  const ground_truth_section = ground_truth
+  const ground_truth_section = ground_truth_truncated
     ? `
 **GROUND TRUTH VALIDATION (HIGHEST PRIORITY):**
 The <ground_truth> section contains verified correct information for this task. This can be:
@@ -185,10 +215,10 @@ Respond with EXACTLY this JSON structure (no additional text before or after):
 }
 </response_format>`;
 
-  const ground_truth_prompt = ground_truth
+  const ground_truth_prompt = ground_truth_truncated
     ? `
 <ground_truth>
-${ground_truth}
+${ground_truth_truncated}
 </ground_truth>
 `
     : '';
@@ -220,10 +250,18 @@ Evaluate this agent execution given the criteria and respond with the exact JSON
 export const construct_simple_judge_messages = (
   options: ConstructSimpleJudgeMessagesOptions
 ): Message[] => {
-  const task_truncated = truncateText(options.task, 20000);
-  const final_result_truncated = truncateText(options.final_result, 20000);
-  const current_date =
-    options.current_date ?? new Date().toISOString().slice(0, 10);
+  const task_truncated = truncateText(
+    options.task,
+    MAX_SIMPLE_JUDGE_TEXT_CHARS
+  );
+  const final_result_truncated = truncateText(
+    options.final_result,
+    MAX_SIMPLE_JUDGE_TEXT_CHARS
+  );
+  const current_date = truncateText(
+    options.current_date ?? new Date().toISOString().slice(0, 10),
+    MAX_JUDGE_CURRENT_DATE_CHARS
+  );
 
   const system_prompt = `You are a strict verifier checking whether a browser automation agent actually completed its task.
 

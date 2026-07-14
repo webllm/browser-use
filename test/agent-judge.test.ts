@@ -129,6 +129,33 @@ describe('Agent full judge alignment', () => {
     }
   });
 
+  it('bounds judge trajectory, ground truth, and date text before prompting', () => {
+    const messages = construct_judge_messages({
+      task: 'Validate output',
+      final_result: 'done',
+      agent_steps: ['x'.repeat(50_000), 'unread-tail'],
+      screenshot_paths: [],
+      ground_truth: 'g'.repeat(50_000),
+      use_vision: false,
+    });
+    const userContent = (messages[1] as any).content[0].text as string;
+
+    expect(userContent).not.toContain('unread-tail');
+    expect(userContent.match(/\.\.\.\[text truncated\]\.\.\./g)).toHaveLength(
+      2
+    );
+
+    const simpleMessages = construct_simple_judge_messages({
+      task: 'Validate output',
+      final_result: 'done',
+      current_date: 'd'.repeat(1_000),
+    });
+    expect((simpleMessages[0] as any).content.length).toBeLessThan(10_000);
+    expect((simpleMessages[0] as any).content).toContain(
+      '...[text truncated]...'
+    );
+  });
+
   it('runs full judge after done in takeStep when use_judge is enabled', async () => {
     const { llm: mainLlm, ainvoke: mainInvoke } = createLlm(
       '{"is_correct": true, "reason": ""}'

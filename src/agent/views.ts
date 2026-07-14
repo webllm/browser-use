@@ -332,7 +332,14 @@ export class PageFingerprint {
   }
 }
 
-const stableSerialize = (root: unknown): string => {
+const stableSerialize = (
+  root: unknown,
+  maxOutputChars = MAX_ACTION_HASH_SERIALIZED_CHARS
+): string => {
+  const outputLimit =
+    Number.isSafeInteger(maxOutputChars) && maxOutputChars > 0
+      ? Math.min(maxOutputChars, MAX_ACTION_HASH_SERIALIZED_CHARS)
+      : MAX_ACTION_HASH_SERIALIZED_CHARS;
   const chunks: string[] = [];
   const activeObjects = new WeakSet<object>();
   let outputLength = 0;
@@ -340,7 +347,7 @@ const stableSerialize = (root: unknown): string => {
   let truncated = false;
 
   const append = (value: string) => {
-    const remaining = MAX_ACTION_HASH_SERIALIZED_CHARS - outputLength;
+    const remaining = outputLimit - outputLength;
     if (remaining <= 0) {
       truncated = true;
       return;
@@ -467,10 +474,7 @@ const stableSerialize = (root: unknown): string => {
         const descriptor = Object.getOwnPropertyDescriptor(record, key);
         if (!descriptor?.enumerable) continue;
         const sortKey = key.slice(0, MAX_ACTION_HASH_FIELD_CHARS);
-        if (
-          collectedKeyChars + sortKey.length >
-          MAX_ACTION_HASH_SERIALIZED_CHARS
-        ) {
+        if (collectedKeyChars + sortKey.length > outputLimit) {
           collectionTruncated = true;
           break;
         }
@@ -510,8 +514,8 @@ const stableSerialize = (root: unknown): string => {
   visit(root, 0);
   const serialized = chunks.join('');
   if (!truncated) return serialized;
-  const marker = '[Truncated]';
-  return `${serialized.slice(0, MAX_ACTION_HASH_SERIALIZED_CHARS - marker.length)}${marker}`;
+  const marker = '[Truncated]'.slice(0, outputLimit);
+  return `${serialized.slice(0, Math.max(0, outputLimit - marker.length))}${marker}`;
 };
 
 const boundedActionHashString = (value: unknown, maxChars: number) => {
@@ -1640,38 +1644,81 @@ export class AgentHistoryList<TStructured = unknown> {
     return this.history.length;
   }
 
-  agent_steps() {
-    const steps: string[] = [];
-    for (let stepIndex = 0; stepIndex < this.history.length; stepIndex += 1) {
-      const historyItem = this.history[stepIndex];
-      let stepText = `Step ${stepIndex + 1}:\n`;
+  agent_steps(max_chars: number | null = null) {
+    if (
+      max_chars !== null &&
+      (!Number.isSafeInteger(max_chars) || max_chars < 0)
+    ) {
+      throw new RangeError('max_chars must be a non-negative integer or null');
+    }
+    if (max_chars === 0) {
+      return [];
+    }
 
-      if (historyItem.model_output?.action?.length) {
-        const actions = historyItem.model_output.action.map((action) =>
-          typeof (action as any)?.model_dump === 'function'
-            ? (action as any).model_dump()
-            : action
-        );
-        stepText += `Actions: ${JSON.stringify(actions, null, 1)}\n`;
+    const steps: string[] = [];
+    let remainingChars = max_chars;
+    const append = (chunks: string[], value: string) => {
+      if (remainingChars === null) {
+        chunks.push(value);
+        return;
+      }
+      if (remainingChars <= 0) return;
+      const bounded = value.slice(0, remainingChars);
+      chunks.push(bounded);
+      remainingChars -= bounded.length;
+    };
+
+    for (
+      let stepIndex = 0;
+      stepIndex < this.history.length && remainingChars !== 0;
+      stepIndex += 1
+    ) {
+      const historyItem = this.history[stepIndex];
+      const stepChunks: string[] = [];
+      append(stepChunks, `Step ${stepIndex + 1}:\n`);
+
+      if (remainingChars !== 0 && historyItem.model_output?.action?.length) {
+        const actionsText =
+          remainingChars === null
+            ? JSON.stringify(
+                historyItem.model_output.action.map((action) =>
+                  typeof (action as any)?.model_dump === 'function'
+                    ? (action as any).model_dump()
+                    : action
+                ),
+                null,
+                1
+              )
+            : stableSerialize(
+                historyItem.model_output.action,
+                remainingChars as number
+              );
+        append(stepChunks, 'Actions: ');
+        append(stepChunks, actionsText);
+        append(stepChunks, '\n');
       }
 
-      if (historyItem.result?.length) {
+      if (remainingChars !== 0 && historyItem.result?.length) {
         for (
           let resultIndex = 0;
-          resultIndex < historyItem.result.length;
+          resultIndex < historyItem.result.length && remainingChars !== 0;
           resultIndex += 1
         ) {
           const result = historyItem.result[resultIndex];
           if (result?.extracted_content) {
-            stepText += `Result ${resultIndex + 1}: ${String(result.extracted_content)}\n`;
+            append(stepChunks, `Result ${resultIndex + 1}: `);
+            append(stepChunks, String(result.extracted_content));
+            append(stepChunks, '\n');
           }
-          if (result?.error) {
-            stepText += `Error ${resultIndex + 1}: ${String(result.error)}\n`;
+          if (remainingChars !== 0 && result?.error) {
+            append(stepChunks, `Error ${resultIndex + 1}: `);
+            append(stepChunks, String(result.error));
+            append(stepChunks, '\n');
           }
         }
       }
 
-      steps.push(stepText);
+      steps.push(stepChunks.join(''));
     }
     return steps;
   }

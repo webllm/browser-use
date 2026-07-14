@@ -111,6 +111,7 @@ import { TokenCost } from '../tokens/service.js';
 import {
   construct_judge_messages,
   construct_simple_judge_messages,
+  MAX_JUDGE_TEXT_CHARS,
 } from './judge.js';
 import {
   CloudSkillService,
@@ -5521,7 +5522,7 @@ export class Agent<
     const messages = construct_judge_messages({
       task: this.task,
       final_result: this.history.final_result() ?? '',
-      agent_steps: this.history.agent_steps(),
+      agent_steps: this.history.agent_steps(MAX_JUDGE_TEXT_CHARS + 1),
       screenshot_paths: this.history
         .screenshot_paths()
         .filter((value): value is string => typeof value === 'string'),
