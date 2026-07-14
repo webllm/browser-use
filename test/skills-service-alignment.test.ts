@@ -72,6 +72,41 @@ describe('CloudSkillService alignment', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('times out stalled skill API requests', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(
+        async (_url: string | URL | Request, init?: RequestInit) =>
+          await new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            signal?.addEventListener(
+              'abort',
+              () => reject(signal.reason ?? new Error('aborted')),
+              { once: true }
+            );
+          })
+      );
+      const service = new CloudSkillService({
+        skill_ids: ['*'],
+        api_key: 'test-key',
+        base_url: 'https://api.test',
+        fetch_impl: fetchMock as typeof fetch,
+        request_timeout_ms: 25,
+      });
+
+      const request = service.get_all_skills();
+      const expectedRejection = expect(request).rejects.toThrow(
+        'HTTP request timed out'
+      );
+      await vi.advanceTimersByTimeAsync(25);
+
+      await expectedRejection;
+      expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('loads wildcard skills from only the first page', async () => {
     const pageItems = Array.from({ length: 100 }, (_, index) =>
       makeSkillItem(`skill-${index}`)

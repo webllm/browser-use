@@ -2,8 +2,10 @@ import { CONFIG } from '../config.js';
 import { createLogger } from '../logging-config.js';
 import { build_skill_parameters_schema, get_skill_slug } from './utils.js';
 import {
+  DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
   HttpResponseTooLargeError,
   readBoundedResponseJson,
+  runWithHttpTimeout,
 } from '../http-response.js';
 import {
   MissingCookieException,
@@ -22,6 +24,7 @@ interface CloudSkillServiceOptions {
   api_key?: string | null;
   base_url?: string | null;
   fetch_impl?: typeof fetch;
+  request_timeout_ms?: number;
 }
 
 interface SkillListResponse {
@@ -103,6 +106,7 @@ export class CloudSkillService implements SkillService {
   private readonly api_key: string;
   private readonly base_url: string;
   private readonly fetch_impl: typeof fetch;
+  private readonly request_timeout_ms: number;
   private initialized = false;
   private readonly skills = new Map<string, SkillDefinition>();
 
@@ -111,6 +115,8 @@ export class CloudSkillService implements SkillService {
     this.api_key = options.api_key ?? process.env.BROWSER_USE_API_KEY ?? '';
     this.base_url = options.base_url ?? CONFIG.BROWSER_USE_CLOUD_API_URL;
     this.fetch_impl = options.fetch_impl ?? fetch;
+    this.request_timeout_ms =
+      options.request_timeout_ms ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
 
     if (!this.api_key) {
       throw new Error('BROWSER_USE_API_KEY environment variable is not set');
@@ -121,35 +127,42 @@ export class CloudSkillService implements SkillService {
     path: string,
     init: RequestInit = {}
   ): Promise<unknown> {
-    const response = await this.fetch_impl(`${this.base_url}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${this.api_key}`,
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(init.headers ?? {}),
+    return await runWithHttpTimeout(
+      async (signal) => {
+        const response = await this.fetch_impl(`${this.base_url}${path}`, {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${this.api_key}`,
+            ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(init.headers ?? {}),
+          },
+          redirect: 'error',
+          signal,
+        });
+
+        let payload: unknown;
+        try {
+          payload = await readBoundedResponseJson(response);
+        } catch (error) {
+          if (error instanceof HttpResponseTooLargeError) throw error;
+          payload = null;
+        }
+
+        if (!response.ok) {
+          const details =
+            payload && typeof payload === 'object'
+              ? JSON.stringify(payload)
+              : String(payload ?? '');
+          throw new Error(
+            `Skill API request failed (${response.status}): ${details.slice(0, 8192)}`
+          );
+        }
+
+        return payload;
       },
-      redirect: 'error',
-    });
-
-    let payload: unknown;
-    try {
-      payload = await readBoundedResponseJson(response);
-    } catch (error) {
-      if (error instanceof HttpResponseTooLargeError) throw error;
-      payload = null;
-    }
-
-    if (!response.ok) {
-      const details =
-        payload && typeof payload === 'object'
-          ? JSON.stringify(payload)
-          : String(payload ?? '');
-      throw new Error(
-        `Skill API request failed (${response.status}): ${details.slice(0, 8192)}`
-      );
-    }
-
-    return payload;
+      this.request_timeout_ms,
+      init.signal
+    );
   }
 
   private async listSkillsPage(
