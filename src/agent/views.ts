@@ -77,6 +77,43 @@ const requireHistoryArray = (
   return value;
 };
 
+const requireNullableHistoryString = (value: unknown, label: string) => {
+  if (value == null) return null;
+  if (typeof value !== 'string') {
+    throw new TypeError(`${label} must be a string or null`);
+  }
+  return value;
+};
+
+const requireNullableHistoryBoolean = (value: unknown, label: string) => {
+  if (value == null) return null;
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${label} must be a boolean or null`);
+  }
+  return value;
+};
+
+const requireFiniteHistoryNumber = (value: unknown, label: string) => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`${label} must be a finite number`);
+  }
+  return value;
+};
+
+const validateHistoryRecordItems = (items: unknown[], label: string) => {
+  items.forEach((item, index) => {
+    requireHistoryRecord(item, `${label}[${index}]`);
+  });
+};
+
+const validateHistoryStringItems = (items: unknown[], label: string) => {
+  items.forEach((item, index) => {
+    if (typeof item !== 'string') {
+      throw new TypeError(`${label}[${index}] must be a string`);
+    }
+  });
+};
+
 export const redactSensitiveDataFromString = (
   value: string,
   sensitive_data: SensitiveDataMap | null,
@@ -1684,11 +1721,48 @@ export class AgentHistoryList<TStructured = unknown> {
           entry.model_output,
           `Agent history entry ${index}.model_output`
         );
+        for (const field of [
+          'thinking',
+          'evaluation_previous_goal',
+          'memory',
+          'next_goal',
+        ] as const) {
+          requireNullableHistoryString(
+            rawModelOutput[field],
+            `Agent history entry ${index}.model_output.${field}`
+          );
+        }
+        if (rawModelOutput.current_plan_item != null) {
+          const currentPlanItem = requireFiniteHistoryNumber(
+            rawModelOutput.current_plan_item,
+            `Agent history entry ${index}.model_output.current_plan_item`
+          );
+          if (!Number.isSafeInteger(currentPlanItem)) {
+            throw new TypeError(
+              `Agent history entry ${index}.model_output.current_plan_item must be an integer`
+            );
+          }
+        }
+        if (rawModelOutput.plan_update != null) {
+          const planUpdate = requireHistoryArray(
+            rawModelOutput.plan_update,
+            `Agent history entry ${index}.model_output.plan_update`,
+            MAX_LOADED_STATE_COLLECTION_ITEMS
+          );
+          validateHistoryStringItems(
+            planUpdate,
+            `Agent history entry ${index}.model_output.plan_update`
+          );
+        }
         if (rawModelOutput.action != null) {
-          requireHistoryArray(
+          const actions = requireHistoryArray(
             rawModelOutput.action,
             `Agent history entry ${index}.model_output.action`,
             MAX_LOADED_ACTIONS_PER_HISTORY_ITEM
+          );
+          validateHistoryRecordItems(
+            actions,
+            `Agent history entry ${index}.model_output.action`
           );
         }
         modelOutput = outputModel.fromJSON(rawModelOutput);
@@ -1704,6 +1778,55 @@ export class AgentHistoryList<TStructured = unknown> {
           item,
           `Agent history entry ${index}.result[${resultIndex}]`
         );
+        const resultLabel = `Agent history entry ${index}.result[${resultIndex}]`;
+        for (const field of ['is_done', 'success'] as const) {
+          requireNullableHistoryBoolean(
+            rawResult[field],
+            `${resultLabel}.${field}`
+          );
+        }
+        for (const field of [
+          'include_extracted_content_only_once',
+          'include_in_memory',
+        ] as const) {
+          if (
+            rawResult[field] != null &&
+            typeof rawResult[field] !== 'boolean'
+          ) {
+            throw new TypeError(`${resultLabel}.${field} must be a boolean`);
+          }
+        }
+        for (const field of [
+          'error',
+          'long_term_memory',
+          'extracted_content',
+        ] as const) {
+          requireNullableHistoryString(
+            rawResult[field],
+            `${resultLabel}.${field}`
+          );
+        }
+        for (const field of ['judgement', 'metadata'] as const) {
+          if (rawResult[field] != null) {
+            requireHistoryRecord(rawResult[field], `${resultLabel}.${field}`);
+          }
+        }
+        if (rawResult.attachments != null) {
+          const attachments = requireHistoryArray(
+            rawResult.attachments,
+            `${resultLabel}.attachments`,
+            MAX_LOADED_STATE_COLLECTION_ITEMS
+          );
+          validateHistoryStringItems(attachments, `${resultLabel}.attachments`);
+        }
+        if (rawResult.images != null) {
+          const images = requireHistoryArray(
+            rawResult.images,
+            `${resultLabel}.images`,
+            MAX_LOADED_STATE_COLLECTION_ITEMS
+          );
+          validateHistoryRecordItems(images, `${resultLabel}.images`);
+        }
         return new ActionResult(rawResult as ActionResultInit);
       });
 
@@ -1721,12 +1844,38 @@ export class AgentHistoryList<TStructured = unknown> {
         `Agent history entry ${index}.state.interacted_element`,
         MAX_LOADED_STATE_COLLECTION_ITEMS
       );
+      validateHistoryRecordItems(
+        tabs,
+        `Agent history entry ${index}.state.tabs`
+      );
+      interactedElements.forEach((item, elementIndex) => {
+        if (item != null) {
+          requireHistoryRecord(
+            item,
+            `Agent history entry ${index}.state.interacted_element[${elementIndex}]`
+          );
+        }
+      });
+      const url =
+        requireNullableHistoryString(
+          rawState.url,
+          `Agent history entry ${index}.state.url`
+        ) ?? '';
+      const title =
+        requireNullableHistoryString(
+          rawState.title,
+          `Agent history entry ${index}.state.title`
+        ) ?? '';
+      const screenshotPath = requireNullableHistoryString(
+        rawState.screenshot_path,
+        `Agent history entry ${index}.state.screenshot_path`
+      );
       const state = new (BrowserStateHistory as any)(
-        rawState.url ?? '',
-        rawState.title ?? '',
+        url,
+        title,
         tabs,
         interactedElements,
-        rawState.screenshot_path ?? null
+        screenshotPath
       ) as BrowserStateHistory;
 
       const rawMetadata =
@@ -1736,20 +1885,47 @@ export class AgentHistoryList<TStructured = unknown> {
               entry.metadata,
               `Agent history entry ${index}.metadata`
             );
-      const metadata = rawMetadata
-        ? new StepMetadata(
-            rawMetadata.step_start_time as number,
-            rawMetadata.step_end_time as number,
-            rawMetadata.step_number as number,
-            (rawMetadata.step_interval as number | null | undefined) ?? null
-          )
-        : null;
+      let metadata: StepMetadata | null = null;
+      if (rawMetadata) {
+        const stepNumber = requireFiniteHistoryNumber(
+          rawMetadata.step_number,
+          `Agent history entry ${index}.metadata.step_number`
+        );
+        if (!Number.isSafeInteger(stepNumber)) {
+          throw new TypeError(
+            `Agent history entry ${index}.metadata.step_number must be an integer`
+          );
+        }
+        const stepInterval =
+          rawMetadata.step_interval == null
+            ? null
+            : requireFiniteHistoryNumber(
+                rawMetadata.step_interval,
+                `Agent history entry ${index}.metadata.step_interval`
+              );
+        metadata = new StepMetadata(
+          requireFiniteHistoryNumber(
+            rawMetadata.step_start_time,
+            `Agent history entry ${index}.metadata.step_start_time`
+          ),
+          requireFiniteHistoryNumber(
+            rawMetadata.step_end_time,
+            `Agent history entry ${index}.metadata.step_end_time`
+          ),
+          stepNumber,
+          stepInterval
+        );
+      }
+      const stateMessage = requireNullableHistoryString(
+        entry.state_message,
+        `Agent history entry ${index}.state_message`
+      );
       return new AgentHistory(
         modelOutput,
         result,
         state,
         metadata,
-        (entry.state_message as string | null | undefined) ?? null
+        stateMessage
       );
     });
     return new AgentHistoryList(historyItems);

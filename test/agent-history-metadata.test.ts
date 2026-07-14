@@ -161,6 +161,43 @@ describe('Agent history metadata alignment', () => {
     );
   });
 
+  it.each([
+    [
+      { history: [{ result: [{ error: { message: 'boom' } }] }] },
+      'result[0].error must be a string or null',
+    ],
+    [
+      { history: [{ model_output: { action: ['click'] } }] },
+      'model_output.action[0] must be an object',
+    ],
+    [
+      { history: [{ state: { url: { href: 'https://example.com' } } }] },
+      'state.url must be a string or null',
+    ],
+    [
+      {
+        history: [
+          {
+            metadata: {
+              step_start_time: 1,
+              step_end_time: 2,
+              step_number: Number.POSITIVE_INFINITY,
+            },
+          },
+        ],
+      },
+      'metadata.step_number must be a finite number',
+    ],
+    [
+      { history: [{ state_message: ['not', 'text'] }] },
+      'state_message must be a string or null',
+    ],
+  ])('rejects malformed history field values', (payload, message) => {
+    expect(() =>
+      AgentHistoryList.load_from_dict(payload as any, AgentOutput)
+    ).toThrow(message);
+  });
+
   it('preserves existing history when atomic replacement fails', () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'agent-history-atomic-')
