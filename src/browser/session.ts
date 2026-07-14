@@ -47,6 +47,7 @@ import {
   readBoundedStorageStateFile,
   serializeBoundedStorageState,
 } from './storage-state-limits.js';
+import { discoverLocalCdpWebSocketUrl } from './cdp-discovery.js';
 import {
   EventBus,
   type EventDispatchOptions,
@@ -2759,18 +2760,13 @@ export class BrowserSession {
     const commonPorts = [9222, 9223, 9224, 9225];
 
     for (const port of commonPorts) {
-      try {
-        const response = await fetch(`http://localhost:${port}/json/version`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.webSocketDebuggerUrl) {
-            this.logger.debug(`Found CDP endpoint on port ${port}`);
-            return data.webSocketDebuggerUrl;
-          }
-        }
-      } catch {
-        // Port not accessible, try next
-        continue;
+      const webSocketDebuggerUrl = await discoverLocalCdpWebSocketUrl({
+        host: 'localhost',
+        port,
+      });
+      if (webSocketDebuggerUrl) {
+        this.logger.debug(`Found CDP endpoint on port ${port}`);
+        return webSocketDebuggerUrl;
       }
     }
 

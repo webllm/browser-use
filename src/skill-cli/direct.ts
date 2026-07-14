@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import { BrowserSession, systemChrome } from '../browser/session.js';
 import { CloudBrowserClient } from '../browser/cloud/cloud.js';
+import { discoverLocalCdpWebSocketUrl } from '../browser/cdp-discovery.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
   extractBoundedPageHtml,
@@ -542,18 +543,12 @@ const waitForLocalCdpEndpoint = async (port: number, timeoutMs = 15000) => {
   const endpoint = `http://127.0.0.1:${port}`;
 
   while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${endpoint}/json/version`);
-      if (response.ok) {
-        const payload = (await response.json()) as {
-          webSocketDebuggerUrl?: string;
-        };
-        if (typeof payload.webSocketDebuggerUrl === 'string') {
-          return endpoint;
-        }
-      }
-    } catch {
-      // Keep polling until timeout.
+    const webSocketUrl = await discoverLocalCdpWebSocketUrl({
+      port,
+      timeoutMs: Math.min(1_000, Math.max(1, deadline - Date.now())),
+    });
+    if (webSocketUrl) {
+      return endpoint;
     }
 
     await new Promise((resolve) => setTimeout(resolve, 100));
