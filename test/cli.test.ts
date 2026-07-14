@@ -205,6 +205,19 @@ describe('CLI argument parsing', () => {
     );
   });
 
+  it.each([
+    '1200px',
+    '1200.5',
+    '1e3',
+    '0',
+    '-1',
+    String(Number.MAX_SAFE_INTEGER + 1),
+  ])('rejects malformed positive integer %s', (value) => {
+    expect(() => parseCliArgs([`--window-width=${value}`])).toThrow(
+      `--window-width must be a positive integer, got "${value}"`
+    );
+  });
+
   it('rejects empty --allowed-domains values', () => {
     expect(() =>
       parseCliArgs(['--allowed-domains', ' , ', '-p', 'task'])

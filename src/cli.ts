@@ -151,8 +151,13 @@ const parseAllowedDomains = (value: string): string[] => {
 };
 
 const parsePositiveInt = (name: string, value: string): number => {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed <= 0) {
+  const normalized = value.trim();
+  const parsed = Number(normalized);
+  if (
+    !/^\d+$/.test(normalized) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0
+  ) {
     throw new Error(`${name} must be a positive integer, got "${value}"`);
   }
   return parsed;
