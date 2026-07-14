@@ -19,6 +19,23 @@ const logger = createLogger('browser_use.sandbox');
 const defaultServerUrl = 'https://sandbox.api.browser-use.com/sandbox-stream';
 export const MAX_SANDBOX_SSE_EVENT_BYTES = 4 * 1024 * 1024;
 export const SANDBOX_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
+export const MAX_SANDBOX_CODE_BYTES = 4 * 1024 * 1024;
+export const MAX_SANDBOX_ARGS_BYTES = 8 * 1024 * 1024;
+export const MAX_SANDBOX_REQUEST_BYTES = 16 * 1024 * 1024;
+
+const encodeSandboxPayloadPart = (
+  value: string,
+  label: string,
+  maxBytes: number
+) => {
+  const byteLength = Buffer.byteLength(value, 'utf8');
+  if (byteLength > maxBytes) {
+    throw new SandboxError(
+      `${label} exceeds ${maxBytes.toLocaleString()} bytes`
+    );
+  }
+  return Buffer.from(value).toString('base64');
+};
 
 const maybeInvoke = async <T>(
   callback: ((data: T) => void | Promise<void>) | undefined,
@@ -163,9 +180,24 @@ export const sandbox =
 
     const fetch_impl = options.fetch_impl ?? fetch;
     const server_url = options.server_url ?? defaultServerUrl;
+    const source = String(fn);
+    let serializedArgs: string;
+    try {
+      serializedArgs = JSON.stringify(args);
+    } catch {
+      throw new SandboxError('Sandbox arguments must be JSON-serializable');
+    }
     const payload: Record<string, unknown> = {
-      code: Buffer.from(String(fn)).toString('base64'),
-      args: Buffer.from(JSON.stringify(args)).toString('base64'),
+      code: encodeSandboxPayloadPart(
+        source,
+        'Sandbox function source',
+        MAX_SANDBOX_CODE_BYTES
+      ),
+      args: encodeSandboxPayloadPart(
+        serializedArgs,
+        'Sandbox arguments',
+        MAX_SANDBOX_ARGS_BYTES
+      ),
       env: {
         LOG_LEVEL: String(options.log_level ?? 'INFO').toUpperCase(),
       },
@@ -181,6 +213,13 @@ export const sandbox =
       payload.cloud_timeout = options.cloud_timeout;
     }
 
+    const requestBody = JSON.stringify(payload);
+    if (Buffer.byteLength(requestBody, 'utf8') > MAX_SANDBOX_REQUEST_BYTES) {
+      throw new SandboxError(
+        `Sandbox request exceeds ${MAX_SANDBOX_REQUEST_BYTES.toLocaleString()} bytes`
+      );
+    }
+
     return await runWithHttpTimeout(async (signal) => {
       const response = await fetch_impl(server_url, {
         method: 'POST',
@@ -190,7 +229,7 @@ export const sandbox =
           'Content-Type': 'application/json',
           ...(options.headers ?? {}),
         },
-        body: JSON.stringify(payload),
+        body: requestBody,
         signal,
       });
       if (!response.ok) {

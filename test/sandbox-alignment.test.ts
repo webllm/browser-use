@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BrowserCreatedData,
+  MAX_SANDBOX_ARGS_BYTES,
   MAX_SANDBOX_SSE_EVENT_BYTES,
   SandboxError,
   sandbox,
@@ -136,6 +137,25 @@ describe('sandbox alignment', () => {
         message: 'Execution failed: sandbox failed',
       })
     );
+  });
+
+  it('rejects non-serializable and oversized arguments before sending', async () => {
+    const fetchImpl = vi.fn();
+    const wrapped = sandbox({
+      api_key: 'sandbox-test-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+      quiet: true,
+    })(async (_value: unknown) => 'local');
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    await expect(wrapped(circular)).rejects.toThrow(
+      'Sandbox arguments must be JSON-serializable'
+    );
+    await expect(
+      wrapped('x'.repeat(MAX_SANDBOX_ARGS_BYTES + 1))
+    ).rejects.toThrow(`Sandbox arguments exceeds`);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('preserves failed result-event details', async () => {
