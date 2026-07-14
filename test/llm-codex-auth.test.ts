@@ -473,6 +473,55 @@ describe('Codex auth store', () => {
     expect(cancelPendingBody).toHaveBeenCalledOnce();
   });
 
+  it.each([Number.POSITIVE_INFINITY, 0, -1, 1.5, 86_400_001])(
+    'rejects unsafe device login wait %s',
+    async (maxWaitMs) => {
+      const fetchMock = vi.fn();
+
+      await expect(
+        loginCodexDeviceCode({
+          fetchImplementation: fetchMock as typeof fetch,
+          maxWaitMs,
+        })
+      ).rejects.toThrow('maxWaitMs must be an integer between 1 and 86400000.');
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('caps server-directed device polling intervals', async () => {
+    const responses = [
+      jsonResponse(200, {
+        user_code: 'ABCD-EFGH',
+        device_auth_id: 'device-1',
+        interval: Number.MAX_VALUE,
+      }),
+      jsonResponse(200, {
+        authorization_code: 'auth-code',
+        code_verifier: 'verifier',
+      }),
+      jsonResponse(200, {
+        access_token: 'device-access',
+        refresh_token: 'device-refresh',
+      }),
+    ];
+    const fetchMock = vi.fn().mockImplementation(async () => responses.shift());
+    let now = 0;
+    const sleepMock = vi.fn(async (ms: number) => {
+      now += ms;
+    });
+
+    await loginCodexDeviceCode({
+      fetchImplementation: fetchMock as typeof fetch,
+      issuer: 'https://auth.test',
+      sleep: sleepMock,
+      now: () => now,
+      maxWaitMs: 120_000,
+      stdout: { write: vi.fn() } as any,
+    });
+
+    expect(sleepMock).toHaveBeenCalledWith(60_000);
+  });
+
   it('keeps the Codex request timeout active while reading the body', async () => {
     const fetchMock = vi.fn(
       async (_url: string | URL | Request, init?: RequestInit) => {

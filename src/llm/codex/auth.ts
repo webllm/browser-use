@@ -19,6 +19,9 @@ export const CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120;
 const AUTH_STORE_VERSION = 1;
 const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
 const MAX_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+const MAX_DEVICE_LOGIN_WAIT_MS = 24 * 60 * 60 * 1000;
+const MIN_DEVICE_POLL_INTERVAL_MS = 3_000;
+const MAX_DEVICE_POLL_INTERVAL_MS = 60_000;
 const MAX_CODEX_AUTH_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CODEX_AUTH_ERROR_BYTES = 64 * 1024;
 export const MAX_CODEX_AUTH_FILE_BYTES = 1024 * 1024;
@@ -964,6 +967,15 @@ export const loginCodexDeviceCode = async (
   const sleepImpl = options.sleep ?? sleep;
   const now = options.now ?? Date.now;
   const maxWaitMs = options.maxWaitMs ?? 15 * 60 * 1000;
+  if (
+    !Number.isSafeInteger(maxWaitMs) ||
+    maxWaitMs < 1 ||
+    maxWaitMs > MAX_DEVICE_LOGIN_WAIT_MS
+  ) {
+    throw new RangeError(
+      `maxWaitMs must be an integer between 1 and ${MAX_DEVICE_LOGIN_WAIT_MS}.`
+    );
+  }
 
   const deviceData = await fetchWithTimeout(
     `${issuer}/api/accounts/deviceauth/usercode`,
@@ -989,14 +1001,15 @@ export const loginCodexDeviceCode = async (
   );
   const userCode = deviceData?.user_code;
   const deviceAuthId = deviceData?.device_auth_id;
-  const parsedPollInterval = Number.parseInt(
-    String(deviceData?.interval ?? '5'),
-    10
-  );
-  const pollIntervalMs =
+  const parsedPollInterval = Number(deviceData?.interval ?? 5);
+  const requestedPollIntervalMs =
     Number.isFinite(parsedPollInterval) && parsedPollInterval > 0
-      ? Math.max(3_000, parsedPollInterval * 1000)
+      ? Math.floor(parsedPollInterval * 1000)
       : 5_000;
+  const pollIntervalMs = Math.min(
+    MAX_DEVICE_POLL_INTERVAL_MS,
+    Math.max(MIN_DEVICE_POLL_INTERVAL_MS, requestedPollIntervalMs)
+  );
 
   if (
     typeof userCode !== 'string' ||
