@@ -14,6 +14,7 @@ import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
 import { OllamaMessageSerializer } from './serializer.js';
 import { createNoRedirectFetch } from '../http.js';
+import { MAX_HTTP_REQUEST_TIMEOUT_MS } from '../../http-response.js';
 
 export interface ChatOllamaOptions {
   model?: string;
@@ -56,7 +57,13 @@ export class ChatOllama implements BaseChatModel {
     if (timeout !== null && timeout !== undefined) {
       const timeoutMs = Number(timeout);
       if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-        fetchWithTimeout = this.createTimeoutFetch(baseFetch, timeoutMs);
+        fetchWithTimeout = this.createTimeoutFetch(
+          baseFetch,
+          Math.min(
+            MAX_HTTP_REQUEST_TIMEOUT_MS,
+            Math.max(1, Math.floor(timeoutMs))
+          )
+        );
       }
     }
 

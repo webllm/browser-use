@@ -18,6 +18,7 @@ vi.mock('ollama', () => {
 
 import { ChatOllama } from '../src/llm/ollama/chat.js';
 import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
+import { MAX_HTTP_REQUEST_TIMEOUT_MS } from '../src/http-response.js';
 import { OllamaMessageSerializer } from '../src/llm/ollama/serializer.js';
 import {
   AssistantMessage,
@@ -63,6 +64,27 @@ describe('ChatOllama alignment', () => {
     const request = ollamaChatMock.mock.calls[0]?.[0] ?? {};
     expect(request.model).toBe('qwen2.5:latest');
     expect(request.options).toMatchObject({ temperature: 0.1 });
+  });
+
+  it('clamps request timeouts to the maximum supported timer delay', async () => {
+    const customFetch = vi.fn(async () => new Response('{}'));
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      new ChatOllama({
+        timeout: MAX_HTTP_REQUEST_TIMEOUT_MS + 1_000,
+        clientParams: { fetch: customFetch as any },
+      });
+      const configuredFetch = ollamaCtorMock.mock.calls[0]?.[0]?.fetch;
+
+      await configuredFetch('http://localhost:11434/api/chat');
+
+      expect(timeoutSpy).toHaveBeenCalledWith(
+        expect.any(Function),
+        MAX_HTTP_REQUEST_TIMEOUT_MS
+      );
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it('uses schema object format and parses structured output', async () => {
