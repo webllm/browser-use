@@ -446,6 +446,73 @@ describe('Telemetry User ID', () => {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('repairs oversized telemetry device ID files', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-test-'));
+    const previousConfigDir = process.env.BROWSER_USE_CONFIG_DIR;
+    const previousTelemetry = process.env.ANONYMIZED_TELEMETRY;
+    const deviceIdFile = path.join(tempDir, 'device_id');
+    fs.writeFileSync(deviceIdFile, 'x'.repeat(256));
+
+    try {
+      process.env.BROWSER_USE_CONFIG_DIR = tempDir;
+      process.env.ANONYMIZED_TELEMETRY = 'false';
+      vi.resetModules();
+      const { ProductTelemetry } = await import('../src/telemetry/service.js');
+      const telemetry = new ProductTelemetry();
+
+      expect(telemetry.userId).toMatch(/^uuid-/);
+      expect(fs.readFileSync(deviceIdFile, 'utf8')).toBe(telemetry.userId);
+      expect(fs.statSync(deviceIdFile).size).toBeLessThanOrEqual(255);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.BROWSER_USE_CONFIG_DIR;
+      } else {
+        process.env.BROWSER_USE_CONFIG_DIR = previousConfigDir;
+      }
+      if (previousTelemetry === undefined) {
+        delete process.env.ANONYMIZED_TELEMETRY;
+      } else {
+        process.env.ANONYMIZED_TELEMETRY = previousTelemetry;
+      }
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not follow telemetry device ID symlinks', async () => {
+    if (process.platform === 'win32') return;
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-test-'));
+    const previousConfigDir = process.env.BROWSER_USE_CONFIG_DIR;
+    const previousTelemetry = process.env.ANONYMIZED_TELEMETRY;
+    const deviceIdFile = path.join(tempDir, 'device_id');
+    const targetFile = path.join(tempDir, 'unrelated');
+    fs.writeFileSync(targetFile, 'do-not-overwrite');
+    fs.symlinkSync(targetFile, deviceIdFile);
+
+    try {
+      process.env.BROWSER_USE_CONFIG_DIR = tempDir;
+      process.env.ANONYMIZED_TELEMETRY = 'false';
+      vi.resetModules();
+      const { ProductTelemetry } = await import('../src/telemetry/service.js');
+      const telemetry = new ProductTelemetry();
+
+      expect(telemetry.userId).toMatch(/^uuid-/);
+      expect(fs.readFileSync(targetFile, 'utf8')).toBe('do-not-overwrite');
+      expect(fs.lstatSync(deviceIdFile).isSymbolicLink()).toBe(false);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.BROWSER_USE_CONFIG_DIR;
+      } else {
+        process.env.BROWSER_USE_CONFIG_DIR = previousConfigDir;
+      }
+      if (previousTelemetry === undefined) {
+        delete process.env.ANONYMIZED_TELEMETRY;
+      } else {
+        process.env.ANONYMIZED_TELEMETRY = previousTelemetry;
+      }
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('Telemetry Configuration', () => {
