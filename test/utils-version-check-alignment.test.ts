@@ -26,8 +26,22 @@ describe('check_latest_browser_use_version alignment', () => {
       'https://registry.npmjs.org/browser-use/latest',
       expect.objectContaining({
         method: 'GET',
+        redirect: 'error',
       })
     );
+  });
+
+  it('returns null for oversized npm registry responses', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      Promise.resolve(
+        new Response('{"version":"9.9.9"}', {
+          status: 200,
+          headers: { 'content-length': String(64 * 1024 + 1) },
+        })
+      )
+    ) as any;
+
+    await expect(check_latest_browser_use_version()).resolves.toBeNull();
   });
 
   it('returns null when npm registry request fails', async () => {
