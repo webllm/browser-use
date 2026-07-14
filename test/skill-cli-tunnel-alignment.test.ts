@@ -26,6 +26,52 @@ const createWritable = () => {
 };
 
 describe('skill-cli tunnel alignment', () => {
+  it.each(['3000abc', '3000.5', '1e3', '0', '-1', '65536'])(
+    'rejects invalid tunnel port %s before calling the manager',
+    async (invalidPort) => {
+      const stdout = createWritable();
+      const stderr = createWritable();
+      const manager = {
+        start_tunnel: vi.fn(),
+        list_tunnels: vi.fn(() => ({ tunnels: [], count: 0 })),
+        stop_tunnel: vi.fn(),
+        stop_all_tunnels: vi.fn(),
+      };
+
+      await expect(
+        runTunnelCommand([invalidPort], {
+          manager,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+        })
+      ).resolves.toBe(1);
+      await expect(
+        runTunnelCommand(['stop', invalidPort], {
+          manager,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+        })
+      ).resolves.toBe(1);
+
+      expect(manager.start_tunnel).not.toHaveBeenCalled();
+      expect(manager.stop_tunnel).not.toHaveBeenCalled();
+      expect(stderr.read()).toContain(`Invalid port: ${invalidPort}`);
+    }
+  );
+
+  it('rejects invalid ports passed directly to the tunnel manager', async () => {
+    const binaryResolver = vi.fn(() => '/usr/bin/cloudflared');
+    const manager = new TunnelManager({ binary_resolver: binaryResolver });
+
+    await expect(manager.start_tunnel(Number.NaN)).resolves.toEqual({
+      error: 'Invalid port: NaN',
+    });
+    await expect(manager.stop_tunnel(65_536)).resolves.toEqual({
+      error: 'Invalid port: 65536',
+    });
+    expect(binaryResolver).not.toHaveBeenCalled();
+  });
+
   it('routes tunnel CLI lifecycle commands through the manager', async () => {
     const stdout = createWritable();
     const stderr = createWritable();

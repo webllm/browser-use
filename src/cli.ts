@@ -43,7 +43,7 @@ import {
 import type { BaseChatModel } from './llm/base.js';
 import { get_browser_use_version } from './utils.js';
 import { setupLogging } from './logging-config.js';
-import { get_tunnel_manager } from './skill-cli/tunnel.js';
+import { get_tunnel_manager, isValidTunnelPort } from './skill-cli/tunnel.js';
 import { DeviceAuthClient, save_cloud_api_token } from './sync/auth.js';
 import { isMainModule } from './entrypoint.js';
 import { getCliUsage } from './cli-usage.js';
@@ -1331,8 +1331,9 @@ export const runAuthCommand = async (
 };
 
 const parseTunnelPort = (value: string | undefined | null) => {
-  const port = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(port) || port <= 0) {
+  const raw = String(value ?? '').trim();
+  const port = Number(raw);
+  if (!/^\d+$/.test(raw) || !isValidTunnelPort(port)) {
     throw new Error(`Invalid port: ${value ?? ''}`);
   }
   return port;

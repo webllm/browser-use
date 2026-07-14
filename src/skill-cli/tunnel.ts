@@ -13,6 +13,11 @@ const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
 export const MAX_TUNNEL_INFO_BYTES = 64 * 1024;
 export const MAX_TUNNEL_STARTUP_LOG_BYTES = 1024 * 1024;
+export const isValidTunnelPort = (port: unknown): port is number =>
+  typeof port === 'number' &&
+  Number.isSafeInteger(port) &&
+  port >= 1 &&
+  port <= 65_535;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -371,6 +376,9 @@ export class TunnelManager {
   }
 
   async start_tunnel(port: number): Promise<StartTunnelResult> {
+    if (!isValidTunnelPort(port)) {
+      return { error: `Invalid port: ${String(port)}` };
+    }
     const loaded = this.load_tunnel_info(port);
     if (loaded) {
       if (loaded.ownership === 'unverified') {
@@ -557,8 +565,12 @@ export class TunnelManager {
       if (!entry.endsWith('.json')) {
         continue;
       }
-      const port = Number.parseInt(path.basename(entry, '.json'), 10);
-      if (!Number.isFinite(port)) {
+      const portText = path.basename(entry, '.json');
+      if (!/^\d+$/.test(portText)) {
+        continue;
+      }
+      const port = Number(portText);
+      if (!isValidTunnelPort(port)) {
         continue;
       }
       const loaded = this.load_tunnel_info(port);
@@ -575,6 +587,9 @@ export class TunnelManager {
   }
 
   async stop_tunnel(port: number): Promise<StopTunnelResult> {
+    if (!isValidTunnelPort(port)) {
+      return { error: `Invalid port: ${String(port)}` };
+    }
     const loaded = this.load_tunnel_info(port);
     if (!loaded) {
       return { error: `No tunnel running on port ${port}` };
@@ -617,8 +632,12 @@ export class TunnelManager {
       if (!entry.endsWith('.json')) {
         continue;
       }
-      const port = Number.parseInt(path.basename(entry, '.json'), 10);
-      if (!Number.isFinite(port)) {
+      const portText = path.basename(entry, '.json');
+      if (!/^\d+$/.test(portText)) {
+        continue;
+      }
+      const port = Number(portText);
+      if (!isValidTunnelPort(port)) {
         continue;
       }
       const result = await this.stop_tunnel(port);
