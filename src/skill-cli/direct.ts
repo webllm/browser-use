@@ -101,6 +101,8 @@ export const DIRECT_STATE_FILE = path.join(
   'direct-state.json'
 );
 export const MAX_DIRECT_STATE_BYTES = 64 * 1024;
+export const DEFAULT_DIRECT_LAUNCH_TIMEOUT_MS = 15_000;
+export const MAX_DIRECT_LAUNCH_TIMEOUT_MS = 5 * 60_000;
 
 interface StreamLike {
   write(chunk: string): void;
@@ -586,7 +588,7 @@ const extractDirectModeArgs = (argv: string[]) => {
 
 const waitForLocalCdpEndpoint = async (
   activePortPath: string,
-  timeoutMs = 15000
+  timeoutMs: number
 ) => {
   const deadline = Date.now() + timeoutMs;
 
@@ -721,6 +723,17 @@ export const defaultLocalLauncher = async (options: {
   state: DirectModeState;
   timeout_ms?: number;
 }) => {
+  const timeoutMs = options.timeout_ms ?? DEFAULT_DIRECT_LAUNCH_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > MAX_DIRECT_LAUNCH_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `timeout_ms must be an integer between 1 and ${MAX_DIRECT_LAUNCH_TIMEOUT_MS}`
+    );
+  }
+
   const browserExecutable = resolveDirectBrowserExecutable();
   if (!browserExecutable) {
     throw new Error(
@@ -782,7 +795,7 @@ export const defaultLocalLauncher = async (options: {
 
   try {
     const cdp_url = await Promise.race([
-      waitForLocalCdpEndpoint(activePortPath, options.timeout_ms),
+      waitForLocalCdpEndpoint(activePortPath, timeoutMs),
       spawnError,
     ]);
     return {

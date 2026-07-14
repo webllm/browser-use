@@ -6,10 +6,12 @@ import { chromium } from 'playwright';
 import { describe, expect, it, vi } from 'vitest';
 import {
   clear_direct_state,
+  DEFAULT_DIRECT_LAUNCH_TIMEOUT_MS,
   DIRECT_PROCESS_TERMINATION_TIMEOUT_MS,
   DIRECT_STATE_FILE,
   defaultLocalLauncher,
   load_direct_state,
+  MAX_DIRECT_LAUNCH_TIMEOUT_MS,
   MAX_DIRECT_STATE_BYTES,
   resolveDirectBrowserExecutable,
   run_direct_command,
@@ -33,6 +35,28 @@ const createWritable = () => {
 };
 
 describe('skill-cli direct alignment', () => {
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    MAX_DIRECT_LAUNCH_TIMEOUT_MS + 1,
+  ])('rejects unsafe local browser launch timeout %s', async (timeout_ms) => {
+    await expect(
+      defaultLocalLauncher({ state: {}, timeout_ms })
+    ).rejects.toThrow(
+      `timeout_ms must be an integer between 1 and ${MAX_DIRECT_LAUNCH_TIMEOUT_MS}`
+    );
+  });
+
+  it('keeps the default local browser launch timeout within the hard limit', () => {
+    expect(DEFAULT_DIRECT_LAUNCH_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(DEFAULT_DIRECT_LAUNCH_TIMEOUT_MS).toBeLessThanOrEqual(
+      MAX_DIRECT_LAUNCH_TIMEOUT_MS
+    );
+  });
+
   it('bounds Windows browser termination commands', async () => {
     const spawnImpl =
       vi.fn() as unknown as typeof import('node:child_process').spawnSync;
