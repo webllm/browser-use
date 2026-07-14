@@ -11,6 +11,7 @@ export const MAX_EXTENSION_ENTRY_BYTES = 100 * 1024 * 1024;
 export const MAX_EXTENSION_UNCOMPRESSED_BYTES = 250 * 1024 * 1024;
 export const MAX_EXTENSION_MANIFEST_BYTES = 1024 * 1024;
 export const MAX_EXTENSION_DOWNLOAD_REDIRECTS = 5;
+export const EXTENSION_DOWNLOAD_TIMEOUT_MS = 30_000;
 const EXTENSION_MANIFEST_READ_CHUNK_BYTES = 64 * 1024;
 
 const chmodPrivate = async (targetPath: string, mode: number) => {
@@ -273,7 +274,8 @@ export const fetchExtensionResponse = async (
 export const writeLimitedExtensionStream = async (
   source: Readable,
   outputPath: string,
-  maxBytes = MAX_EXTENSION_DOWNLOAD_BYTES
+  maxBytes = MAX_EXTENSION_DOWNLOAD_BYTES,
+  signal?: AbortSignal
 ) => {
   const temporaryPath = `${outputPath}.${randomUUID()}.part`;
   let receivedBytes = 0;
@@ -293,7 +295,8 @@ export const writeLimitedExtensionStream = async (
     await pipeline(
       source,
       limiter,
-      fs.createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 })
+      fs.createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }),
+      { signal }
     );
     await chmodPrivate(temporaryPath, 0o600);
     await fsp.rename(temporaryPath, outputPath);

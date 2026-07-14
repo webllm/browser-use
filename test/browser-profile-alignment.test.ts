@@ -146,6 +146,42 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it('enforces a hard deadline for stalled default extension requests', async () => {
+    vi.useFakeTimers();
+    const { BrowserProfile } = await importProfileModule();
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-timeout-')
+    );
+    const outputPath = path.join(tempDir, 'extension.crx');
+    const request = new EventEmitter() as EventEmitter & {
+      destroy: ReturnType<typeof vi.fn>;
+      setTimeout: ReturnType<typeof vi.fn>;
+    };
+    request.destroy = vi.fn();
+    request.setTimeout = vi.fn();
+    const getSpy = vi.spyOn(https, 'get').mockReturnValue(request as any);
+
+    try {
+      const profile = new BrowserProfile({ enable_default_extensions: false });
+      const download = (profile as any).downloadExtension(
+        'https://example.test/stalled.crx',
+        outputPath
+      );
+      const timeoutExpectation = expect(download).rejects.toThrow(
+        'HTTP request timed out'
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await timeoutExpectation;
+      expect(request.destroy).toHaveBeenCalledOnce();
+      expect(fs.existsSync(outputPath)).toBe(false);
+    } finally {
+      getSpy.mockRestore();
+      vi.useRealTimers();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('extracts default extensions into private directories', async () => {
     const { BrowserProfile } = await importProfileModule();
     const tempDir = fs.mkdtempSync(

@@ -46,6 +46,34 @@ describe('Browser extension cache alignment', () => {
     }
   });
 
+  it('returns after the hard deadline when fetch ignores abort signals', async () => {
+    vi.useFakeTimers();
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-timeout-')
+    );
+    const extensionsDir = path.join(tempDir, 'extensions');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => await new Promise<Response>(() => undefined))
+    );
+
+    try {
+      const install = loadOrInstallExtension(
+        {
+          name: 'Stalled Extension',
+          webstore_id: 'cccccccccccccccccccccccccccccccc',
+        },
+        extensionsDir
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(install).resolves.toMatchObject({ version: undefined });
+      expect(fs.existsSync(extensionsDir)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('unpacks existing CRX files into private extension directories', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-extension-unpack-')

@@ -16,8 +16,10 @@ import { observe_debug } from '../observability.js';
 import { createLogger } from '../logging-config.js';
 import { log_pretty_path, uuid7str } from '../utils.js';
 import { canonicalizeDomainHostname } from '../domain-utils.js';
+import { runWithHttpTimeout } from '../http-response.js';
 import {
   assertExtensionContentLength,
+  EXTENSION_DOWNLOAD_TIMEOUT_MS,
   extractExtensionArchive,
   writeLimitedExtensionStream,
 } from './extension-security.js';
@@ -1008,14 +1010,48 @@ export class BrowserProfile {
     return extensionPaths;
   }
 
-  private downloadExtension(
+  private async downloadExtension(url: string, outputPath: string) {
+    await runWithHttpTimeout(
+      (signal) => this.downloadExtensionWithSignal(url, outputPath, 0, signal),
+      EXTENSION_DOWNLOAD_TIMEOUT_MS
+    );
+  }
+
+  private downloadExtensionWithSignal(
     url: string,
     outputPath: string,
-    redirectCount = 0
+    redirectCount: number,
+    signal: AbortSignal
   ): Promise<void> {
     const maxRedirects = 5;
     return new Promise((resolve, reject) => {
       let request: ReturnType<typeof https.get>;
+      let settled = false;
+      const resolveOnce = () => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      const rejectOnce = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      };
+      const onAbort = () => {
+        const reason =
+          signal.reason instanceof Error
+            ? signal.reason
+            : new Error('Extension download timed out');
+        request?.destroy?.(reason);
+        rejectOnce(reason);
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
       try {
         request = https.get(url, (response) => {
           const { statusCode, headers } = response;
@@ -1027,7 +1063,7 @@ export class BrowserProfile {
           ) {
             response.resume();
             if (redirectCount >= maxRedirects) {
-              reject(new Error('Too many extension download redirects'));
+              rejectOnce(new Error('Too many extension download redirects'));
               return;
             }
 
@@ -1038,22 +1074,23 @@ export class BrowserProfile {
                 throw new Error('Extension redirects must use HTTPS');
               }
             } catch (error) {
-              reject(error);
+              rejectOnce(error);
               return;
             }
-            this.downloadExtension(
+            this.downloadExtensionWithSignal(
               redirectUrl.toString(),
               outputPath,
-              redirectCount + 1
+              redirectCount + 1,
+              signal
             )
-              .then(resolve)
-              .catch(reject);
+              .then(resolveOnce)
+              .catch(rejectOnce);
             return;
           }
 
           if (!statusCode || statusCode < 200 || statusCode >= 300) {
             response.resume();
-            reject(
+            rejectOnce(
               new Error(
                 `Failed to download extension (status ${statusCode ?? 'unknown'})`
               )
@@ -1065,23 +1102,23 @@ export class BrowserProfile {
             assertExtensionContentLength(headers['content-length']);
           } catch (error) {
             response.resume();
-            reject(error);
+            rejectOnce(error);
             return;
           }
 
-          writeLimitedExtensionStream(response, outputPath)
-            .then(resolve)
-            .catch(reject);
+          writeLimitedExtensionStream(response, outputPath, undefined, signal)
+            .then(resolveOnce)
+            .catch(rejectOnce);
         });
       } catch (error) {
-        reject(error);
+        rejectOnce(error);
         return;
       }
 
-      request.setTimeout?.(30_000, () => {
+      request.setTimeout?.(EXTENSION_DOWNLOAD_TIMEOUT_MS, () => {
         request.destroy(new Error('Extension download timed out'));
       });
-      request.on('error', reject);
+      request.on('error', rejectOnce);
     });
   }
 

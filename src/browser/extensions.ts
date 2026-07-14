@@ -9,8 +9,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { createLogger } from '../logging-config.js';
+import { runWithHttpTimeout } from '../http-response.js';
 import {
   assertExtensionContentLength,
+  EXTENSION_DOWNLOAD_TIMEOUT_MS,
   extractExtensionArchive,
   fetchExtensionResponse,
   readExtensionManifest,
@@ -87,39 +89,49 @@ export function getExtensionId(unpackedPath: string): string | null {
  * Download CRX file from Chrome Web Store
  */
 async function downloadCrx(crxUrl: string, crxPath: string): Promise<boolean> {
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 30_000);
   try {
     logger.info(
       `[🛠️] Downloading extension from ${redactExtensionUrl(crxUrl)}...`
     );
 
-    const response = await fetchExtensionResponse(crxUrl, {
-      signal: abortController.signal,
-    });
-    if (!response.ok || !response.body) {
-      logger.warning(
-        `[⚠️] Failed to download extension: ${response.statusText}`
-      );
-      return false;
-    }
-    assertExtensionContentLength(response.headers?.get('content-length'));
+    return await runWithHttpTimeout(async (signal) => {
+      let response: Response | null = null;
+      try {
+        response = await fetchExtensionResponse(crxUrl, { signal });
+        if (signal.aborted) throw signal.reason;
+        if (!response.ok || !response.body) {
+          logger.warning(
+            `[⚠️] Failed to download extension: ${response.statusText}`
+          );
+          return false;
+        }
+        assertExtensionContentLength(response.headers?.get('content-length'));
 
-    const dir = path.dirname(crxPath);
-    createPrivateDirectory(dir);
+        const dir = path.dirname(crxPath);
+        createPrivateDirectory(dir);
 
-    await writeLimitedExtensionStream(
-      Readable.fromWeb(response.body as any),
-      crxPath
-    );
+        await writeLimitedExtensionStream(
+          Readable.fromWeb(response.body as any),
+          crxPath,
+          undefined,
+          signal
+        );
 
-    logger.info(`[✅] Downloaded to ${crxPath}`);
-    return true;
+        logger.info(`[✅] Downloaded to ${crxPath}`);
+        return true;
+      } finally {
+        if (signal.aborted) {
+          try {
+            void response?.body?.cancel().catch(() => undefined);
+          } catch {
+            // The timed-out response is already being discarded.
+          }
+        }
+      }
+    }, EXTENSION_DOWNLOAD_TIMEOUT_MS);
   } catch (error) {
     logger.error(`[❌] Download failed: ${(error as Error).message}`);
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
