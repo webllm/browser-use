@@ -16,6 +16,19 @@ const sampleCount = Number.isInteger(configuredSamples)
   ? Math.min(25, Math.max(5, configuredSamples))
   : 7;
 const processTimeoutMs = 15_000;
+const maxCapturedOutputChars = 1024 * 1024;
+
+const appendCapturedOutput = (current, chunk) => {
+  const text = chunk.toString();
+  const remaining = Math.max(0, maxCapturedOutputChars - current.length);
+  return {
+    value: current + text.slice(0, remaining),
+    truncated: text.length > remaining,
+  };
+};
+
+const formatCapturedOutput = (value, truncated) =>
+  `${value.trim()}${truncated ? '\n...[output truncated]' : ''}`;
 
 const scenarios = [
   {
@@ -74,16 +87,22 @@ const runExitSample = (scenario) =>
     });
     let stdout = '';
     let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`${scenario.name} exceeded ${processTimeoutMs}ms`));
     }, processTimeoutMs);
 
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      const captured = appendCapturedOutput(stdout, chunk);
+      stdout = captured.value;
+      stdoutTruncated ||= captured.truncated;
     });
     child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
+      const captured = appendCapturedOutput(stderr, chunk);
+      stderr = captured.value;
+      stderrTruncated ||= captured.truncated;
     });
     child.once('error', (error) => {
       clearTimeout(timeout);
@@ -94,7 +113,7 @@ const runExitSample = (scenario) =>
       if (code !== 0 || signal !== null) {
         reject(
           new Error(
-            `${scenario.name} exited with code=${code} signal=${signal}: ${stderr.trim()}`
+            `${scenario.name} exited with code=${code} signal=${signal}: ${formatCapturedOutput(stderr, stderrTruncated)}`
           )
         );
         return;
@@ -102,7 +121,7 @@ const runExitSample = (scenario) =>
       if (!matchesExpectedOutput(stdout, scenario.expectedOutput)) {
         reject(
           new Error(
-            `${scenario.name} did not produce its expected output: ${stdout.trim()}`
+            `${scenario.name} did not produce its expected output: ${formatCapturedOutput(stdout, stdoutTruncated)}`
           )
         );
         return;
@@ -126,6 +145,8 @@ const runMcpSample = (scenario, sampleIndex) =>
     });
     let stdout = '';
     let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let readinessMs = null;
     let settled = false;
 
@@ -145,13 +166,17 @@ const runMcpSample = (scenario, sampleIndex) =>
       child.kill('SIGKILL');
       settle(
         new Error(
-          `${scenario.name} did not answer initialize within ${processTimeoutMs}ms: ${stderr.trim()}`
+          `${scenario.name} did not answer initialize within ${processTimeoutMs}ms: ` +
+            `stderr=${formatCapturedOutput(stderr, stderrTruncated)} ` +
+            `stdout=${formatCapturedOutput(stdout, stdoutTruncated)}`
         )
       );
     }, processTimeoutMs);
 
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      const captured = appendCapturedOutput(stdout, chunk);
+      stdout = captured.value;
+      stdoutTruncated ||= captured.truncated;
       const lines = stdout.split('\n');
       stdout = lines.pop() ?? '';
       for (const line of lines) {
@@ -171,7 +196,9 @@ const runMcpSample = (scenario, sampleIndex) =>
       }
     });
     child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
+      const captured = appendCapturedOutput(stderr, chunk);
+      stderr = captured.value;
+      stderrTruncated ||= captured.truncated;
     });
     child.once('error', (error) => settle(error));
     child.once('close', (code, signal) => {
@@ -181,7 +208,9 @@ const runMcpSample = (scenario, sampleIndex) =>
       }
       settle(
         new Error(
-          `${scenario.name} exited before initialize response (code=${code}, signal=${signal}): ${stderr.trim()}`
+          `${scenario.name} exited before initialize response (code=${code}, signal=${signal}): ` +
+            `stderr=${formatCapturedOutput(stderr, stderrTruncated)} ` +
+            `stdout=${formatCapturedOutput(stdout, stdoutTruncated)}`
         )
       );
     });
