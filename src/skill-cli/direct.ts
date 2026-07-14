@@ -33,6 +33,7 @@ import {
 } from './cookie-import.js';
 import {
   evaluateBoundedCliScript,
+  normalizeCliWaitTimeout,
   readBoundedCliElementData,
   waitForVisiblePageText,
 } from './page-inspection.js';
@@ -1454,7 +1455,7 @@ export const run_direct_command = async (
       const waitCommand = args[1] ?? '';
       if (waitCommand === 'selector') {
         const selector = args[2]?.trim();
-        const timeout = Number(args[3] ?? 5000);
+        const timeout = normalizeCliWaitTimeout(args[3]);
         if (!selector) {
           throw new Error('Usage: wait selector <css> [timeout]');
         }

@@ -4,7 +4,10 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { BrowserSession } from '../src/browser/session.js';
-import { MAX_CLI_EVAL_OUTPUT_CHARS } from '../src/skill-cli/page-inspection.js';
+import {
+  MAX_CLI_EVAL_OUTPUT_CHARS,
+  MAX_CLI_WAIT_TIMEOUT_MS,
+} from '../src/skill-cli/page-inspection.js';
 import {
   Request,
   Response,
@@ -382,6 +385,33 @@ describe('skill-cli alignment', () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects unsafe wait timeouts before invoking the browser session', async () => {
+    const session = new BrowserSession();
+    const waitForElement = vi
+      .spyOn(session, 'wait_for_element')
+      .mockResolvedValue();
+    const registry = new SessionRegistry({ session_factory: () => session });
+    const server = new SkillCliServer({ registry });
+
+    const response = await server.handle_request(
+      new Request({
+        id: 'unsafe-wait',
+        action: 'wait_selector',
+        session: 'default',
+        params: {
+          selector: '#app',
+          timeout: MAX_CLI_WAIT_TIMEOUT_MS + 1,
+        },
+      })
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain(
+      `timeout must be an integer between 1 and ${MAX_CLI_WAIT_TIMEOUT_MS}`
+    );
+    expect(waitForElement).not.toHaveBeenCalled();
   });
 
   it('respects domain policy for cookie set and import commands', async () => {

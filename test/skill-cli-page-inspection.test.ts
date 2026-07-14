@@ -1,15 +1,39 @@
 import { chromium } from 'playwright';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  MAX_CLI_WAIT_TIMEOUT_MS,
   MAX_CLI_ATTRIBUTE_VALUE_CHARS,
   MAX_CLI_ELEMENT_ATTRIBUTES,
   MAX_CLI_ELEMENT_TEXT_CHARS,
   MAX_CLI_EVAL_OUTPUT_CHARS,
   evaluateBoundedCliScript,
+  normalizeCliWaitTimeout,
   readBoundedCliElementData,
+  waitForVisiblePageText,
 } from '../src/skill-cli/page-inspection.js';
 
 describe('bounded skill CLI page inspection', () => {
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    MAX_CLI_WAIT_TIMEOUT_MS + 1,
+  ])('rejects unsafe page wait timeout %s', async (timeout) => {
+    const getByText = vi.fn();
+
+    expect(() => normalizeCliWaitTimeout(timeout)).toThrow(
+      `timeout must be an integer between 1 and ${MAX_CLI_WAIT_TIMEOUT_MS}`
+    );
+    await expect(
+      waitForVisiblePageText({ getByText } as any, 'Ready', timeout)
+    ).rejects.toThrow(
+      `timeout must be an integer between 1 and ${MAX_CLI_WAIT_TIMEOUT_MS}`
+    );
+    expect(getByText).not.toHaveBeenCalled();
+  });
+
   it('passes strict page-controlled data budgets to the evaluator', async () => {
     const page = {
       evaluate: async (_fn: unknown, limits: any) => limits,

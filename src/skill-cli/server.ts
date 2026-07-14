@@ -14,6 +14,7 @@ import {
 } from './cookie-import.js';
 import {
   evaluateBoundedCliScript,
+  normalizeCliWaitTimeout,
   readBoundedCliElementData,
   waitForVisiblePageText,
 } from './page-inspection.js';
@@ -390,7 +391,7 @@ export class SkillCliServer {
       if (!selector) {
         throw new Error('Missing selector');
       }
-      const timeout = Number(params.timeout ?? 5000);
+      const timeout = normalizeCliWaitTimeout(params.timeout);
       await browser_session.wait_for_element(selector, timeout);
       return { waited_for: 'selector', selector, timeout };
     }
@@ -400,7 +401,7 @@ export class SkillCliServer {
       if (!text) {
         throw new Error('Missing text');
       }
-      const timeout = Number(params.timeout ?? 5000);
+      const timeout = normalizeCliWaitTimeout(params.timeout);
       const page = await browser_session.get_current_page();
       if (!page?.getByText) {
         throw new Error('No active page available for wait_text');

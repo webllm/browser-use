@@ -7,6 +7,22 @@ export const MAX_CLI_ELEMENT_TEXT_NODES = 50_000;
 export const MAX_CLI_EVAL_OUTPUT_CHARS = 100_000;
 export const MAX_CLI_EVAL_ENTRIES = 5_000;
 export const MAX_CLI_EVAL_DEPTH = 20;
+export const DEFAULT_CLI_WAIT_TIMEOUT_MS = 5_000;
+export const MAX_CLI_WAIT_TIMEOUT_MS = 5 * 60_000;
+
+export const normalizeCliWaitTimeout = (value: unknown) => {
+  const timeout = Number(value ?? DEFAULT_CLI_WAIT_TIMEOUT_MS);
+  if (
+    !Number.isSafeInteger(timeout) ||
+    timeout < 1 ||
+    timeout > MAX_CLI_WAIT_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `timeout must be an integer between 1 and ${MAX_CLI_WAIT_TIMEOUT_MS}`
+    );
+  }
+  return timeout;
+};
 
 type PageEvaluator = {
   evaluate: (...args: any[]) => Promise<unknown>;
@@ -46,11 +62,12 @@ export const waitForVisiblePageText = async (
   text: string,
   timeout: number
 ) => {
+  const boundedTimeout = normalizeCliWaitTimeout(timeout);
   await page
     .getByText(text, { exact: false })
     .filter({ visible: true })
     .first()
-    .waitFor({ state: 'visible', timeout });
+    .waitFor({ state: 'visible', timeout: boundedTimeout });
 };
 
 export const evaluateBoundedCliScript = async (
