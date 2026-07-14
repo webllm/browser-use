@@ -113,6 +113,8 @@ const MAX_EVALUATE_IMAGE_CHARS = 5 * 1024 * 1024;
 const MAX_EVALUATE_IMAGES = 4;
 const MAX_SEARCH_SOURCE_CHARS = 1_000_000;
 const MAX_SEARCH_DOM_NODES = 100_000;
+const MAX_SEARCH_NATIVE_INPUT_CHARS = 2_000_000;
+const MAX_SEARCH_STYLE_CHECKS = 10_000;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_SEARCH_CONTEXT_CHARS = 2_000;
 const MAX_SEARCH_MATCH_CHARS = 4_096;
@@ -2129,10 +2131,14 @@ You will be given a query and the markdown of a webpage that has been filtered t
             cssScope,
             maxSourceChars,
             maxDomNodes,
+            maxNativeInputChars,
+            maxStyleChecks,
           }: {
             cssScope: string | null;
             maxSourceChars: number;
             maxDomNodes: number;
+            maxNativeInputChars: number;
+            maxStyleChecks: number;
           }) => {
             let sourceNode: Element | null;
             try {
@@ -2153,65 +2159,135 @@ You will be given a query and the markdown of a webpage that has been filtered t
                 truncated: false,
               };
             }
-            const blockTags = new Set([
-              'ADDRESS',
-              'ARTICLE',
-              'ASIDE',
-              'BLOCKQUOTE',
-              'DD',
-              'DETAILS',
-              'DIALOG',
-              'DIV',
-              'DL',
-              'DT',
-              'FIELDSET',
-              'FIGCAPTION',
-              'FIGURE',
-              'FOOTER',
-              'FORM',
-              'H1',
-              'H2',
-              'H3',
-              'H4',
-              'H5',
-              'H6',
-              'HEADER',
-              'HGROUP',
-              'HR',
-              'LI',
-              'MAIN',
-              'NAV',
-              'OL',
-              'P',
-              'PRE',
-              'SECTION',
-              'SUMMARY',
-              'TABLE',
-              'TBODY',
-              'TD',
-              'TFOOT',
-              'TH',
-              'THEAD',
-              'TR',
-              'UL',
-            ]);
             const skippedTags = new Set([
               'SCRIPT',
               'STYLE',
               'NOSCRIPT',
               'TEMPLATE',
             ]);
-            const blockOwners = new WeakMap<Element, Element>();
-            const skippedElements = new WeakSet<Element>();
-            blockOwners.set(sourceNode, sourceNode);
             if (skippedTags.has(sourceNode.tagName)) {
-              skippedElements.add(sourceNode);
+              return { sourceText: '', truncated: false };
             }
 
+            let styleChecks = 0;
+            let rootStyle: CSSStyleDeclaration;
+            try {
+              rootStyle = getComputedStyle(sourceNode);
+              styleChecks += 1;
+            } catch {
+              return {
+                error: 'Unable to inspect the CSS scope rendering state.',
+                sourceText: '',
+                truncated: false,
+              };
+            }
+            if (
+              rootStyle.display === 'none' ||
+              rootStyle.contentVisibility === 'hidden'
+            ) {
+              return { sourceText: '', truncated: false };
+            }
+
+            let ancestor = sourceNode.parentElement;
+            let ancestorStructureChecks = 0;
+            while (ancestor) {
+              if (styleChecks >= maxStyleChecks) {
+                return { sourceText: '', truncated: true };
+              }
+              const ancestorStyle = getComputedStyle(ancestor);
+              styleChecks += 1;
+              if (
+                ancestorStyle.display === 'none' ||
+                ancestorStyle.contentVisibility === 'hidden'
+              ) {
+                return { sourceText: '', truncated: false };
+              }
+              if (
+                ancestor.tagName === 'DETAILS' &&
+                !(ancestor as HTMLDetailsElement).open
+              ) {
+                const containingSummary = sourceNode.closest('summary');
+                if (containingSummary?.parentElement !== ancestor) {
+                  return { sourceText: '', truncated: false };
+                }
+                let sibling = ancestor.firstElementChild;
+                while (sibling && sibling !== containingSummary) {
+                  if (ancestorStructureChecks >= maxDomNodes) {
+                    return { sourceText: '', truncated: true };
+                  }
+                  ancestorStructureChecks += 1;
+                  if (sibling.tagName === 'SUMMARY') {
+                    return { sourceText: '', truncated: false };
+                  }
+                  sibling = sibling.nextElementSibling;
+                }
+              }
+              ancestor = ancestor.parentElement;
+            }
+
+            const preflightWalker = document.createTreeWalker(
+              sourceNode,
+              NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+            );
+            let preflightVisited = 0;
+            let rawInputChars = 0;
+            let preflightNode = preflightWalker.nextNode();
+            while (
+              preflightNode &&
+              preflightVisited < maxDomNodes &&
+              rawInputChars <= maxNativeInputChars
+            ) {
+              preflightVisited += 1;
+              if (preflightNode.nodeType === Node.TEXT_NODE) {
+                rawInputChars += preflightNode.nodeValue?.length ?? 0;
+              }
+              preflightNode = preflightWalker.nextNode();
+            }
+            if (
+              !preflightNode &&
+              rawInputChars <= maxNativeInputChars &&
+              'innerText' in sourceNode
+            ) {
+              try {
+                const renderedText = (sourceNode as HTMLElement).innerText;
+                if (typeof renderedText === 'string') {
+                  return {
+                    sourceText: renderedText.slice(0, maxSourceChars),
+                    truncated: renderedText.length > maxSourceChars,
+                  };
+                }
+              } catch {
+                // Fall back to bounded CSS-aware traversal below.
+              }
+            }
+
+            type RenderInfo = {
+              blockOwner: Element;
+              closedDetails: boolean;
+              subtreeHidden: boolean;
+              textVisible: boolean;
+              whiteSpace: string;
+              textTransform: string;
+            };
+            const renderInfo = new WeakMap<Element, RenderInfo>();
+            renderInfo.set(sourceNode, {
+              blockOwner: sourceNode,
+              closedDetails:
+                sourceNode.tagName === 'DETAILS' &&
+                !(sourceNode as HTMLDetailsElement).open,
+              subtreeHidden: false,
+              textVisible:
+                rootStyle.visibility !== 'hidden' &&
+                rootStyle.visibility !== 'collapse',
+              whiteSpace: rootStyle.whiteSpace,
+              textTransform: rootStyle.textTransform,
+            });
             const chunks: string[] = [];
             let remaining = Math.max(0, maxSourceChars);
             let visited = 0;
             let truncated = false;
+            let pendingSpace = false;
+            const detailsSummarySeen = new WeakSet<Element>();
             const walker = document.createTreeWalker(
               sourceNode,
               NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
@@ -2219,59 +2295,188 @@ You will be given a query and the markdown of a webpage that has been filtered t
             let previousBlockOwner: Element | null = null;
             let pendingBlockBreak = false;
             let hasText = false;
+            // Array destructuring prevents esbuild's keepNames transform from
+            // introducing a free `__name` helper into this serialized callback.
+            const [appendValue] = [
+              (value: string) => {
+                const accepted = value.slice(0, remaining);
+                if (accepted) {
+                  chunks.push(accepted);
+                  remaining -= accepted.length;
+                }
+                if (accepted.length < value.length) {
+                  truncated = true;
+                  return false;
+                }
+                return true;
+              },
+            ];
             let node = walker.nextNode();
-            while (node && remaining > 0 && visited < maxDomNodes) {
+            scan: while (node && remaining > 0 && visited < maxDomNodes) {
               visited += 1;
               if (node.nodeType === Node.ELEMENT_NODE) {
                 const element = node as Element;
                 const parent = element.parentElement;
-                const parentSkipped = Boolean(
-                  parent && skippedElements.has(parent)
+                const parentInfo =
+                  (parent && renderInfo.get(parent)) ||
+                  renderInfo.get(sourceNode)!;
+                const visibleClosedDetailsSummary = Boolean(
+                  parent &&
+                  parentInfo.closedDetails &&
+                  element.tagName === 'SUMMARY' &&
+                  !detailsSummarySeen.has(parent)
                 );
-                if (parentSkipped || skippedTags.has(element.tagName)) {
-                  skippedElements.add(element);
+                if (visibleClosedDetailsSummary && parent) {
+                  detailsSummarySeen.add(parent);
                 }
-                const parentBlockOwner =
-                  (parent && blockOwners.get(parent)) || sourceNode;
-                blockOwners.set(
-                  element,
-                  blockTags.has(element.tagName) ? element : parentBlockOwner
-                );
+                if (
+                  parentInfo.subtreeHidden ||
+                  (parentInfo.closedDetails && !visibleClosedDetailsSummary) ||
+                  skippedTags.has(element.tagName)
+                ) {
+                  renderInfo.set(element, {
+                    ...parentInfo,
+                    closedDetails: false,
+                    subtreeHidden: true,
+                  });
+                  node = walker.nextNode();
+                  continue;
+                }
+                if (styleChecks >= maxStyleChecks) {
+                  truncated = true;
+                  break;
+                }
+                const style = getComputedStyle(element);
+                styleChecks += 1;
+                const subtreeHidden =
+                  style.display === 'none' ||
+                  style.contentVisibility === 'hidden';
+                const inlineDisplay =
+                  style.display === 'contents' ||
+                  style.display.startsWith('inline') ||
+                  style.display.startsWith('ruby');
+                const info: RenderInfo = {
+                  blockOwner: inlineDisplay ? parentInfo.blockOwner : element,
+                  closedDetails:
+                    element.tagName === 'DETAILS' &&
+                    !(element as HTMLDetailsElement).open,
+                  subtreeHidden,
+                  textVisible:
+                    style.visibility !== 'hidden' &&
+                    style.visibility !== 'collapse',
+                  whiteSpace: style.whiteSpace,
+                  textTransform: style.textTransform,
+                };
+                renderInfo.set(element, info);
                 if (
                   hasText &&
-                  (element.tagName === 'BR' || blockTags.has(element.tagName))
+                  !subtreeHidden &&
+                  (element.tagName === 'BR' || !inlineDisplay)
                 ) {
                   pendingBlockBreak = true;
                 }
               } else {
                 const parent = node.parentElement;
-                if (!parent || skippedElements.has(parent)) {
+                const info = parent && renderInfo.get(parent);
+                if (
+                  !parent ||
+                  !info ||
+                  info.closedDetails ||
+                  info.subtreeHidden ||
+                  !info.textVisible
+                ) {
                   node = walker.nextNode();
                   continue;
                 }
-                const raw = node.nodeValue ?? '';
-                if (raw) {
-                  const blockOwner = blockOwners.get(parent) || sourceNode;
-                  if (
-                    hasText &&
-                    (pendingBlockBreak || blockOwner !== previousBlockOwner)
-                  ) {
-                    chunks.push('\n');
-                    remaining -= 1;
+                const rawPiece = node.nodeValue ?? '';
+                const rawLimit = Math.max(remaining * 2, remaining);
+                let piece = rawPiece.slice(0, rawLimit);
+                if (piece.length < rawPiece.length) {
+                  truncated = true;
+                }
+                if (piece) {
+                  if (info.textTransform.includes('uppercase')) {
+                    piece = piece.toUpperCase();
+                  } else if (info.textTransform.includes('lowercase')) {
+                    piece = piece.toLowerCase();
+                  } else if (info.textTransform.includes('capitalize')) {
+                    piece = piece.replace(
+                      /(^|[\s-])(\p{L})/gu,
+                      (_match, prefix: string, letter: string) =>
+                        `${prefix}${letter.toUpperCase()}`
+                    );
                   }
-                  if (remaining <= 0) {
-                    truncated = true;
-                    break;
+
+                  const preserveWhitespace =
+                    info.whiteSpace === 'pre' ||
+                    info.whiteSpace === 'pre-wrap' ||
+                    info.whiteSpace === 'break-spaces';
+                  if (preserveWhitespace) {
+                    if (
+                      hasText &&
+                      (pendingBlockBreak ||
+                        info.blockOwner !== previousBlockOwner)
+                    ) {
+                      if (!appendValue('\n')) break scan;
+                      pendingSpace = false;
+                    } else if (hasText && pendingSpace) {
+                      if (!appendValue(' ')) break scan;
+                    }
+                    if (!appendValue(piece)) break scan;
+                    if (piece) {
+                      hasText = true;
+                      previousBlockOwner = info.blockOwner;
+                      pendingBlockBreak = false;
+                      pendingSpace = false;
+                    }
+                  } else {
+                    const normalized = piece
+                      .replace(/\r\n?/g, '\n')
+                      .replace(/[ \t\f]+/g, ' ');
+                    const lines =
+                      info.whiteSpace === 'pre-line'
+                        ? normalized.split('\n')
+                        : [normalized.replace(/\n+/g, ' ')];
+                    for (
+                      let lineIndex = 0;
+                      lineIndex < lines.length;
+                      lineIndex += 1
+                    ) {
+                      const segments = lines[lineIndex].split(' ');
+                      for (
+                        let segmentIndex = 0;
+                        segmentIndex < segments.length;
+                        segmentIndex += 1
+                      ) {
+                        const segment = segments[segmentIndex];
+                        if (segment) {
+                          if (
+                            hasText &&
+                            (pendingBlockBreak ||
+                              info.blockOwner !== previousBlockOwner)
+                          ) {
+                            if (!appendValue('\n')) break scan;
+                            pendingSpace = false;
+                          } else if (hasText && pendingSpace) {
+                            if (!appendValue(' ')) break scan;
+                          }
+                          if (!appendValue(segment)) break scan;
+                          hasText = true;
+                          previousBlockOwner = info.blockOwner;
+                          pendingBlockBreak = false;
+                          pendingSpace = segmentIndex < segments.length - 1;
+                        } else if (hasText) {
+                          pendingSpace = true;
+                        }
+                      }
+                      if (lineIndex < lines.length - 1 && hasText) {
+                        if (!appendValue('\n')) break scan;
+                        previousBlockOwner = info.blockOwner;
+                        pendingBlockBreak = false;
+                        pendingSpace = false;
+                      }
+                    }
                   }
-                  const piece = raw.slice(0, remaining);
-                  if (piece) {
-                    chunks.push(piece);
-                    remaining -= piece.length;
-                    hasText = true;
-                    previousBlockOwner = blockOwner;
-                    pendingBlockBreak = false;
-                  }
-                  if (piece.length < raw.length) truncated = true;
                 }
               }
               node = walker.nextNode();
@@ -2283,6 +2488,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
             cssScope: params.css_scope ?? null,
             maxSourceChars: MAX_SEARCH_SOURCE_CHARS,
             maxDomNodes: MAX_SEARCH_DOM_NODES,
+            maxNativeInputChars: MAX_SEARCH_NATIVE_INPUT_CHARS,
+            maxStyleChecks: MAX_SEARCH_STYLE_CHECKS,
           }
         )) as SearchPageSource | null;
       } finally {

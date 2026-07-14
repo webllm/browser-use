@@ -873,6 +873,142 @@ describe('Controller Integration Tests', () => {
       );
     });
 
+    it('searches CSS-rendered text instead of raw DOM tag boundaries', async () => {
+      await page.setContent(`
+        <main>
+          <span style="display:block">Alpha</span><span style="display:block">Beta</span>
+          <div style="display:inline">Gamma</div><div style="display:inline">Delta</div>
+          <div id="hidden-search-scope" hidden>HiddenNeedle</div>
+          <div style="visibility:hidden">InvisibleNeedle</div>
+          <div style="user-select:none">NoSelectNeedle</div>
+          <div style="text-transform:uppercase">mixed case</div>
+          <div>One   Two</div>
+          <details><summary>Summary</summary><span>ClosedNeedle</span></details>
+        </main>
+      `);
+      const controller = new Controller();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+        validate_page_after_action: vi.fn(async () => undefined),
+      };
+      const search = (pattern: string, case_sensitive = false) =>
+        controller.registry.execute_action(
+          'search_page',
+          { pattern, case_sensitive },
+          { browser_session: browserSession as any }
+        );
+
+      const blockResult = await search('AlphaBeta');
+      const inlineResult = await search('GammaDelta');
+      const hiddenResult = await search('HiddenNeedle');
+      const scopedHiddenResult = await controller.registry.execute_action(
+        'search_page',
+        { pattern: 'HiddenNeedle', css_scope: '#hidden-search-scope' },
+        { browser_session: browserSession as any }
+      );
+      const invisibleResult = await search('InvisibleNeedle');
+      const noSelectResult = await search('NoSelectNeedle');
+      const transformedResult = await search('MIXED CASE', true);
+      const whitespaceResult = await search('One Two');
+      const closedDetailsResult = await search('ClosedNeedle');
+
+      expect(blockResult.extracted_content).toBe(
+        'No matches found for "AlphaBeta".'
+      );
+      expect(inlineResult.extracted_content).toContain(
+        'Found 1 matches for "GammaDelta"'
+      );
+      expect(hiddenResult.extracted_content).toBe(
+        'No matches found for "HiddenNeedle".'
+      );
+      expect(scopedHiddenResult.extracted_content).toBe(
+        'No matches found for "HiddenNeedle".'
+      );
+      expect(invisibleResult.extracted_content).toBe(
+        'No matches found for "InvisibleNeedle".'
+      );
+      expect(noSelectResult.extracted_content).toContain(
+        'Found 1 matches for "NoSelectNeedle"'
+      );
+      expect(transformedResult.extracted_content).toContain(
+        'Found 1 matches for "MIXED CASE"'
+      );
+      expect(whitespaceResult.extracted_content).toContain(
+        'Found 1 matches for "One Two"'
+      );
+      expect(closedDetailsResult.extracted_content).toBe(
+        'No matches found for "ClosedNeedle".'
+      );
+    });
+
+    it('uses bounded rendered-text fallback in transformed source builds', async () => {
+      const fallbackPage = await browser.newPage();
+      try {
+        await fallbackPage.setContent(`
+          <main>
+            <div style="display:inline">Fallback</div><div style="display:inline">Needle</div>
+            <span style="display:block">FallbackBlock</span><span style="display:block">Boundary</span>
+            <div hidden>FallbackHidden</div>
+            <details><summary>FallbackSummary</summary><span>FallbackClosed</span></details>
+          </main>
+        `);
+        await fallbackPage.evaluate(() => {
+          Object.defineProperty(document.body, 'innerText', {
+            configurable: false,
+            get() {
+              throw new Error('force bounded fallback');
+            },
+          });
+          Object.defineProperty(globalThis, '__name', {
+            value: 42,
+            writable: false,
+            configurable: false,
+          });
+        });
+        const controller = new Controller();
+        const browserSession = {
+          get_current_page: vi.fn(async () => fallbackPage),
+          validate_page_after_action: vi.fn(async () => undefined),
+        };
+
+        const result = await controller.registry.execute_action(
+          'search_page',
+          { pattern: 'FallbackNeedle' },
+          { browser_session: browserSession as any }
+        );
+        const blockResult = await controller.registry.execute_action(
+          'search_page',
+          { pattern: 'FallbackBlockBoundary' },
+          { browser_session: browserSession as any }
+        );
+        const hiddenResult = await controller.registry.execute_action(
+          'search_page',
+          { pattern: 'FallbackHidden' },
+          { browser_session: browserSession as any }
+        );
+        const closedDetailsResult = await controller.registry.execute_action(
+          'search_page',
+          { pattern: 'FallbackClosed' },
+          { browser_session: browserSession as any }
+        );
+
+        expect(result.extracted_content).toContain(
+          'Found 1 matches for "FallbackNeedle"'
+        );
+        expect(blockResult.extracted_content).toBe(
+          'No matches found for "FallbackBlockBoundary".'
+        );
+        expect(hiddenResult.extracted_content).toBe(
+          'No matches found for "FallbackHidden".'
+        );
+        expect(closedDetailsResult.extracted_content).toBe(
+          'No matches found for "FallbackClosed".'
+        );
+      } finally {
+        await fallbackPage.close();
+      }
+    });
+
     it('runs find_elements through a real Playwright page in transformed source builds', async () => {
       const collisionPage = await browser.newPage();
       try {
