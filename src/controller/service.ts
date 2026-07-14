@@ -126,6 +126,7 @@ const MAX_FIND_ATTRIBUTES = 32;
 const MAX_FIND_ELEMENT_TEXT_CHARS = 4_096;
 const MAX_FIND_ATTRIBUTE_CHARS = 2_048;
 const MAX_FIND_ELEMENTS_OUTPUT_CHARS = 256 * 1024;
+const MAX_FIND_SCANNED_NODES = 100_000;
 const MAX_FIND_TEXT_NODES_PER_ELEMENT = 10_000;
 const MAX_FIND_TEXT_NODES_TOTAL = 50_000;
 const DEFAULT_PDF_HEADER_TEMPLATE =
@@ -2601,6 +2602,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
         }>;
         total?: number;
         truncated?: boolean;
+        scanTruncated?: boolean;
         contentTruncated?: boolean;
       };
       let result: FindElementsResult | null = null;
@@ -2615,6 +2617,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars,
             maxAttributeChars,
             maxPayloadChars,
+            maxScannedNodes,
             maxTextNodesPerElement,
             maxTotalTextNodes,
           }: {
@@ -2625,12 +2628,57 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars: number;
             maxAttributeChars: number;
             maxPayloadChars: number;
+            maxScannedNodes: number;
             maxTextNodesPerElement: number;
             maxTotalTextNodes: number;
           }) => {
-            let elements: NodeListOf<Element>;
+            const root = document.documentElement;
+            if (!root) {
+              return { elements: [], total: 0, truncated: false };
+            }
+            const [toDocumentScopedSelector] = [
+              (value: string) => {
+                let rendered = '';
+                let quote = '';
+                let escaped = false;
+                for (let index = 0; index < value.length; index += 1) {
+                  const character = value[index] ?? '';
+                  if (escaped) {
+                    rendered += character;
+                    escaped = false;
+                    continue;
+                  }
+                  if (character === '\\') {
+                    rendered += character;
+                    escaped = true;
+                    continue;
+                  }
+                  if (quote) {
+                    rendered += character;
+                    if (character === quote) quote = '';
+                    continue;
+                  }
+                  if (character === '"' || character === "'") {
+                    quote = character;
+                    rendered += character;
+                    continue;
+                  }
+                  if (value.startsWith(':scope', index)) {
+                    const nextCharacter = value[index + 6] ?? '';
+                    if (!nextCharacter || !/[\w-]/.test(nextCharacter)) {
+                      rendered += ':root';
+                      index += 5;
+                      continue;
+                    }
+                  }
+                  rendered += character;
+                }
+                return rendered;
+              },
+            ];
+            const scopedSelector = toDocumentScopedSelector(selector);
             try {
-              elements = document.querySelectorAll(selector);
+              root.matches(scopedSelector);
             } catch (error: unknown) {
               return {
                 error: `Invalid selector: ${String(error).slice(0, 500)}`,
@@ -2638,6 +2686,24 @@ You will be given a query and the markdown of a webpage that has been filtered t
                 total: 0,
               };
             }
+
+            const elements: Element[] = [];
+            const elementWalker = document.createTreeWalker(
+              document,
+              NodeFilter.SHOW_ELEMENT
+            );
+            let candidate = elementWalker.nextNode() as Element | null;
+            let scannedNodes = 0;
+            let total = 0;
+            while (candidate && scannedNodes < maxScannedNodes) {
+              const current = candidate;
+              candidate = elementWalker.nextNode() as Element | null;
+              scannedNodes += 1;
+              if (!current.matches(scopedSelector)) continue;
+              total += 1;
+              if (elements.length < maxResults) elements.push(current);
+            }
+            const scanTruncated = Boolean(candidate);
 
             let remainingPayloadChars = Math.max(0, maxPayloadChars);
             let remainingTextNodes = Math.max(0, maxTotalTextNodes);
@@ -2719,7 +2785,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
                 contentTruncated = true;
                 break;
               }
-              const el = elements.item(idx);
+              const el = elements[idx];
               if (!el) continue;
               const attrs: Record<string, string> = {};
               if (attributes?.length) {
@@ -2747,8 +2813,9 @@ You will be given a query and the markdown of a webpage that has been filtered t
 
             return {
               elements: payload,
-              total: elements.length,
-              truncated: elements.length > payload.length,
+              total,
+              truncated: scanTruncated || total > payload.length,
+              scanTruncated,
               contentTruncated,
             };
           },
@@ -2761,6 +2828,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars: MAX_FIND_ELEMENT_TEXT_CHARS,
             maxAttributeChars: MAX_FIND_ATTRIBUTE_CHARS,
             maxPayloadChars: MAX_FIND_ELEMENTS_OUTPUT_CHARS,
+            maxScannedNodes: MAX_FIND_SCANNED_NODES,
             maxTextNodesPerElement: MAX_FIND_TEXT_NODES_PER_ELEMENT,
             maxTotalTextNodes: MAX_FIND_TEXT_NODES_TOTAL,
           }
@@ -2819,7 +2887,9 @@ You will be given a query and the markdown of a webpage that has been filtered t
         ? Math.max(0, result.total as number)
         : elements.length;
       if (!elements.length) {
-        const msg = `No elements found for selector "${params.selector}".`;
+        const msg = result.scanTruncated
+          ? `No elements found for selector "${params.selector}" within the bounded DOM scan.`
+          : `No elements found for selector "${params.selector}".`;
         return new ActionResult({
           extracted_content: msg,
           long_term_memory: msg,
@@ -2827,7 +2897,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
       }
 
       const lines: string[] = [
-        `Found ${total} element${total === 1 ? '' : 's'} for selector "${params.selector}":`,
+        `Found ${result.scanTruncated ? 'at least ' : ''}${total} element${total === 1 ? '' : 's'} for selector "${params.selector}":`,
       ];
       for (const el of elements) {
         const attrs = Object.entries(el.attributes || {})
@@ -2846,13 +2916,18 @@ You will be given a query and the markdown of a webpage that has been filtered t
           `... showing first ${elements.length} elements (increase max_results to see more).`
         );
       }
+      if (result.scanTruncated) {
+        lines.push(
+          `... DOM scan stopped after ${MAX_FIND_SCANNED_NODES.toLocaleString()} nodes for safety.`
+        );
+      }
       if (contentTruncated) {
         lines.push('... element text or attributes were truncated for safety.');
       }
 
       return new ActionResult({
         extracted_content: lines.join('\n'),
-        long_term_memory: `Queried selector "${params.selector}" and found ${total} element${total === 1 ? '' : 's'}.`,
+        long_term_memory: `Queried selector "${params.selector}" and found ${result.scanTruncated ? 'at least ' : ''}${total} element${total === 1 ? '' : 's'}.`,
       });
     });
   }

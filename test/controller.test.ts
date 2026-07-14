@@ -1048,7 +1048,7 @@ describe('Controller Integration Tests', () => {
         const result = await controller.registry.execute_action(
           'find_elements',
           {
-            selector: 'a',
+            selector: ':scope > body > main a',
             attributes: ['data-kind'],
             max_results: 1,
             include_text: true,
@@ -1190,18 +1190,67 @@ describe('Controller Integration Tests', () => {
       }
     });
 
+    it('find_elements walks the DOM without querySelectorAll', async () => {
+      await page.setContent(
+        '<main><a href="/one">One</a><a href="/two">Two</a></main>'
+      );
+      await page.evaluate(() => {
+        const state = window as any;
+        state.__originalDocumentQuerySelectorAll = document.querySelectorAll;
+        document.querySelectorAll = (() => {
+          throw new Error('querySelectorAll must not be used');
+        }) as typeof document.querySelectorAll;
+      });
+      const controller = new Controller();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+        validate_page_after_action: vi.fn(async () => undefined),
+      };
+
+      try {
+        const result = await controller.registry.execute_action(
+          'find_elements',
+          {
+            selector: 'a',
+            attributes: ['href'],
+            max_results: 10,
+          },
+          { browser_session: browserSession as any }
+        );
+
+        expect(result.extracted_content).toContain('Found 2 elements');
+        expect(result.extracted_content).toContain('href="/one"');
+      } finally {
+        await page.evaluate(() => {
+          const state = window as any;
+          document.querySelectorAll = state.__originalDocumentQuerySelectorAll;
+          delete state.__originalDocumentQuerySelectorAll;
+        });
+      }
+    });
+
     it('caps find_elements text-node traversal across all matched elements', async () => {
       await page.setContent(`<main>${'<div></div>'.repeat(100)}</main>`);
       await page.evaluate(() => {
         const state = window as any;
         state.__originalCreateTreeWalker = document.createTreeWalker;
         state.__findElementsWalkerCalls = 0;
-        document.createTreeWalker = (() => ({
-          nextNode: () => {
-            state.__findElementsWalkerCalls += 1;
-            return { nodeValue: '' } as Node;
-          },
-        })) as unknown as typeof document.createTreeWalker;
+        document.createTreeWalker = ((root, whatToShow, filter) => {
+          if (whatToShow === NodeFilter.SHOW_ELEMENT) {
+            return state.__originalCreateTreeWalker.call(
+              document,
+              root,
+              whatToShow,
+              filter
+            );
+          }
+          return {
+            nextNode: () => {
+              state.__findElementsWalkerCalls += 1;
+              return { nodeValue: '' } as Node;
+            },
+          } as TreeWalker;
+        }) as typeof document.createTreeWalker;
       });
       const controller = new Controller();
       const browserSession = {
