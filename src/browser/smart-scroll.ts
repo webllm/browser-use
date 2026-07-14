@@ -3,33 +3,37 @@ export const MAX_SMART_SCROLL_ELEMENTS = 10_000;
 export const SMART_SCROLL_JS = `(dy) => {
   const bigEnough = (element) =>
     element.clientHeight >= window.innerHeight * 0.5;
-  const canScroll = (element) =>
-    element &&
-    /(auto|scroll|overlay)/.test(getComputedStyle(element).overflowY) &&
-    element.scrollHeight > element.clientHeight &&
-    bigEnough(element);
+  let remainingChecks = ${MAX_SMART_SCROLL_ELEMENTS};
+  const canScroll = (element) => {
+    if (!element || remainingChecks <= 0) return false;
+    remainingChecks -= 1;
+    return (
+      /(auto|scroll|overlay)/.test(getComputedStyle(element).overflowY) &&
+      element.scrollHeight > element.clientHeight &&
+      bigEnough(element)
+    );
+  };
 
-  let element = document.activeElement;
-  while (
-    element &&
-    !canScroll(element) &&
-    element !== document.body
-  ) {
-    element = element.parentElement;
+  let candidate = document.activeElement;
+  let element = null;
+  while (candidate && remainingChecks > 0) {
+    if (canScroll(candidate)) {
+      element = candidate;
+      break;
+    }
+    if (candidate === document.body) break;
+    candidate = candidate.parentElement;
   }
 
-  if (!canScroll(element)) {
-    element = null;
+  if (!element && remainingChecks > 0) {
     const root = document.body || document.documentElement;
     if (root && typeof document.createTreeWalker === 'function') {
       const walker = document.createTreeWalker(
         root,
         NodeFilter.SHOW_ELEMENT
       );
-      let visited = 0;
-      let candidate = walker.nextNode();
-      while (candidate && visited < ${MAX_SMART_SCROLL_ELEMENTS}) {
-        visited += 1;
+      candidate = walker.nextNode();
+      while (candidate && remainingChecks > 0) {
         if (canScroll(candidate)) {
           element = candidate;
           break;

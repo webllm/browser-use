@@ -5,6 +5,52 @@ import {
 } from '../src/browser/smart-scroll.js';
 
 describe('bounded smart scrolling', () => {
+  it('shares the traversal budget with the active-element ancestor chain', () => {
+    type ScrollNode = {
+      clientHeight: number;
+      scrollHeight: number;
+      parentElement: ScrollNode | null;
+    };
+    const root: ScrollNode = {
+      clientHeight: 10,
+      scrollHeight: 10,
+      parentElement: null,
+    };
+    let activeElement: ScrollNode = root;
+    for (let index = 0; index < MAX_SMART_SCROLL_ELEMENTS + 100; index += 1) {
+      activeElement = {
+        clientHeight: 10,
+        scrollHeight: 10,
+        parentElement: activeElement,
+      };
+    }
+    const createTreeWalker = vi.fn(() => ({
+      nextNode: vi.fn(() => null),
+    }));
+    const document = {
+      activeElement,
+      body: root,
+      documentElement: root,
+      scrollingElement: root,
+      createTreeWalker,
+    };
+    const getComputedStyle = vi.fn(() => ({ overflowY: 'visible' }));
+    const window = { innerHeight: 800, scrollBy: vi.fn() };
+    const execute = new Function(
+      'window',
+      'document',
+      'NodeFilter',
+      'getComputedStyle',
+      `return (${SMART_SCROLL_JS})(500);`
+    );
+
+    execute(window, document, { SHOW_ELEMENT: 1 }, getComputedStyle);
+
+    expect(getComputedStyle).toHaveBeenCalledTimes(MAX_SMART_SCROLL_ELEMENTS);
+    expect(createTreeWalker).not.toHaveBeenCalled();
+    expect(window.scrollBy).toHaveBeenCalledWith(0, 500);
+  });
+
   it('does not enumerate an unbounded page when no scroll container exists', () => {
     const nodes = Array.from(
       { length: MAX_SMART_SCROLL_ELEMENTS + 100 },
