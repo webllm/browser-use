@@ -77,6 +77,47 @@ describe('CliMCPServer', () => {
     expect(textFrom(failed)).toContain('<redacted>');
   });
 
+  it('bounds browser command argument counts and aggregate input', async () => {
+    const runner = vi.fn(async () => 0);
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxCommandArgs: 2,
+      maxInputChars: 10,
+    });
+
+    const tooMany = await server.callTool('browser_exec', {
+      command: 'type',
+      args: ['a', 'b', 'c'],
+    });
+    const tooLarge = await server.callTool('browser_exec', {
+      command: 'type',
+      args: ['1234567'],
+    });
+
+    expect(tooMany.isError).toBe(true);
+    expect(textFrom(tooMany)).toContain('maximum of 2 entries');
+    expect(tooLarge.isError).toBe(true);
+    expect(textFrom(tooLarge)).toContain('maximum of 10 characters');
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('rejects sparse browser command argument arrays', async () => {
+    const runner = vi.fn(async () => 0);
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+    });
+    const sparseArgs = new Array<string>(1);
+
+    const result = await server.callTool('browser_exec', {
+      command: 'type',
+      args: sparseArgs,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).toContain('array of strings');
+    expect(runner).not.toHaveBeenCalled();
+  });
+
   it('bounds large text results', async () => {
     const runner = vi.fn(async (_argv: string[], options: any) => {
       options.stdout.write('x'.repeat(20));

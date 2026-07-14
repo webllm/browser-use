@@ -22,12 +22,17 @@ type CliMcpArguments = Record<string, unknown> | undefined;
 
 export interface CliMCPServerOptions {
   runDirectCommand?: DirectCommandRunner;
+  maxInputChars?: number;
+  maxCommandArgs?: number;
   maxOutputChars?: number;
   maxScreenshotBytes?: number;
   maxScreenshotPixels?: number;
 }
 
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000;
+const DEFAULT_MAX_INPUT_CHARS = 1024 * 1024;
+const DEFAULT_MAX_COMMAND_ARGS = 256;
+const MAX_TOOL_NAME_CHARS = 256;
 const DEFAULT_MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_SCREENSHOT_PIXELS = 32 * 1024 * 1024;
 const SCREENSHOT_JSON_OVERHEAD_CHARS = 4 * 1024;
@@ -80,6 +85,8 @@ const parsePositiveInteger = (
 export class CliMCPServer {
   private readonly server: Server;
   private readonly runDirectCommand: DirectCommandRunner;
+  private readonly maxInputChars: number;
+  private readonly maxCommandArgs: number;
   private readonly maxOutputChars: number;
   private readonly maxScreenshotBytes: number;
   private readonly maxScreenshotPixels: number;
@@ -93,6 +100,16 @@ export class CliMCPServer {
     options: CliMCPServerOptions = {}
   ) {
     this.runDirectCommand = options.runDirectCommand ?? run_direct_command;
+    this.maxInputChars = parsePositiveInteger(
+      options.maxInputChars,
+      process.env.BROWSER_USE_CLI_MCP_MAX_INPUT_CHARS,
+      DEFAULT_MAX_INPUT_CHARS
+    );
+    this.maxCommandArgs = parsePositiveInteger(
+      options.maxCommandArgs,
+      process.env.BROWSER_USE_CLI_MCP_MAX_COMMAND_ARGS,
+      DEFAULT_MAX_COMMAND_ARGS
+    );
     this.maxOutputChars = parsePositiveInteger(
       options.maxOutputChars,
       process.env.BROWSER_USE_CLI_MCP_MAX_OUTPUT_CHARS,
@@ -131,12 +148,14 @@ export class CliMCPServer {
           properties: {
             command: {
               type: 'string',
+              maxLength: this.maxInputChars,
               description:
                 'Command name, for example open, state, click, input, scroll, get, html, eval, or close.',
             },
             args: {
               type: 'array',
-              items: { type: 'string' },
+              maxItems: this.maxCommandArgs,
+              items: { type: 'string', maxLength: this.maxInputChars },
               description: 'Command arguments, passed without shell parsing.',
               default: [],
             },
@@ -184,6 +203,9 @@ export class CliMCPServer {
   ): Promise<CallToolResult> {
     return this.withExecutionLock(async () => {
       try {
+        if (name.length > MAX_TOOL_NAME_CHARS) {
+          return this.errorResult('Tool name exceeds the maximum length');
+        }
         if (name === 'browser_exec') {
           return await this.executeBrowserCommand(args);
         }
@@ -247,12 +269,36 @@ export class CliMCPServer {
     }
     if (
       !Array.isArray(commandArgs) ||
-      commandArgs.some((value) => typeof value !== 'string')
+      commandArgs.length > this.maxCommandArgs
     ) {
+      if (Array.isArray(commandArgs)) {
+        return this.errorResult(
+          `'args' exceeds the maximum of ${this.maxCommandArgs} entries`
+        );
+      }
       return this.errorResult("'args' must be an array of strings");
+    }
+    let inputChars = command.length;
+    for (let index = 0; index < commandArgs.length; index += 1) {
+      const value = commandArgs[index];
+      if (typeof value !== 'string') {
+        return this.errorResult("'args' must be an array of strings");
+      }
+      inputChars += value.length;
+      if (inputChars > this.maxInputChars) {
+        return this.errorResult(
+          `Command input exceeds the maximum of ${this.maxInputChars} characters`
+        );
+      }
     }
     if (!this.validateRemote(args?.remote)) {
       return this.errorResult("'remote' must be a boolean");
+    }
+
+    if (inputChars > this.maxInputChars) {
+      return this.errorResult(
+        `Command input exceeds the maximum of ${this.maxInputChars} characters`
+      );
     }
 
     if (
