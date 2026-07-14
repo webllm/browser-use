@@ -1,4 +1,5 @@
 export const DEFAULT_MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const MAX_HTTP_RESPONSE_BYTES = 64 * 1024 * 1024;
 export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_HTTP_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
@@ -42,7 +43,7 @@ const assertTextSize = (text: string, maxBytes: number) => {
 
 const normalizeResponseLimit = (maxBytes: number) =>
   Number.isFinite(maxBytes)
-    ? Math.max(1, Math.floor(maxBytes))
+    ? Math.min(MAX_HTTP_RESPONSE_BYTES, Math.max(1, Math.floor(maxBytes)))
     : DEFAULT_MAX_HTTP_RESPONSE_BYTES;
 
 const normalizeRequestTimeout = (timeoutMs: number) =>

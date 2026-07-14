@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_MAX_HTTP_RESPONSE_BYTES,
   HttpResponseTooLargeError,
+  MAX_HTTP_RESPONSE_BYTES,
   MAX_HTTP_REQUEST_TIMEOUT_MS,
   readBoundedResponseJson,
   readBoundedResponseText,
@@ -56,6 +57,21 @@ describe('bounded HTTP responses', () => {
       expect(text).not.toHaveBeenCalled();
     }
   );
+
+  it('clamps oversized explicit byte budgets to the hard limit', async () => {
+    const text = vi.fn(async () => 'never read');
+
+    await expect(
+      readBoundedResponseText(
+        {
+          headers: { get: () => String(MAX_HTTP_RESPONSE_BYTES + 1) },
+          text,
+        },
+        Number.MAX_SAFE_INTEGER
+      )
+    ).rejects.toBeInstanceOf(HttpResponseTooLargeError);
+    expect(text).not.toHaveBeenCalled();
+  });
 
   it('keeps the timeout active for the full response consumer', async () => {
     await expect(
