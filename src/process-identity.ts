@@ -7,6 +7,9 @@ export type ProcessCommandLineReader = (
 
 export type ProcessArgumentsReader = (pid: number) => string[] | null;
 
+export const PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
+export const MAX_PROCESS_INSPECTION_OUTPUT_BYTES = 4 * 1024 * 1024;
+
 const isValidPid = (pid: number) => Number.isSafeInteger(pid) && pid > 0;
 
 export const parseProcessCommandLineArguments = (commandLine: string) =>
@@ -28,6 +31,8 @@ const readPsField = (pid: number, field: 'command' | 'comm') => {
     {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+      maxBuffer: MAX_PROCESS_INSPECTION_OUTPUT_BYTES,
     }
   );
   if (result.status !== 0) {
@@ -45,7 +50,12 @@ const readWindowsProcessDetails = (pid: number) => {
       '-Command',
       `$process = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -ne $process) { @{ executablePath = $process.ExecutablePath; commandLine = $process.CommandLine } | ConvertTo-Json -Compress }`,
     ],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+      maxBuffer: MAX_PROCESS_INSPECTION_OUTPUT_BYTES,
+    }
   );
   if (result.status !== 0 || !result.stdout.trim()) {
     return null;

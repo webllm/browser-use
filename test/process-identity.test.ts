@@ -1,6 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getProcessArguments } from '../src/process-identity.js';
+import {
+  getProcessArguments,
+  MAX_PROCESS_INSPECTION_OUTPUT_BYTES,
+  PROCESS_INSPECTION_TIMEOUT_MS,
+} from '../src/process-identity.js';
 
 vi.mock('node:child_process', () => ({
   spawnSync: vi.fn(),
@@ -54,5 +58,13 @@ describe('process identity', () => {
       '--url',
       'http://localhost:3000',
     ]);
+    expect(spawnSync).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.any(Array),
+      expect.objectContaining({
+        timeout: PROCESS_INSPECTION_TIMEOUT_MS,
+        maxBuffer: MAX_PROCESS_INSPECTION_OUTPUT_BYTES,
+      })
+    );
   });
 });
