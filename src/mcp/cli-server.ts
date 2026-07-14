@@ -479,11 +479,14 @@ export class CliMCPServer {
   }
 
   public async stop(): Promise<void> {
-    if (this.isRunning) {
-      await this.server.close();
+    try {
+      if (this.isRunning) {
+        await this.server.close();
+      }
+    } finally {
       this.isRunning = false;
+      this.restoreConsole?.();
+      this.restoreConsole = null;
     }
-    this.restoreConsole?.();
-    this.restoreConsole = null;
   }
 }

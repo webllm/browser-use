@@ -279,4 +279,20 @@ describe('CliMCPServer', () => {
     expect(unknown.isError).toBe(true);
     expect(textFrom(unknown)).toContain('Unknown tool');
   });
+
+  it('restores console redirection when server close fails', async () => {
+    const server = new CliMCPServer('test', '1.0.0');
+    const restoreConsole = vi.fn();
+    const close = vi.fn().mockRejectedValue(new Error('close failed'));
+    (server as any).isRunning = true;
+    (server as any).restoreConsole = restoreConsole;
+    (server as any).server.close = close;
+
+    await expect(server.stop()).rejects.toThrow('close failed');
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(restoreConsole).toHaveBeenCalledOnce();
+    expect((server as any).restoreConsole).toBeNull();
+    expect((server as any).isRunning).toBe(false);
+  });
 });
