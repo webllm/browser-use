@@ -82,6 +82,36 @@ describe('skill-cli alignment', () => {
     expect(String(response.error)).toContain('not found');
   });
 
+  it('rejects empty and fractional element indices before lookup', async () => {
+    const session = new BrowserSession();
+    const lookup = vi
+      .spyOn(session, 'get_dom_element_by_index')
+      .mockResolvedValue({} as any);
+    const registry = new SessionRegistry({
+      session_factory: () => session,
+    });
+    const server = new SkillCliServer({ registry });
+
+    for (const [id, index] of [
+      ['empty-index', null],
+      ['fractional-index', 1.5],
+    ] as const) {
+      const response = await server.handle_request(
+        new Request({
+          id,
+          action: 'click',
+          session: 'default',
+          params: { index },
+        })
+      );
+      expect(response.success).toBe(false);
+      expect(response.error).toContain(
+        'element index must be a non-negative integer'
+      );
+    }
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
   it('lists sessions and closes session via close action', async () => {
     const session = new BrowserSession();
     vi.spyOn(session, 'navigate_to').mockResolvedValue(null as any);

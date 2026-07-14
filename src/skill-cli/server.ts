@@ -15,6 +15,7 @@ import {
 import {
   evaluateBoundedCliScript,
   normalizeCliWaitTimeout,
+  parseCliElementIndex,
   readBoundedCliElementData,
   waitForVisiblePageText,
 } from './page-inspection.js';
@@ -194,10 +195,7 @@ export class SkillCliServer {
   }
 
   private async _require_node_by_index(browser_session: any, index: unknown) {
-    const parsedIndex = Number(index);
-    if (!Number.isFinite(parsedIndex)) {
-      throw new Error('Missing index');
-    }
+    const parsedIndex = parseCliElementIndex(index);
 
     const node = await browser_session.get_dom_element_by_index(parsedIndex);
     if (!node) {

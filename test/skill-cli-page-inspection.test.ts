@@ -8,11 +8,32 @@ import {
   MAX_CLI_EVAL_OUTPUT_CHARS,
   evaluateBoundedCliScript,
   normalizeCliWaitTimeout,
+  parseCliElementIndex,
   readBoundedCliElementData,
   waitForVisiblePageText,
 } from '../src/skill-cli/page-inspection.js';
 
 describe('bounded skill CLI page inspection', () => {
+  it('parses only non-negative integer element indices', () => {
+    expect(parseCliElementIndex(0)).toBe(0);
+    expect(parseCliElementIndex(' 42 ')).toBe(42);
+
+    for (const value of [
+      null,
+      undefined,
+      '',
+      -1,
+      1.5,
+      '1.5',
+      '1junk',
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      expect(() => parseCliElementIndex(value)).toThrow(
+        'element index must be a non-negative integer'
+      );
+    }
+  });
+
   it.each([
     0,
     -1,

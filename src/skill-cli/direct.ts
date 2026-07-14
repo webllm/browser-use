@@ -34,6 +34,7 @@ import {
 import {
   evaluateBoundedCliScript,
   normalizeCliWaitTimeout,
+  parseCliElementIndex,
   readBoundedCliElementData,
   waitForVisiblePageText,
 } from './page-inspection.js';
@@ -849,10 +850,7 @@ const requireDirectNodeByIndex = async (
   session: DirectSessionLike,
   indexValue: string | undefined
 ) => {
-  const index = Number(indexValue ?? Number.NaN);
-  if (!Number.isFinite(index)) {
-    throw new Error('Missing index');
-  }
+  const index = parseCliElementIndex(indexValue);
   const node = await session.get_dom_element_by_index?.(index);
   if (!node) {
     throw new Error(`Element index ${index} not found - run "state" first`);

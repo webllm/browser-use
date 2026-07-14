@@ -10,6 +10,21 @@ export const MAX_CLI_EVAL_DEPTH = 20;
 export const DEFAULT_CLI_WAIT_TIMEOUT_MS = 5_000;
 export const MAX_CLI_WAIT_TIMEOUT_MS = 5 * 60_000;
 
+export const parseCliElementIndex = (value: unknown) => {
+  let parsed = value;
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    if (!/^\d+$/.test(normalized)) {
+      throw new RangeError('element index must be a non-negative integer');
+    }
+    parsed = Number(normalized);
+  }
+  if (!Number.isSafeInteger(parsed) || Number(parsed) < 0) {
+    throw new RangeError('element index must be a non-negative integer');
+  }
+  return Number(parsed);
+};
+
 export const normalizeCliWaitTimeout = (value: unknown) => {
   const timeout = Number(value ?? DEFAULT_CLI_WAIT_TIMEOUT_MS);
   if (
