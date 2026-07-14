@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export const MAX_STORAGE_STATE_FILE_BYTES = 16 * 1024 * 1024;
 export const MAX_STORAGE_STATE_COOKIES = 10_000;
@@ -63,6 +65,92 @@ export const serializeBoundedStorageState = (
     );
   }
   return serialized;
+};
+
+const chmodPrivateFile = (filePath: string) => {
+  if (process.platform !== 'win32') {
+    fs.chmodSync(filePath, 0o600);
+  }
+};
+
+export const writeBoundedStorageStateFile = (
+  filePath: string,
+  serializedState: string,
+  options: { backup?: boolean } = {}
+) => {
+  if (
+    Buffer.byteLength(serializedState, 'utf8') > MAX_STORAGE_STATE_FILE_BYTES
+  ) {
+    throw new Error(
+      `Storage state exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
+    );
+  }
+
+  const directory = path.dirname(filePath);
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  let handle: number | null = null;
+  let renamed = false;
+  try {
+    handle = fs.openSync(temporaryPath, 'wx', 0o600);
+    fs.writeFileSync(handle, serializedState, { encoding: 'utf8' });
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = null;
+    chmodPrivateFile(temporaryPath);
+
+    if (options.backup !== false) {
+      try {
+        const currentStats = fs.lstatSync(filePath);
+        if (
+          currentStats.isFile() &&
+          currentStats.size <= MAX_STORAGE_STATE_FILE_BYTES
+        ) {
+          const backupPath = `${filePath}.bak`;
+          const backupTemporaryPath = `${temporaryPath}.bak`;
+          let backupRenamed = false;
+          try {
+            fs.copyFileSync(
+              filePath,
+              backupTemporaryPath,
+              fs.constants.COPYFILE_EXCL
+            );
+            chmodPrivateFile(backupTemporaryPath);
+            fs.renameSync(backupTemporaryPath, backupPath);
+            backupRenamed = true;
+            chmodPrivateFile(backupPath);
+          } finally {
+            if (!backupRenamed) {
+              fs.rmSync(backupTemporaryPath, { force: true });
+            }
+          }
+        }
+      } catch {
+        // A backup is best effort; the primary remains in place until swap.
+      }
+    }
+
+    fs.renameSync(temporaryPath, filePath);
+    renamed = true;
+    chmodPrivateFile(filePath);
+  } finally {
+    if (handle !== null) {
+      try {
+        fs.closeSync(handle);
+      } catch {
+        // Preserve the original write error.
+      }
+    }
+    if (!renamed) {
+      try {
+        fs.rmSync(temporaryPath, { force: true });
+      } catch {
+        // Preserve the original write error.
+      }
+    }
+  }
 };
 
 export const readBoundedStorageStateFile = (

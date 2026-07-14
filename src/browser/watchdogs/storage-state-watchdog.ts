@@ -12,6 +12,7 @@ import { BaseWatchdog } from './base.js';
 import {
   readBoundedStorageStateFile,
   serializeBoundedStorageState,
+  writeBoundedStorageStateFile,
 } from '../storage-state-limits.js';
 
 type StorageStatePayload = {
@@ -28,13 +29,6 @@ type OriginState = {
   origin?: unknown;
   localStorage?: OriginStorageEntry[];
   sessionStorage?: OriginStorageEntry[];
-};
-
-const chmodPrivateFile = (filePath: string) => {
-  if (process.platform === 'win32') {
-    return;
-  }
-  fs.chmodSync(filePath, 0o600);
 };
 
 const ensurePrivateDirectoryIfCreated = (dirPath: string) => {
@@ -84,11 +78,6 @@ const sameOrigin = (left: string, right: string) => {
   } catch {
     return false;
   }
-};
-
-const writePrivateFile = (filePath: string, contents: string) => {
-  fs.writeFileSync(filePath, contents, { encoding: 'utf-8', mode: 0o600 });
-  chmodPrivateFile(filePath);
 };
 
 export class StorageStateWatchdog extends BaseWatchdog {
@@ -143,21 +132,10 @@ export class StorageStateWatchdog extends BaseWatchdog {
     const dirPath = path.dirname(targetPath);
     ensurePrivateDirectoryIfCreated(dirPath);
 
-    const tempPath = `${targetPath}.tmp`;
-    writePrivateFile(tempPath, serializeBoundedStorageState(snapshot, 2));
-
-    if (fs.existsSync(targetPath)) {
-      const backupPath = `${targetPath}.bak`;
-      try {
-        fs.renameSync(targetPath, backupPath);
-        chmodPrivateFile(backupPath);
-      } catch {
-        // Ignore backup failures and continue with atomic swap.
-      }
-    }
-
-    fs.renameSync(tempPath, targetPath);
-    chmodPrivateFile(targetPath);
+    writeBoundedStorageStateFile(
+      targetPath,
+      serializeBoundedStorageState(snapshot, 2)
+    );
     this._lastSavedSnapshot = serializedSnapshot;
 
     await this.event_bus.dispatch(
