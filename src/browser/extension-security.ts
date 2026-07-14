@@ -233,11 +233,16 @@ export const fetchExtensionResponse = async (
   } = {}
 ): Promise<Response> => {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const maxRedirects =
-    Number.isSafeInteger(options.maxRedirects) &&
-    Number(options.maxRedirects) >= 0
-      ? Number(options.maxRedirects)
-      : MAX_EXTENSION_DOWNLOAD_REDIRECTS;
+  const maxRedirects = options.maxRedirects ?? MAX_EXTENSION_DOWNLOAD_REDIRECTS;
+  if (
+    !Number.isSafeInteger(maxRedirects) ||
+    maxRedirects < 0 ||
+    maxRedirects > MAX_EXTENSION_DOWNLOAD_REDIRECTS
+  ) {
+    throw new RangeError(
+      `maxRedirects must be an integer between 0 and ${MAX_EXTENSION_DOWNLOAD_REDIRECTS}`
+    );
+  }
   let currentUrl = new URL(crxUrl);
   let redirectCount = 0;
 
@@ -277,6 +282,15 @@ export const writeLimitedExtensionStream = async (
   maxBytes = MAX_EXTENSION_DOWNLOAD_BYTES,
   signal?: AbortSignal
 ) => {
+  if (
+    !Number.isSafeInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > MAX_EXTENSION_DOWNLOAD_BYTES
+  ) {
+    throw new RangeError(
+      `maxBytes must be an integer between 1 and ${MAX_EXTENSION_DOWNLOAD_BYTES}`
+    );
+  }
   const temporaryPath = `${outputPath}.${randomUUID()}.part`;
   let receivedBytes = 0;
   const limiter = new Transform({

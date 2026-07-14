@@ -83,6 +83,21 @@ describe('extension download and extraction safety', () => {
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
+  it.each([Number.POSITIVE_INFINITY, -1, 1.5, 6, Number.MAX_SAFE_INTEGER])(
+    'rejects unsafe extension redirect limit %s',
+    async (maxRedirects) => {
+      const fetchImpl = vi.fn();
+
+      await expect(
+        fetchExtensionResponse('https://store.example/download', {
+          fetchImpl: fetchImpl as typeof fetch,
+          maxRedirects,
+        })
+      ).rejects.toThrow('maxRedirects must be an integer between 0 and 5');
+      expect(fetchImpl).not.toHaveBeenCalled();
+    }
+  );
+
   it('rejects declared and streamed downloads above the byte limit', async () => {
     expect(() =>
       assertExtensionContentLength(String(MAX_EXTENSION_DOWNLOAD_BYTES + 1))
@@ -105,6 +120,22 @@ describe('extension download and extraction safety', () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it.each([
+    Number.POSITIVE_INFINITY,
+    0,
+    -1,
+    1.5,
+    MAX_EXTENSION_DOWNLOAD_BYTES + 1,
+  ])('rejects unsafe extension stream limit %s', async (maxBytes) => {
+    const source = Readable.from([Buffer.alloc(1)]);
+
+    await expect(
+      writeLimitedExtensionStream(source, '/unused/extension.crx', maxBytes)
+    ).rejects.toThrow(
+      `maxBytes must be an integer between 1 and ${MAX_EXTENSION_DOWNLOAD_BYTES}`
+    );
   });
 
   it('rejects unsafe paths, symlinks, and oversized expanded archives', () => {
