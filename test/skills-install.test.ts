@@ -137,6 +137,49 @@ describe('coding-agent skill installer', () => {
     }
   });
 
+  it('ignores a relative XDG_CONFIG_HOME for the opencode target', async () => {
+    const homeDir = await makeTempDir();
+    const relativeXdgHome = `browser-use-relative-xdg-${process.pid}`;
+    const unintendedDestination = path.resolve(relativeXdgHome);
+    const originalXdgHome = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = relativeXdgHome;
+    try {
+      const exitCode = await runSkillCommand(
+        ['install', '--target', 'opencode'],
+        {
+          bundledSkillDir: BUNDLED_SKILL_DIR,
+          homeDir,
+          stdout: createOutput().stream,
+          stderr: createOutput().stream,
+        }
+      );
+
+      expect(exitCode).toBe(0);
+      await expect(
+        fs.access(
+          path.join(
+            homeDir,
+            '.config',
+            'opencode',
+            'skills',
+            BROWSER_USE_SKILL_NAME,
+            'SKILL.md'
+          )
+        )
+      ).resolves.toBeUndefined();
+      await expect(fs.access(unintendedDestination)).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    } finally {
+      if (originalXdgHome === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = originalXdgHome;
+      }
+      await fs.rm(unintendedDestination, { recursive: true, force: true });
+    }
+  });
+
   it('copies only SKILL.md when the custom destination is a file', async () => {
     const tempDir = await makeTempDir();
     const destination = path.join(tempDir, 'portable', 'SKILL.md');

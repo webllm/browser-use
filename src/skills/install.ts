@@ -239,9 +239,11 @@ export const runSkillCommand = async (
   const bundledSkillDir = options.bundledSkillDir ?? getBundledSkillDir();
   const homeDir = options.homeDir ?? os.homedir();
   const configuredXdgHome = process.env.XDG_CONFIG_HOME?.trim();
+  const requestedXdgHome = options.xdgConfigHome ?? configuredXdgHome;
   const xdgConfigHome =
-    options.xdgConfigHome ??
-    (configuredXdgHome || path.join(homeDir, '.config'));
+    requestedXdgHome && path.isAbsolute(requestedXdgHome)
+      ? requestedXdgHome
+      : path.join(homeDir, '.config');
 
   try {
     const command = argv[0];
