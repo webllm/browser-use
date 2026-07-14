@@ -1,6 +1,10 @@
 import { CONFIG } from '../../config.js';
 import { DeviceAuthClient } from '../../sync/auth.js';
-import { readBoundedResponseText } from '../../http-response.js';
+import {
+  DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+  readBoundedResponseText,
+  runWithHttpTimeout,
+} from '../../http-response.js';
 import { CloudBrowserAuthError, CloudBrowserError } from './views.js';
 
 const stripTrailingSlash = (input: string) => input.replace(/\/+$/, '');
@@ -9,6 +13,7 @@ export interface CloudManagementClientOptions {
   api_base_url?: string;
   api_key?: string | null;
   fetch_impl?: typeof fetch;
+  request_timeout_ms?: number;
 }
 
 export interface CloudTaskView {
@@ -97,6 +102,7 @@ export class CloudManagementClient {
   private readonly api_base_url: string;
   private readonly explicit_api_key: string | null;
   private readonly fetch_impl: typeof fetch;
+  private readonly request_timeout_ms: number;
 
   constructor(options: CloudManagementClientOptions = {}) {
     this.api_base_url = stripTrailingSlash(
@@ -104,6 +110,8 @@ export class CloudManagementClient {
     );
     this.explicit_api_key = options.api_key ?? null;
     this.fetch_impl = options.fetch_impl ?? fetch;
+    this.request_timeout_ms =
+      options.request_timeout_ms ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
   }
 
   private resolve_api_key() {
@@ -135,38 +143,45 @@ export class CloudManagementClient {
   }
 
   private async request_json<T>(path: string, init: RequestInit): Promise<T> {
-    const response = await this.fetch_impl(`${this.api_base_url}${path}`, {
-      ...init,
-      headers: this.auth_headers(init.headers as Record<string, string>),
-      redirect: 'error',
-    });
+    return await runWithHttpTimeout(
+      async (signal) => {
+        const response = await this.fetch_impl(`${this.api_base_url}${path}`, {
+          ...init,
+          headers: this.auth_headers(init.headers as Record<string, string>),
+          redirect: 'error',
+          signal,
+        });
 
-    const text = await readBoundedResponseText(response);
-    let payload: unknown = null;
-    if (text) {
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
-      }
-    }
+        const text = await readBoundedResponseText(response);
+        let payload: unknown = null;
+        if (text) {
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = text;
+          }
+        }
 
-    if (!response.ok) {
-      const details =
-        payload && typeof payload === 'object'
-          ? JSON.stringify(payload)
-          : String(payload ?? '');
-      if (response.status === 401 || response.status === 403) {
-        throw new CloudBrowserAuthError(
-          `Cloud API authentication failed (${response.status})`
-        );
-      }
-      throw new CloudBrowserError(
-        `Cloud API request failed (${response.status}): ${details.slice(0, 8192)}`
-      );
-    }
+        if (!response.ok) {
+          const details =
+            payload && typeof payload === 'object'
+              ? JSON.stringify(payload)
+              : String(payload ?? '');
+          if (response.status === 401 || response.status === 403) {
+            throw new CloudBrowserAuthError(
+              `Cloud API authentication failed (${response.status})`
+            );
+          }
+          throw new CloudBrowserError(
+            `Cloud API request failed (${response.status}): ${details.slice(0, 8192)}`
+          );
+        }
 
-    return payload as T;
+        return payload as T;
+      },
+      this.request_timeout_ms,
+      init.signal
+    );
   }
 
   private build_query(

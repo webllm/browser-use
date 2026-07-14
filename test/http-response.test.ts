@@ -4,6 +4,7 @@ import {
   HttpResponseTooLargeError,
   readBoundedResponseJson,
   readBoundedResponseText,
+  runWithHttpTimeout,
 } from '../src/http-response.js';
 
 describe('bounded HTTP responses', () => {
@@ -54,4 +55,18 @@ describe('bounded HTTP responses', () => {
       expect(text).not.toHaveBeenCalled();
     }
   );
+
+  it('keeps the timeout active for the full response consumer', async () => {
+    await expect(
+      runWithHttpTimeout(
+        async (signal) =>
+          await new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), {
+              once: true,
+            });
+          }),
+        5
+      )
+    ).rejects.toThrow('HTTP request timed out');
+  });
 });

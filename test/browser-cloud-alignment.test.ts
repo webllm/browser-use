@@ -204,6 +204,30 @@ describe('browser cloud alignment', () => {
     );
   });
 
+  it('times out stalled cloud browser requests', async () => {
+    let requestSignal: AbortSignal | null = null;
+    const client = new CloudBrowserClient({
+      api_base_url: 'https://api.browser-use.test',
+      api_key: 'test-api-key',
+      request_timeout_ms: 5,
+      fetch_impl: ((_url, init) => {
+        requestSignal = init?.signal ?? null;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener(
+            'abort',
+            () => reject(requestSignal?.reason),
+            { once: true }
+          );
+        });
+      }) as typeof fetch,
+    });
+
+    await expect(client.create_browser({})).rejects.toThrow(
+      'HTTP request timed out'
+    );
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it('does not forward its API key to a redirect target', async () => {
     let redirectedRequests = 0;
     const redirectTarget = createServer((_request, response) => {

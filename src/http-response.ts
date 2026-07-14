@@ -1,4 +1,5 @@
 export const DEFAULT_MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
 
 export class HttpResponseTooLargeError extends Error {
   constructor(public readonly maxBytes: number) {
@@ -35,6 +36,36 @@ const normalizeResponseLimit = (maxBytes: number) =>
   Number.isFinite(maxBytes)
     ? Math.max(1, Math.floor(maxBytes))
     : DEFAULT_MAX_HTTP_RESPONSE_BYTES;
+
+const normalizeRequestTimeout = (timeoutMs: number) =>
+  Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Math.max(1, Math.floor(timeoutMs))
+    : DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
+
+export const runWithHttpTimeout = async <T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+  upstreamSignal?: AbortSignal | null
+): Promise<T> => {
+  const controller = new AbortController();
+  const onUpstreamAbort = () =>
+    controller.abort(upstreamSignal?.reason ?? new Error('Request aborted'));
+  if (upstreamSignal?.aborted) {
+    onUpstreamAbort();
+  } else {
+    upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
+  }
+  const timeout = setTimeout(
+    () => controller.abort(new Error('HTTP request timed out')),
+    normalizeRequestTimeout(timeoutMs)
+  );
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
+  }
+};
 
 export const readBoundedResponseText = async (
   response: ResponseLike,
