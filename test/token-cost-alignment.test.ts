@@ -1,6 +1,12 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TokenCost } from '../src/tokens/service.js';
+import {
+  MAX_PRICING_METADATA_BYTES,
+  TokenCost,
+} from '../src/tokens/service.js';
 import {
   OPENROUTER_MODELS_URL,
   resetOpenRouterPricingCacheForTesting,
@@ -158,6 +164,9 @@ describe('TokenCost alignment', () => {
 
     expect(mockedAxiosGet).toHaveBeenCalledWith(OPENROUTER_MODELS_URL, {
       timeout: 30_000,
+      maxContentLength: MAX_PRICING_METADATA_BYTES,
+      maxBodyLength: MAX_PRICING_METADATA_BYTES,
+      maxRedirects: 0,
     });
     expect(pricing).not.toBeNull();
     expect(pricing?.model).toBe('openrouter/anthropic/claude-sonnet-4');
@@ -168,6 +177,45 @@ describe('TokenCost alignment', () => {
     expect(pricing?.cache_creation_1h_input_token_cost).toBeNull();
     expect(pricing?.max_input_tokens).toBe(200000);
     expect(pricing?.max_output_tokens).toBe(8192);
+  });
+
+  it('rejects oversized local pricing caches before reading them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
+    const cachePath = path.join(tempDir, 'pricing.json');
+    fs.writeFileSync(cachePath, '{}');
+    fs.truncateSync(cachePath, MAX_PRICING_METADATA_BYTES + 1);
+
+    try {
+      const tokenCost = new TokenCost(true);
+      await expect((tokenCost as any).loadFromCache(cachePath)).rejects.toThrow(
+        `exceeds ${MAX_PRICING_METADATA_BYTES} bytes`
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('bounds LiteLLM pricing downloads and disables redirects', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
+    mockedAxiosGet.mockResolvedValueOnce({ data: {} });
+
+    try {
+      const tokenCost = new TokenCost(true);
+      (tokenCost as any).cacheDir = tempDir;
+      await tokenCost.initialize();
+
+      expect(mockedAxiosGet).toHaveBeenCalledWith(
+        expect.stringContaining('model_prices_and_context_window.json'),
+        {
+          timeout: 30_000,
+          maxContentLength: MAX_PRICING_METADATA_BYTES,
+          maxBodyLength: MAX_PRICING_METADATA_BYTES,
+          maxRedirects: 0,
+        }
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('falls back to OpenRouter pricing for slash model ids missing from LiteLLM', async () => {

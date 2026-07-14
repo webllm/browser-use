@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { createLogger } from '../logging-config.js';
 import type { ModelPricing } from './views.js';
+import { MAX_PRICING_METADATA_BYTES } from './pricing-limits.js';
 
 const logger = createLogger('browser_use.tokens.openrouter');
 
@@ -56,7 +57,12 @@ export async function getOpenRouterModelsMetadata(refresh = false) {
   try {
     const response = await axios.get<{ data?: unknown[] }>(
       OPENROUTER_MODELS_URL,
-      { timeout: 30_000 }
+      {
+        timeout: 30_000,
+        maxContentLength: MAX_PRICING_METADATA_BYTES,
+        maxBodyLength: MAX_PRICING_METADATA_BYTES,
+        maxRedirects: 0,
+      }
     );
     const models = Array.isArray(response.data?.data) ? response.data.data : [];
     openRouterModelsCache = {};

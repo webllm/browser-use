@@ -1,0 +1,1 @@
+export const MAX_PRICING_METADATA_BYTES = 16 * 1024 * 1024;

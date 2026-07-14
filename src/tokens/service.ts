@@ -22,6 +22,9 @@ import {
   getOpenRouterModelPricing,
   isOpenRouterPricingModel,
 } from './openrouter-pricing.js';
+import { MAX_PRICING_METADATA_BYTES } from './pricing-limits.js';
+
+export { MAX_PRICING_METADATA_BYTES } from './pricing-limits.js';
 
 const logger = createLogger('browser_use.tokens');
 const costLogger = createLogger('browser_use.tokens.cost');
@@ -30,6 +33,7 @@ const PRICING_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 const CACHE_DURATION_MS = 24 * 60 * 60 * 1000; // 1 day
 const CACHE_DIR_NAME = 'browser_use/token_cost';
+const PRICING_CACHE_READ_CHUNK_BYTES = 64 * 1024;
 
 const ansi = {
   cyan: '\u001b[96m',
@@ -51,6 +55,47 @@ const xdgCacheHome = () => {
 
 const ensureDir = async (dir: string) => {
   await fs.promises.mkdir(dir, { recursive: true });
+};
+
+const readBoundedPricingCache = async (file: string) => {
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const handle = await fs.promises.open(
+    file,
+    fs.constants.O_RDONLY | nonBlockingFlag
+  );
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      throw new Error(`Pricing cache is not a regular file: ${file}`);
+    }
+    if (stats.size > MAX_PRICING_METADATA_BYTES) {
+      throw new Error(
+        `Pricing cache exceeds ${MAX_PRICING_METADATA_BYTES} bytes: ${file}`
+      );
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_PRICING_METADATA_BYTES) {
+      const remaining = MAX_PRICING_METADATA_BYTES + 1 - totalBytes;
+      const buffer = Buffer.allocUnsafe(
+        Math.min(PRICING_CACHE_READ_CHUNK_BYTES, remaining)
+      );
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_PRICING_METADATA_BYTES) {
+        throw new Error(
+          `Pricing cache exceeds ${MAX_PRICING_METADATA_BYTES} bytes: ${file}`
+        );
+      }
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 };
 
 const parsePricingTimestamp = (data: CachedPricingData) =>
@@ -137,7 +182,7 @@ export class TokenCost {
 
   private async isCacheValid(file: string) {
     try {
-      const content = await fs.promises.readFile(file, 'utf-8');
+      const content = await readBoundedPricingCache(file);
       const parsed: CachedPricingData = JSON.parse(content);
       const timestamp = parsePricingTimestamp(parsed);
       return Date.now() - timestamp.getTime() < CACHE_DURATION_MS;
@@ -147,7 +192,7 @@ export class TokenCost {
   }
 
   private async loadFromCache(file: string) {
-    const content = await fs.promises.readFile(file, 'utf-8');
+    const content = await readBoundedPricingCache(file);
     const cached: CachedPricingData = JSON.parse(content);
     this.pricingData = cached.data as PricingData;
   }
@@ -156,6 +201,9 @@ export class TokenCost {
     try {
       const response = await axios.get<PricingData>(PRICING_URL, {
         timeout: 30_000,
+        maxContentLength: MAX_PRICING_METADATA_BYTES,
+        maxBodyLength: MAX_PRICING_METADATA_BYTES,
+        maxRedirects: 0,
       });
       this.pricingData = response.data;
       const cached: CachedPricingData = {
@@ -164,10 +212,15 @@ export class TokenCost {
       };
       await ensureDir(this.cacheDir);
       const fileName = `pricing_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-      await fs.promises.writeFile(
-        path.join(this.cacheDir, fileName),
-        JSON.stringify(cached, null, 2)
-      );
+      const serializedCache = JSON.stringify(cached);
+      if (
+        Buffer.byteLength(serializedCache, 'utf8') <= MAX_PRICING_METADATA_BYTES
+      ) {
+        await fs.promises.writeFile(
+          path.join(this.cacheDir, fileName),
+          serializedCache
+        );
+      }
     } catch (error) {
       logger.debug(
         `Failed to fetch LiteLLM pricing: ${(error as Error).message}`
