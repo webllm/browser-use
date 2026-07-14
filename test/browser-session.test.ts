@@ -4394,6 +4394,7 @@ describe('BrowserSession PDF Auto Download', () => {
           pdfUrl: rawUrl,
           redirectMode: 'follow',
           maxBytes: DEFAULT_MAX_AUTO_DOWNLOAD_BYTES,
+          timeoutMs: 30_000,
         });
         const logs = infoSpy.mock.calls.flat().join('\n');
         expect(logs).toContain(
@@ -4479,6 +4480,7 @@ describe('BrowserSession PDF Auto Download', () => {
       expect(fetchSpy).toHaveBeenCalledWith(pdfUrl, {
         cache: 'force-cache',
         redirect: 'error',
+        signal: expect.any(AbortSignal),
       });
     } finally {
       fetchSpy.mockRestore();
@@ -4519,6 +4521,45 @@ describe('BrowserSession PDF Auto Download', () => {
       expect(fs.readdirSync(downloadsDir)).toEqual([]);
     } finally {
       fetchSpy.mockRestore();
+      fs.rmSync(downloadsDir, { recursive: true, force: true });
+    }
+  });
+
+  it('aborts stalled PDF auto-downloads', async () => {
+    vi.useFakeTimers();
+    const downloadsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pdf-'));
+    let requestSignal: AbortSignal | null = null;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async (_url, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? null;
+          requestSignal?.addEventListener(
+            'abort',
+            () => reject(requestSignal?.reason),
+            { once: true }
+          );
+        })
+    );
+    try {
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({ downloads_path: downloadsDir }),
+      });
+      const fakePage = {
+        url: () => 'https://example.com/stalled.pdf',
+        evaluate: vi.fn(async (callback: any, argument: unknown) =>
+          callback(argument)
+        ),
+      } as any;
+
+      const download = (session as any)._auto_download_pdf_if_needed(fakePage);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(download).resolves.toBeNull();
+      expect(requestSignal?.aborted).toBe(true);
+      expect(fs.readdirSync(downloadsDir)).toEqual([]);
+    } finally {
+      fetchSpy.mockRestore();
+      vi.useRealTimers();
       fs.rmSync(downloadsDir, { recursive: true, force: true });
     }
   });

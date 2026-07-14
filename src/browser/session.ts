@@ -6756,6 +6756,7 @@ export class BrowserSession {
         ? 'error'
         : 'follow';
       const maxBytes = getMaxAutoDownloadBytes();
+      const timeoutMs = 30_000;
       let downloadResult: {
         data?: number[];
         dataBase64?: string;
@@ -6765,11 +6766,14 @@ export class BrowserSession {
       } | null = null;
       try {
         downloadResult = await page.evaluate(
-          async ({ pdfUrl, redirectMode, maxBytes }) => {
+          async ({ pdfUrl, redirectMode, maxBytes, timeoutMs }) => {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), timeoutMs);
             try {
               const response = await fetch(pdfUrl, {
                 cache: 'force-cache',
                 redirect: redirectMode,
+                signal: controller.signal,
               });
               if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -6847,9 +6851,11 @@ export class BrowserSession {
                     ? error.message
                     : 'Unknown fetch error',
               };
+            } finally {
+              clearTimeout(timeout);
             }
           },
-          { pdfUrl: url, redirectMode, maxBytes }
+          { pdfUrl: url, redirectMode, maxBytes, timeoutMs }
         );
       } finally {
         await this.validate_page_after_action(page);
