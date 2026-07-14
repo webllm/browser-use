@@ -96,6 +96,7 @@ export const DIRECT_STATE_FILE = path.join(
   getDefaultDirectStateDir(),
   'direct-state.json'
 );
+export const MAX_DIRECT_STATE_BYTES = 64 * 1024;
 
 interface StreamLike {
   write(chunk: string): void;
@@ -323,15 +324,55 @@ const writeLine = (stream: StreamLike, message: string) => {
   stream.write(`${message}\n`);
 };
 
-export const load_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
-  if (!fs.existsSync(state_file)) {
-    return {} as DirectModeState;
+const normalizeDirectState = (value: unknown): DirectModeState => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
   }
+  const raw = value as Record<string, unknown>;
+  const state: DirectModeState = {};
+  if (raw.mode === 'local' || raw.mode === 'remote') {
+    state.mode = raw.mode;
+  }
+  for (const key of [
+    'cdp_url',
+    'session_id',
+    'browser_launch_token',
+    'user_data_dir',
+    'active_url',
+  ] as const) {
+    if (typeof raw[key] === 'string' || raw[key] === null) {
+      state[key] = raw[key];
+    }
+  }
+  if (
+    raw.browser_pid === null ||
+    (typeof raw.browser_pid === 'number' &&
+      Number.isSafeInteger(raw.browser_pid) &&
+      raw.browser_pid > 0)
+  ) {
+    state.browser_pid = raw.browser_pid;
+  }
+  if (typeof raw.owns_user_data_dir === 'boolean') {
+    state.owns_user_data_dir = raw.owns_user_data_dir;
+  } else if (raw.owns_user_data_dir === null) {
+    state.owns_user_data_dir = null;
+  }
+  return state;
+};
 
+export const load_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
   try {
-    return JSON.parse(fs.readFileSync(state_file, 'utf8')) as DirectModeState;
+    const stats = fs.lstatSync(state_file);
+    if (!stats.isFile() || stats.size > MAX_DIRECT_STATE_BYTES) {
+      return {};
+    }
+    const raw = fs.readFileSync(state_file, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > MAX_DIRECT_STATE_BYTES) {
+      return {};
+    }
+    return normalizeDirectState(JSON.parse(raw));
   } catch {
-    return {} as DirectModeState;
+    return {};
   }
 };
 
@@ -339,6 +380,10 @@ export const save_direct_state = (
   state: DirectModeState,
   state_file: string = DIRECT_STATE_FILE
 ) => {
+  const serializedState = JSON.stringify(state, null, 2);
+  if (Buffer.byteLength(serializedState, 'utf8') > MAX_DIRECT_STATE_BYTES) {
+    throw new Error(`Direct state exceeds ${MAX_DIRECT_STATE_BYTES} bytes`);
+  }
   const stateDir = path.dirname(state_file);
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   if (
@@ -354,7 +399,7 @@ export const save_direct_state = (
   );
   let renamed = false;
   try {
-    fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), {
+    fs.writeFileSync(tempPath, serializedState, {
       encoding: 'utf8',
       mode: 0o600,
       flag: 'wx',

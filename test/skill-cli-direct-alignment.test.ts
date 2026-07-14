@@ -9,6 +9,7 @@ import {
   DIRECT_STATE_FILE,
   defaultLocalLauncher,
   load_direct_state,
+  MAX_DIRECT_STATE_BYTES,
   resolveDirectBrowserExecutable,
   run_direct_command,
   save_direct_state,
@@ -103,6 +104,58 @@ describe('skill-cli direct alignment', () => {
       expect(fs.readdirSync(tempDir)).toEqual(['state.json']);
     } finally {
       renameSpy.mockRestore();
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized direct-mode state files and writes', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+
+    try {
+      fs.writeFileSync(stateFile, '{}');
+      fs.truncateSync(stateFile, MAX_DIRECT_STATE_BYTES + 1);
+      expect(load_direct_state(stateFile)).toEqual({});
+
+      expect(() =>
+        save_direct_state(
+          {
+            mode: 'local',
+            active_url: `https://example.com/${'x'.repeat(MAX_DIRECT_STATE_BYTES)}`,
+          },
+          stateFile
+        )
+      ).toThrow(`exceeds ${MAX_DIRECT_STATE_BYTES} bytes`);
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops invalid direct-mode state field types', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    fs.writeFileSync(
+      stateFile,
+      JSON.stringify({
+        mode: 'invalid',
+        cdp_url: 123,
+        browser_pid: -1,
+        browser_launch_token: ['unexpected'],
+        active_url: 'https://example.com',
+      })
+    );
+
+    try {
+      expect(load_direct_state(stateFile)).toEqual({
+        active_url: 'https://example.com',
+      });
+    } finally {
       clear_direct_state(stateFile);
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
