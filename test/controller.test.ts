@@ -1113,7 +1113,16 @@ describe('Controller Integration Tests', () => {
           { index: 1 },
           { browser_session: browserSession as any }
         );
+        const selectResult = await controller.registry.execute_action(
+          'select_dropdown_option',
+          { index: 1, text: 'Canada' },
+          { browser_session: browserSession as any }
+        );
         expect(optionsResult.extracted_content).toContain('United States');
+        expect(selectResult.extracted_content).toContain('Canada');
+        await expect(
+          collisionPage.locator('#country').inputValue()
+        ).resolves.toBe('ca');
       } finally {
         await collisionPage.close();
       }

@@ -4142,7 +4142,14 @@ You will be given a query and the markdown of a webpage that has been filtered t
       }
 
       await validateBrowserPageAfterAction(browser_session, page, signal);
-      for (const frame of page.frames ?? []) {
+      const framesAccessor = (page as any).frames;
+      const pageFrames =
+        typeof framesAccessor === 'function'
+          ? framesAccessor.call(page)
+          : Array.isArray(framesAccessor)
+            ? framesAccessor
+            : [];
+      for (const frame of Array.isArray(pageFrames) ? pageFrames : []) {
         try {
           const typeInfo = await frame.evaluate((xpath: string) => {
             const element = document.evaluate(
