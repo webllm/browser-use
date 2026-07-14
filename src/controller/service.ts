@@ -124,6 +124,8 @@ const MAX_FIND_ATTRIBUTES = 32;
 const MAX_FIND_ELEMENT_TEXT_CHARS = 4_096;
 const MAX_FIND_ATTRIBUTE_CHARS = 2_048;
 const MAX_FIND_ELEMENTS_OUTPUT_CHARS = 256 * 1024;
+const MAX_FIND_TEXT_NODES_PER_ELEMENT = 10_000;
+const MAX_FIND_TEXT_NODES_TOTAL = 50_000;
 const DEFAULT_PDF_HEADER_TEMPLATE =
   '<div style="font-size:9px; color:#666; width:100%; padding:0 0.4in; ' +
   'box-sizing:border-box; text-align:right;"><span class="date"></span></div>';
@@ -2313,6 +2315,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars,
             maxAttributeChars,
             maxPayloadChars,
+            maxTextNodesPerElement,
+            maxTotalTextNodes,
           }: {
             selector: string;
             attributes: string[] | null;
@@ -2321,6 +2325,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars: number;
             maxAttributeChars: number;
             maxPayloadChars: number;
+            maxTextNodesPerElement: number;
+            maxTotalTextNodes: number;
           }) => {
             // esbuild/tsx can preserve inner function names with a free
             // `__name` helper. Playwright serializes this callback without
@@ -2346,6 +2352,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
               }
 
               let remainingPayloadChars = Math.max(0, maxPayloadChars);
+              let remainingTextNodes = Math.max(0, maxTotalTextNodes);
               let contentTruncated = false;
               const takeText = (value: string, limit: number) => {
                 const allowed = Math.max(
@@ -2364,8 +2371,17 @@ You will be given a query and the markdown of a webpage that has been filtered t
                   element,
                   NodeFilter.SHOW_TEXT
                 );
-                let node = walker.nextNode();
-                while (node && remaining > 0) {
+                let visitedTextNodes = 0;
+                let node: Node | null = null;
+                while (
+                  remaining > 0 &&
+                  visitedTextNodes < maxTextNodesPerElement &&
+                  remainingTextNodes > 0
+                ) {
+                  node = walker.nextNode();
+                  if (!node) break;
+                  visitedTextNodes += 1;
+                  remainingTextNodes -= 1;
                   const raw = node.nodeValue ?? '';
                   const compact = raw
                     .slice(0, Math.max(remaining * 2, remaining))
@@ -2379,9 +2395,15 @@ You will be given a query and the markdown of a webpage that has been filtered t
                   ) {
                     contentTruncated = true;
                   }
-                  node = walker.nextNode();
                 }
-                if (node) contentTruncated = true;
+                if (
+                  node &&
+                  (remaining <= 0 ||
+                    visitedTextNodes >= maxTextNodesPerElement ||
+                    remainingTextNodes <= 0)
+                ) {
+                  contentTruncated = true;
+                }
                 return takeText(
                   chunks.join(' ').replace(/\s+/g, ' ').trim(),
                   maxTextChars
@@ -2449,6 +2471,8 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextChars: MAX_FIND_ELEMENT_TEXT_CHARS,
             maxAttributeChars: MAX_FIND_ATTRIBUTE_CHARS,
             maxPayloadChars: MAX_FIND_ELEMENTS_OUTPUT_CHARS,
+            maxTextNodesPerElement: MAX_FIND_TEXT_NODES_PER_ELEMENT,
+            maxTotalTextNodes: MAX_FIND_TEXT_NODES_TOTAL,
           }
         )) as FindElementsResult | null;
       } finally {

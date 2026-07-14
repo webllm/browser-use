@@ -859,6 +859,53 @@ describe('Controller Integration Tests', () => {
       expect(result.extracted_content).toContain('data-kind="docs"');
     });
 
+    it('caps find_elements text-node traversal across all matched elements', async () => {
+      await page.setContent(`<main>${'<div></div>'.repeat(100)}</main>`);
+      await page.evaluate(() => {
+        const state = window as any;
+        state.__originalCreateTreeWalker = document.createTreeWalker;
+        state.__findElementsWalkerCalls = 0;
+        document.createTreeWalker = (() => ({
+          nextNode: () => {
+            state.__findElementsWalkerCalls += 1;
+            return { nodeValue: '' } as Node;
+          },
+        })) as unknown as typeof document.createTreeWalker;
+      });
+      const controller = new Controller();
+      const browserSession = {
+        get_current_page: vi.fn(async () => page),
+        validate_page_after_action: vi.fn(async () => undefined),
+      };
+
+      try {
+        const result = await controller.registry.execute_action(
+          'find_elements',
+          {
+            selector: 'div',
+            max_results: 100,
+            include_text: true,
+          },
+          { browser_session: browserSession as any }
+        );
+        const walkerCalls = await page.evaluate(
+          () => (window as any).__findElementsWalkerCalls
+        );
+
+        expect(walkerCalls).toBe(50_000);
+        expect(result.extracted_content).toContain(
+          'element text or attributes were truncated for safety'
+        );
+      } finally {
+        await page.evaluate(() => {
+          const state = window as any;
+          document.createTreeWalker = state.__originalCreateTreeWalker;
+          delete state.__originalCreateTreeWalker;
+          delete state.__findElementsWalkerCalls;
+        });
+      }
+    });
+
     it('go_to_url pattern navigates to URL', async () => {
       const registry = new Registry();
 
