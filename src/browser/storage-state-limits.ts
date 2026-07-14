@@ -112,6 +112,8 @@ const readBoundedStorageStateBuffer = (
       if (
         currentPathStats.isSymbolicLink() ||
         !currentPathStats.isFile() ||
+        pathStats.dev !== stats.dev ||
+        pathStats.ino !== stats.ino ||
         stats.dev !== currentPathStats.dev ||
         stats.ino !== currentPathStats.ino
       ) {
@@ -234,7 +236,7 @@ export const writeBoundedStorageStateFile = (
 export const readBoundedStorageStateFile = (
   filePath: string
 ): Record<string, unknown> => {
-  const raw = readBoundedStorageStateBuffer(filePath).toString('utf8');
+  const raw = readBoundedStorageStateBuffer(filePath, true).toString('utf8');
   let payload: unknown;
   try {
     payload = JSON.parse(raw);

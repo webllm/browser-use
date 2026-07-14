@@ -65,8 +65,7 @@ describe('storage state limits', () => {
     const statePath = path.join(tempDir, 'state.json');
     const replacementPath = path.join(tempDir, 'replacement.json');
     fs.writeFileSync(statePath, '{"cookies":[],"origins":[]}');
-    fs.writeFileSync(replacementPath, '{}');
-    fs.truncateSync(replacementPath, MAX_STORAGE_STATE_FILE_BYTES + 1);
+    fs.writeFileSync(replacementPath, '{"cookies":[],"origins":[]}');
     const originalOpen = fs.openSync.bind(fs);
     const openSpy = vi
       .spyOn(fs, 'openSync')
@@ -78,13 +77,34 @@ describe('storage state limits', () => {
 
     try {
       expect(() => readBoundedStorageStateFile(statePath)).toThrow(
-        `exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`
+        'changed while opening'
       );
     } finally {
       openSpy.mockRestore();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects symbolic links as storage state inputs',
+    () => {
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-storage-state-')
+      );
+      const targetPath = path.join(tempDir, 'target.json');
+      const statePath = path.join(tempDir, 'state.json');
+      fs.writeFileSync(targetPath, '{"cookies":[],"origins":[]}');
+      fs.symlinkSync(targetPath, statePath);
+
+      try {
+        expect(() => readBoundedStorageStateFile(statePath)).toThrow(
+          'not a regular file'
+        );
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('skips a backup when the current state grows after validation', () => {
     const tempDir = fs.mkdtempSync(
