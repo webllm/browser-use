@@ -3811,32 +3811,39 @@ export class BrowserSession {
             }> = [];
             let remainingChars = Math.max(0, maxPayloadChars);
             let contentTruncated = false;
-            const take = (value: string) => {
-              const scanLimit = Math.min(
-                value.length,
-                maxFieldChars + 1,
-                remainingChars + 1
-              );
-              const scanned = value.slice(0, scanLimit).trim();
-              const allowed = Math.max(
-                0,
-                Math.min(maxFieldChars, remainingChars)
-              );
-              const bounded = scanned.slice(0, allowed);
-              remainingChars -= bounded.length;
-              if (scanLimit < value.length || bounded.length < scanned.length) {
-                contentTruncated = true;
-              }
-              return bounded;
-            };
-            const pushOption = (text: string, value: string, index: number) => {
-              if (remainingChars <= 0) {
-                contentTruncated = true;
-                return false;
-              }
-              options.push({ text: take(text), value: take(value), index });
-              return remainingChars > 0;
-            };
+            const [take] = [
+              (value: string) => {
+                const scanLimit = Math.min(
+                  value.length,
+                  maxFieldChars + 1,
+                  remainingChars + 1
+                );
+                const scanned = value.slice(0, scanLimit).trim();
+                const allowed = Math.max(
+                  0,
+                  Math.min(maxFieldChars, remainingChars)
+                );
+                const bounded = scanned.slice(0, allowed);
+                remainingChars -= bounded.length;
+                if (
+                  scanLimit < value.length ||
+                  bounded.length < scanned.length
+                ) {
+                  contentTruncated = true;
+                }
+                return bounded;
+              },
+            ];
+            const [pushOption] = [
+              (text: string, value: string, index: number) => {
+                if (remainingChars <= 0) {
+                  contentTruncated = true;
+                  return false;
+                }
+                options.push({ text: take(text), value: take(value), index });
+                return remainingChars > 0;
+              },
+            ];
 
             if (element.tagName?.toLowerCase() === 'select') {
               const source = (element as HTMLSelectElement).options;
@@ -4043,20 +4050,26 @@ export class BrowserSession {
                   let contentTruncated = false;
                   let exactMatch = -1;
                   let caseInsensitiveMatch = -1;
-                  const scanText = (value: string) => {
-                    if (value.length > maxFieldChars) contentTruncated = true;
-                    return value.slice(0, maxFieldChars + 1).trim();
-                  };
-                  const take = (value: string) => {
-                    const allowed = Math.max(
-                      0,
-                      Math.min(maxFieldChars, remainingChars)
-                    );
-                    const bounded = value.slice(0, allowed);
-                    remainingChars -= bounded.length;
-                    if (bounded.length < value.length) contentTruncated = true;
-                    return bounded;
-                  };
+                  const [scanText] = [
+                    (value: string) => {
+                      if (value.length > maxFieldChars) contentTruncated = true;
+                      return value.slice(0, maxFieldChars + 1).trim();
+                    },
+                  ];
+                  const [take] = [
+                    (value: string) => {
+                      const allowed = Math.max(
+                        0,
+                        Math.min(maxFieldChars, remainingChars)
+                      );
+                      const bounded = value.slice(0, allowed);
+                      remainingChars -= bounded.length;
+                      if (bounded.length < value.length) {
+                        contentTruncated = true;
+                      }
+                      return bounded;
+                    },
+                  ];
                   const scanCount = Math.min(
                     root.options.length,
                     maxScanOptions
@@ -4223,20 +4236,24 @@ export class BrowserSession {
                 let contentTruncated = false;
                 let exactMatch = -1;
                 let caseInsensitiveMatch = -1;
-                const scanText = (value: string) => {
-                  if (value.length > maxFieldChars) contentTruncated = true;
-                  return value.slice(0, maxFieldChars + 1).trim();
-                };
-                const take = (value: string) => {
-                  const allowed = Math.max(
-                    0,
-                    Math.min(maxFieldChars, remainingChars)
-                  );
-                  const bounded = value.slice(0, allowed);
-                  remainingChars -= bounded.length;
-                  if (bounded.length < value.length) contentTruncated = true;
-                  return bounded;
-                };
+                const [scanText] = [
+                  (value: string) => {
+                    if (value.length > maxFieldChars) contentTruncated = true;
+                    return value.slice(0, maxFieldChars + 1).trim();
+                  },
+                ];
+                const [take] = [
+                  (value: string) => {
+                    const allowed = Math.max(
+                      0,
+                      Math.min(maxFieldChars, remainingChars)
+                    );
+                    const bounded = value.slice(0, allowed);
+                    remainingChars -= bounded.length;
+                    if (bounded.length < value.length) contentTruncated = true;
+                    return bounded;
+                  },
+                ];
                 const scanCount = Math.min(nodes.length, maxScanOptions);
                 for (let index = 0; index < scanCount; index += 1) {
                   const optionTextValue = scanText(

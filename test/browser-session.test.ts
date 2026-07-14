@@ -4507,6 +4507,50 @@ describe('Direct Playwright Operations', () => {
     expect(value).toBe('Hello World');
   });
 
+  it('runs session dropdown callbacks without page-global name helpers', async () => {
+    const collisionPage = await context.newPage();
+    try {
+      await collisionPage.setContent(`
+        <select id="country">
+          <option value="us">United States</option>
+          <option value="ca">Canada</option>
+        </select>
+      `);
+      await collisionPage.evaluate(() => {
+        Object.defineProperty(globalThis, '__name', {
+          value: 42,
+          writable: false,
+          configurable: false,
+        });
+      });
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({}),
+      });
+      vi.spyOn(session, 'get_current_page').mockResolvedValue(
+        collisionPage as any
+      );
+      vi.spyOn(session, 'validate_page_after_action').mockResolvedValue();
+      const elementNode = {
+        xpath: '//*[@id="country"]',
+        highlight_index: 1,
+      } as DOMElementNode;
+
+      const options = await session.get_dropdown_options(elementNode);
+      const selection = await session.select_dropdown_option(
+        elementNode,
+        'Canada'
+      );
+
+      expect(options.formatted_options).toContain('United States');
+      expect(selection.matched_text).toBe('Canada');
+      await expect(
+        collisionPage.locator('#country').inputValue()
+      ).resolves.toBe('ca');
+    } finally {
+      await collisionPage.close();
+    }
+  });
+
   it('inputs text after a click replaces the field in the same document', async () => {
     await page.setContent(`
       <input

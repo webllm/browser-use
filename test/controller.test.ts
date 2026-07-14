@@ -1083,6 +1083,42 @@ describe('Controller Integration Tests', () => {
       }
     });
 
+    it('runs dropdown fallbacks without page-global name helpers', async () => {
+      const collisionPage = await browser.newPage();
+      try {
+        await collisionPage.setContent(`
+          <select id="country">
+            <option value="us">United States</option>
+            <option value="ca">Canada</option>
+          </select>
+        `);
+        await collisionPage.evaluate(() => {
+          Object.defineProperty(globalThis, '__name', {
+            value: 42,
+            writable: false,
+            configurable: false,
+          });
+        });
+        const controller = new Controller();
+        const browserSession = {
+          get_current_page: vi.fn(async () => collisionPage),
+          get_dom_element_by_index: vi.fn(async () => ({
+            xpath: '//*[@id="country"]',
+          })),
+          validate_page_after_action: vi.fn(async () => undefined),
+        };
+
+        const optionsResult = await controller.registry.execute_action(
+          'get_dropdown_options',
+          { index: 1 },
+          { browser_session: browserSession as any }
+        );
+        expect(optionsResult.extracted_content).toContain('United States');
+      } finally {
+        await collisionPage.close();
+      }
+    });
+
     it('caps find_elements text-node traversal across all matched elements', async () => {
       await page.setContent(`<main>${'<div></div>'.repeat(100)}</main>`);
       await page.evaluate(() => {
