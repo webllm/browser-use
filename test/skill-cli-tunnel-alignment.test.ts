@@ -5,7 +5,10 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { runTunnelCommand } from '../src/cli.js';
-import { TunnelManager } from '../src/skill-cli/tunnel.js';
+import {
+  MAX_TUNNEL_INFO_BYTES,
+  TunnelManager,
+} from '../src/skill-cli/tunnel.js';
 
 const createWritable = () => {
   let buffer = '';
@@ -310,6 +313,36 @@ describe('skill-cli tunnel alignment', () => {
       expect(fs.readdirSync(tunnelDir)).toEqual(['3000.json']);
     } finally {
       renameSpy.mockRestore();
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized tunnel ownership state before process inspection', () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    fs.writeFileSync(infoPath, '{}');
+    fs.truncateSync(infoPath, MAX_TUNNEL_INFO_BYTES + 1);
+    const isProcessAlive = vi.fn(() => true);
+    const manager = new TunnelManager({
+      tunnel_dir: tunnelDir,
+      is_process_alive: isProcessAlive,
+    });
+
+    try {
+      expect(manager.list_tunnels()).toEqual({ tunnels: [], count: 0 });
+      expect(isProcessAlive).not.toHaveBeenCalled();
+      expect(fs.existsSync(infoPath)).toBe(false);
+      expect(() =>
+        (manager as any).save_tunnel_info(
+          3000,
+          4321,
+          'https://demo.trycloudflare.com',
+          `/usr/bin/${'x'.repeat(MAX_TUNNEL_INFO_BYTES)}`
+        )
+      ).toThrow(`exceeds ${MAX_TUNNEL_INFO_BYTES} bytes`);
+    } finally {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
   });

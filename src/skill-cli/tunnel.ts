@@ -10,6 +10,7 @@ import {
 
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
+export const MAX_TUNNEL_INFO_BYTES = 64 * 1024;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -158,17 +159,26 @@ export class TunnelManager {
   ) {
     this.ensure_tunnel_dir();
     const targetPath = this.get_tunnel_file(port);
+    const serializedInfo = JSON.stringify({
+      port,
+      pid,
+      url,
+      binary_path: binaryPath,
+    });
+    if (Buffer.byteLength(serializedInfo, 'utf8') > MAX_TUNNEL_INFO_BYTES) {
+      throw new Error(`Tunnel state exceeds ${MAX_TUNNEL_INFO_BYTES} bytes`);
+    }
     const tempPath = path.join(
       this.tunnel_dir,
       `.${path.basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`
     );
     let renamed = false;
     try {
-      fs.writeFileSync(
-        tempPath,
-        JSON.stringify({ port, pid, url, binary_path: binaryPath }),
-        { encoding: 'utf-8', mode: 0o600, flag: 'wx' }
-      );
+      fs.writeFileSync(tempPath, serializedInfo, {
+        encoding: 'utf-8',
+        mode: 0o600,
+        flag: 'wx',
+      });
       if (process.platform !== 'win32') {
         fs.chmodSync(tempPath, 0o600);
       }
@@ -191,17 +201,21 @@ export class TunnelManager {
 
   private load_tunnel_info(port: number): LoadedTunnelInfo | null {
     const filePath = this.get_tunnel_file(port);
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
     let parsed: Partial<TunnelInfo> | null;
     try {
-      parsed = JSON.parse(
-        fs.readFileSync(filePath, 'utf-8')
-      ) as Partial<TunnelInfo> | null;
+      const stats = fs.lstatSync(filePath);
+      if (!stats.isFile() || stats.size > MAX_TUNNEL_INFO_BYTES) {
+        this.remove_tunnel_state(port);
+        return null;
+      }
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      if (Buffer.byteLength(raw, 'utf8') > MAX_TUNNEL_INFO_BYTES) {
+        this.remove_tunnel_state(port);
+        return null;
+      }
+      parsed = JSON.parse(raw) as Partial<TunnelInfo> | null;
     } catch {
-      fs.rmSync(filePath, { force: true });
+      this.remove_tunnel_state(port);
       return null;
     }
 
