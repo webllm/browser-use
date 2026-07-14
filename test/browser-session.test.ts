@@ -2515,6 +2515,37 @@ esac
     expect(pageB.bringToFront).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects tab identifiers with partially numeric strings', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const pageA = {
+      bringToFront: vi.fn(async () => {}),
+      waitForLoadState: vi.fn(async () => {}),
+      url: vi.fn(() => 'https://a.test'),
+    } as any;
+    const pageB = {
+      bringToFront: vi.fn(async () => {}),
+      waitForLoadState: vi.fn(async () => {}),
+      url: vi.fn(() => 'https://b.test'),
+    } as any;
+
+    (session as any)._tabs = [
+      { page_id: 0, tab_id: 'tab-a', url: 'https://a.test', title: 'A' },
+      { page_id: 1, tab_id: 'tab-b', url: 'https://b.test', title: 'B' },
+    ];
+    (session as any).tabPages.set(0, pageA);
+    (session as any).tabPages.set(1, pageB);
+
+    await expect(session.switch_to_tab('1junk')).rejects.toThrow(
+      "Tab '1junk' does not exist"
+    );
+    await expect(session.close_tab('1.5')).rejects.toThrow(
+      "Tab '1.5' does not exist"
+    );
+    expect(pageB.bringToFront).not.toHaveBeenCalled();
+  });
+
   it('rolls back switching to an existing disallowed tab', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({

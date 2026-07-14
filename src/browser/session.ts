@@ -3518,8 +3518,10 @@ export class BrowserSession {
       if (byTargetId !== -1) {
         return byTargetId;
       }
-      const numeric = Number.parseInt(normalized, 10);
-      if (Number.isFinite(numeric)) {
+      const numeric = /^[+-]?\d+$/.test(normalized)
+        ? Number(normalized)
+        : Number.NaN;
+      if (Number.isSafeInteger(numeric)) {
         return this._resolveTabIndex(numeric);
       }
       return -1;
