@@ -37,6 +37,12 @@ const MAX_TOOL_NAME_CHARS = 256;
 const DEFAULT_MAX_SCREENSHOT_BYTES = 32 * 1024 * 1024;
 const DEFAULT_MAX_SCREENSHOT_PIXELS = 32 * 1024 * 1024;
 const DEFAULT_MAX_QUEUED_OPERATIONS = 100;
+export const MAX_CLI_MCP_INPUT_CHARS = 16 * 1024 * 1024;
+export const MAX_CLI_MCP_COMMAND_ARGS = 4_096;
+export const MAX_CLI_MCP_OUTPUT_CHARS = 16 * 1024 * 1024;
+export const MAX_CLI_MCP_SCREENSHOT_BYTES = 64 * 1024 * 1024;
+export const MAX_CLI_MCP_SCREENSHOT_PIXELS = 64 * 1024 * 1024;
+export const MAX_CLI_MCP_QUEUED_OPERATIONS = 1_000;
 const SCREENSHOT_JSON_OVERHEAD_CHARS = 4 * 1024;
 
 const instructions = `Use browser_exec for browser-use-direct commands such as open, state, click,
@@ -73,14 +79,15 @@ const createOutputBudget = (maxChars: number): OutputBudget => ({
 const parsePositiveInteger = (
   value: number | undefined,
   environmentValue: string | undefined,
-  fallback: number
+  fallback: number,
+  maximum: number
 ): number => {
   if (Number.isSafeInteger(value) && Number(value) > 0) {
-    return Number(value);
+    return Math.min(Number(value), maximum);
   }
   const configured = Number(environmentValue ?? fallback);
   return Number.isSafeInteger(configured) && configured > 0
-    ? configured
+    ? Math.min(configured, maximum)
     : fallback;
 };
 
@@ -107,32 +114,38 @@ export class CliMCPServer {
     this.maxInputChars = parsePositiveInteger(
       options.maxInputChars,
       process.env.BROWSER_USE_CLI_MCP_MAX_INPUT_CHARS,
-      DEFAULT_MAX_INPUT_CHARS
+      DEFAULT_MAX_INPUT_CHARS,
+      MAX_CLI_MCP_INPUT_CHARS
     );
     this.maxCommandArgs = parsePositiveInteger(
       options.maxCommandArgs,
       process.env.BROWSER_USE_CLI_MCP_MAX_COMMAND_ARGS,
-      DEFAULT_MAX_COMMAND_ARGS
+      DEFAULT_MAX_COMMAND_ARGS,
+      MAX_CLI_MCP_COMMAND_ARGS
     );
     this.maxOutputChars = parsePositiveInteger(
       options.maxOutputChars,
       process.env.BROWSER_USE_CLI_MCP_MAX_OUTPUT_CHARS,
-      DEFAULT_MAX_OUTPUT_CHARS
+      DEFAULT_MAX_OUTPUT_CHARS,
+      MAX_CLI_MCP_OUTPUT_CHARS
     );
     this.maxScreenshotBytes = parsePositiveInteger(
       options.maxScreenshotBytes,
       process.env.BROWSER_USE_CLI_MCP_MAX_SCREENSHOT_BYTES,
-      DEFAULT_MAX_SCREENSHOT_BYTES
+      DEFAULT_MAX_SCREENSHOT_BYTES,
+      MAX_CLI_MCP_SCREENSHOT_BYTES
     );
     this.maxScreenshotPixels = parsePositiveInteger(
       options.maxScreenshotPixels,
       process.env.BROWSER_USE_CLI_MCP_MAX_SCREENSHOT_PIXELS,
-      DEFAULT_MAX_SCREENSHOT_PIXELS
+      DEFAULT_MAX_SCREENSHOT_PIXELS,
+      MAX_CLI_MCP_SCREENSHOT_PIXELS
     );
     this.maxQueuedOperations = parsePositiveInteger(
       options.maxQueuedOperations,
       process.env.BROWSER_USE_CLI_MCP_MAX_QUEUED_OPERATIONS,
-      DEFAULT_MAX_QUEUED_OPERATIONS
+      DEFAULT_MAX_QUEUED_OPERATIONS,
+      MAX_CLI_MCP_QUEUED_OPERATIONS
     );
     this.server = new Server(
       { name, version },

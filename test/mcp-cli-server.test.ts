@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   CliMCPServer,
   createBoundedOutputCollector,
+  MAX_CLI_MCP_COMMAND_ARGS,
+  MAX_CLI_MCP_INPUT_CHARS,
+  MAX_CLI_MCP_OUTPUT_CHARS,
+  MAX_CLI_MCP_QUEUED_OPERATIONS,
+  MAX_CLI_MCP_SCREENSHOT_BYTES,
+  MAX_CLI_MCP_SCREENSHOT_PIXELS,
 } from '../src/mcp/cli-server.js';
 
 const textFrom = (result: Awaited<ReturnType<CliMCPServer['callTool']>>) => {
@@ -99,6 +105,28 @@ describe('CliMCPServer', () => {
     expect(tooLarge.isError).toBe(true);
     expect(textFrom(tooLarge)).toContain('maximum of 10 characters');
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it('clamps configurable resource budgets to hard limits', () => {
+    const server = new CliMCPServer('test', '1.0.0', {
+      maxInputChars: Number.MAX_SAFE_INTEGER,
+      maxCommandArgs: Number.MAX_SAFE_INTEGER,
+      maxOutputChars: Number.MAX_SAFE_INTEGER,
+      maxScreenshotBytes: Number.MAX_SAFE_INTEGER,
+      maxScreenshotPixels: Number.MAX_SAFE_INTEGER,
+      maxQueuedOperations: Number.MAX_SAFE_INTEGER,
+    });
+    const settings = server as any;
+    const execSchema = server.getToolDefinitions()[0]?.inputSchema as any;
+
+    expect(execSchema.properties.command.maxLength).toBe(
+      MAX_CLI_MCP_INPUT_CHARS
+    );
+    expect(execSchema.properties.args.maxItems).toBe(MAX_CLI_MCP_COMMAND_ARGS);
+    expect(settings.maxOutputChars).toBe(MAX_CLI_MCP_OUTPUT_CHARS);
+    expect(settings.maxScreenshotBytes).toBe(MAX_CLI_MCP_SCREENSHOT_BYTES);
+    expect(settings.maxScreenshotPixels).toBe(MAX_CLI_MCP_SCREENSHOT_PIXELS);
+    expect(settings.maxQueuedOperations).toBe(MAX_CLI_MCP_QUEUED_OPERATIONS);
   });
 
   it('rejects sparse browser command argument arrays', async () => {
