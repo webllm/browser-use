@@ -5,6 +5,8 @@ import type { BaseEvent } from '../agent/cloud-events.js';
 import { DeviceAuthClient, TEMP_USER_ID } from './auth.js';
 
 const logger = createLogger('browser_use.sync');
+export const MAX_SYNC_EVENT_RESPONSE_BYTES = 1024 * 1024;
+export const MAX_SYNC_EVENT_REQUEST_BYTES = 80 * 1024 * 1024;
 
 const stripTrailingSlash = (input: string) => input.replace(/\/+$/, '');
 
@@ -102,7 +104,13 @@ export class CloudSync {
             device_id: (entry as any).device_id ?? this.auth_client.device_id,
           })),
         },
-        { headers, timeout: 10_000, maxRedirects: 0 }
+        {
+          headers,
+          timeout: 10_000,
+          maxRedirects: 0,
+          maxContentLength: MAX_SYNC_EVENT_RESPONSE_BYTES,
+          maxBodyLength: MAX_SYNC_EVENT_REQUEST_BYTES,
+        }
       );
     } catch (error: any) {
       const status = error?.response?.status;

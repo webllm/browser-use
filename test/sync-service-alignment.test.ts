@@ -10,7 +10,11 @@ vi.mock('axios', () => ({
   },
 }));
 
-import { CloudSync } from '../src/sync/service.js';
+import {
+  CloudSync,
+  MAX_SYNC_EVENT_REQUEST_BYTES,
+  MAX_SYNC_EVENT_RESPONSE_BYTES,
+} from '../src/sync/service.js';
 import { TEMP_USER_ID } from '../src/sync/auth.js';
 
 describe('CloudSync alignment', () => {
@@ -57,6 +61,8 @@ describe('CloudSync alignment', () => {
     expect(payload.events[0].user_id).toBe(TEMP_USER_ID);
     expect(axiosPostMock.mock.calls[0]?.[2]).toMatchObject({
       maxRedirects: 0,
+      maxContentLength: MAX_SYNC_EVENT_RESPONSE_BYTES,
+      maxBodyLength: MAX_SYNC_EVENT_REQUEST_BYTES,
     });
   });
 
