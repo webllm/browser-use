@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { chromium, type Browser, type Page } from 'playwright';
 import {
   extractBoundedPageHtml,
   MAX_MAIN_PAGE_HTML_CHARS,
@@ -6,6 +7,18 @@ import {
 } from '../src/browser/page-content.js';
 
 describe('bounded page HTML extraction', () => {
+  let browser: Browser;
+  let page: Page;
+
+  beforeAll(async () => {
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage();
+  });
+
+  afterAll(async () => {
+    await browser.close();
+  });
+
   it('uses the bounded page-context serializer instead of content()', async () => {
     const content = vi.fn(async () => 'secret'.repeat(1_000_000));
     const evaluate = vi.fn(async (_fn: unknown, limits: any) => ({
@@ -70,6 +83,24 @@ describe('bounded page HTML extraction', () => {
     );
     expect((evaluate.mock.calls[0]?.[1] as any).rootSelector).toHaveLength(
       MAX_PAGE_HTML_SELECTOR_CHARS
+    );
+  });
+
+  it('does not depend on or mutate a page-owned __name global', async () => {
+    await page.setContent('<main>Browser Use documentation</main>');
+    await page.evaluate(() => {
+      Object.defineProperty(globalThis, '__name', {
+        value: 42,
+        writable: false,
+        configurable: false,
+      });
+    });
+
+    const result = await extractBoundedPageHtml(page, 10_000);
+
+    expect(result.html).toContain('Browser Use documentation');
+    await expect(page.evaluate(() => (globalThis as any).__name)).resolves.toBe(
+      42
     );
   });
 });

@@ -54,45 +54,37 @@ export const extractBoundedPageHtml = async (
         escapeChunkChars: number;
         rootSelector: string | null;
       }) => {
-        // esbuild can preserve inner function names with a free `__name`
-        // helper. Playwright serializes this callback without module helpers,
-        // so provide that no-op helper inside transformed dev/test builds.
-        const nameHelperOwner = globalThis as any;
-        const hadNameHelper = Object.prototype.hasOwnProperty.call(
-          nameHelperOwner,
-          '__name'
-        );
-        const previousNameHelper = nameHelperOwner.__name;
-        nameHelperOwner.__name = (target: unknown) => target;
-        try {
-          const output: string[] = [];
-          let remainingChars = maxOutputChars;
-          let visitedNodes = 0;
-          let truncated = false;
-          const skippedTags = new Set([
-            'script',
-            'style',
-            'noscript',
-            'template',
-          ]);
-          const voidTags = new Set([
-            'area',
-            'base',
-            'br',
-            'col',
-            'embed',
-            'hr',
-            'img',
-            'input',
-            'link',
-            'meta',
-            'param',
-            'source',
-            'track',
-            'wbr',
-          ]);
+        const output: string[] = [];
+        let remainingChars = maxOutputChars;
+        let visitedNodes = 0;
+        let truncated = false;
+        const skippedTags = new Set([
+          'script',
+          'style',
+          'noscript',
+          'template',
+        ]);
+        const voidTags = new Set([
+          'area',
+          'base',
+          'br',
+          'col',
+          'embed',
+          'hr',
+          'img',
+          'input',
+          'link',
+          'meta',
+          'param',
+          'source',
+          'track',
+          'wbr',
+        ]);
 
-          const append = (value: string) => {
+        // Array destructuring prevents esbuild's keepNames transform from
+        // introducing a free `__name` helper into this serialized callback.
+        const [append] = [
+          (value: string) => {
             if (!value || remainingChars <= 0) {
               if (value) truncated = true;
               return;
@@ -101,8 +93,10 @@ export const extractBoundedPageHtml = async (
             output.push(bounded);
             remainingChars -= bounded.length;
             if (bounded.length < value.length) truncated = true;
-          };
-          const appendEscaped = (
+          },
+        ];
+        const [appendEscaped] = [
+          (
             value: string,
             attribute: boolean,
             rawLimit = Number.POSITIVE_INFINITY
@@ -128,9 +122,11 @@ export const extractBoundedPageHtml = async (
               offset += chunk.length;
             }
             if (offset < value.length) truncated = true;
-          };
+          },
+        ];
 
-          const visit = (node: Node, depth: number): void => {
+        const [visit] = [
+          (node: Node, depth: number): void => {
             if (remainingChars <= 0 || visitedNodes >= maxNodes) {
               truncated = true;
               return;
@@ -175,23 +171,20 @@ export const extractBoundedPageHtml = async (
               }
               append(`</${tag}>`);
             }
-          };
+          },
+        ];
 
-          const root = rootSelector
-            ? document.querySelector(rootSelector)
-            : document.documentElement;
-          if (root) visit(root, 0);
-          return {
-            html: output.join(''),
-            truncated,
-            visitedNodes,
-            sourceUrl: window.location.href.slice(0, 16 * 1024),
-            rootFound: Boolean(root),
-          };
-        } finally {
-          if (hadNameHelper) nameHelperOwner.__name = previousNameHelper;
-          else delete nameHelperOwner.__name;
-        }
+        const root = rootSelector
+          ? document.querySelector(rootSelector)
+          : document.documentElement;
+        if (root) visit(root, 0);
+        return {
+          html: output.join(''),
+          truncated,
+          visitedNodes,
+          sourceUrl: window.location.href.slice(0, 16 * 1024),
+          rootFound: Boolean(root),
+        };
       },
       {
         maxOutputChars: boundedMaxChars,

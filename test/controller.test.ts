@@ -874,30 +874,45 @@ describe('Controller Integration Tests', () => {
     });
 
     it('runs find_elements through a real Playwright page in transformed source builds', async () => {
-      await page.setContent(`
-        <main>
-          <a data-kind="docs">Browser Use documentation</a>
-        </main>
-      `);
-      const controller = new Controller();
-      const browserSession = {
-        get_current_page: vi.fn(async () => page),
-        validate_page_after_action: vi.fn(async () => undefined),
-      };
+      const collisionPage = await browser.newPage();
+      try {
+        await collisionPage.setContent(`
+          <main>
+            <a data-kind="docs">Browser Use documentation</a>
+          </main>
+        `);
+        await collisionPage.evaluate(() => {
+          Object.defineProperty(globalThis, '__name', {
+            value: 42,
+            writable: false,
+            configurable: false,
+          });
+        });
+        const controller = new Controller();
+        const browserSession = {
+          get_current_page: vi.fn(async () => collisionPage),
+          validate_page_after_action: vi.fn(async () => undefined),
+        };
 
-      const result = await controller.registry.execute_action(
-        'find_elements',
-        {
-          selector: 'a',
-          attributes: ['data-kind'],
-          max_results: 1,
-          include_text: true,
-        },
-        { browser_session: browserSession as any }
-      );
+        const result = await controller.registry.execute_action(
+          'find_elements',
+          {
+            selector: 'a',
+            attributes: ['data-kind'],
+            max_results: 1,
+            include_text: true,
+          },
+          { browser_session: browserSession as any }
+        );
 
-      expect(result.extracted_content).toContain('Browser Use documentation');
-      expect(result.extracted_content).toContain('data-kind="docs"');
+        expect(result.extracted_content).toContain('Browser Use documentation');
+        expect(result.extracted_content).toContain('data-kind="docs"');
+        await expect(
+          collisionPage.evaluate(() => (globalThis as any).__name)
+        ).resolves.toBe(42);
+      } finally {
+        await collisionPage.close();
+      }
     });
 
     it('caps find_elements text-node traversal across all matched elements', async () => {

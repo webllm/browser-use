@@ -2420,33 +2420,24 @@ You will be given a query and the markdown of a webpage that has been filtered t
             maxTextNodesPerElement: number;
             maxTotalTextNodes: number;
           }) => {
-            // esbuild/tsx can preserve inner function names with a free
-            // `__name` helper. Playwright serializes this callback without
-            // module helpers, so install a scoped no-op before declaring the
-            // named helpers below.
-            const nameHelperOwner = globalThis as any;
-            const hadNameHelper = Object.prototype.hasOwnProperty.call(
-              nameHelperOwner,
-              '__name'
-            );
-            const previousNameHelper = nameHelperOwner.__name;
-            nameHelperOwner.__name = (target: unknown) => target;
+            let elements: NodeListOf<Element>;
             try {
-              let elements: NodeListOf<Element>;
-              try {
-                elements = document.querySelectorAll(selector);
-              } catch (error: unknown) {
-                return {
-                  error: `Invalid selector: ${String(error).slice(0, 500)}`,
-                  elements: [],
-                  total: 0,
-                };
-              }
+              elements = document.querySelectorAll(selector);
+            } catch (error: unknown) {
+              return {
+                error: `Invalid selector: ${String(error).slice(0, 500)}`,
+                elements: [],
+                total: 0,
+              };
+            }
 
-              let remainingPayloadChars = Math.max(0, maxPayloadChars);
-              let remainingTextNodes = Math.max(0, maxTotalTextNodes);
-              let contentTruncated = false;
-              const takeText = (value: string, limit: number) => {
+            let remainingPayloadChars = Math.max(0, maxPayloadChars);
+            let remainingTextNodes = Math.max(0, maxTotalTextNodes);
+            let contentTruncated = false;
+            // Array destructuring prevents esbuild's keepNames transform from
+            // introducing a free `__name` helper into this serialized callback.
+            const [takeText] = [
+              (value: string, limit: number) => {
                 const allowed = Math.max(
                   0,
                   Math.min(limit, remainingPayloadChars)
@@ -2455,8 +2446,10 @@ You will be given a query and the markdown of a webpage that has been filtered t
                 remainingPayloadChars -= result.length;
                 if (result.length < value.length) contentTruncated = true;
                 return result;
-              };
-              const boundedElementText = (element: Element) => {
+              },
+            ];
+            const [boundedElementText] = [
+              (element: Element) => {
                 const chunks: string[] = [];
                 let remaining = Math.min(maxTextChars, remainingPayloadChars);
                 const walker = document.createTreeWalker(
@@ -2500,59 +2493,56 @@ You will be given a query and the markdown of a webpage that has been filtered t
                   chunks.join(' ').replace(/\s+/g, ' ').trim(),
                   maxTextChars
                 );
-              };
+              },
+            ];
 
-              const requestedCount = Math.min(
-                Math.max(1, maxResults),
-                elements.length
-              );
-              const payload = [] as Array<{
-                index: number;
-                tag: string;
-                text: string;
-                attributes: Record<string, string>;
-              }>;
-              for (let idx = 0; idx < requestedCount; idx += 1) {
-                if (remainingPayloadChars <= 0) {
-                  contentTruncated = true;
-                  break;
-                }
-                const el = elements.item(idx);
-                if (!el) continue;
-                const attrs: Record<string, string> = {};
-                if (attributes?.length) {
-                  for (const attr of attributes) {
-                    if (remainingPayloadChars <= 0) {
-                      contentTruncated = true;
-                      break;
-                    }
-                    const value = el.getAttribute(attr);
-                    if (value != null) {
-                      attrs[takeText(attr, 256)] = takeText(
-                        value,
-                        maxAttributeChars
-                      );
-                    }
+            const requestedCount = Math.min(
+              Math.max(1, maxResults),
+              elements.length
+            );
+            const payload = [] as Array<{
+              index: number;
+              tag: string;
+              text: string;
+              attributes: Record<string, string>;
+            }>;
+            for (let idx = 0; idx < requestedCount; idx += 1) {
+              if (remainingPayloadChars <= 0) {
+                contentTruncated = true;
+                break;
+              }
+              const el = elements.item(idx);
+              if (!el) continue;
+              const attrs: Record<string, string> = {};
+              if (attributes?.length) {
+                for (const attr of attributes) {
+                  if (remainingPayloadChars <= 0) {
+                    contentTruncated = true;
+                    break;
+                  }
+                  const value = el.getAttribute(attr);
+                  if (value != null) {
+                    attrs[takeText(attr, 256)] = takeText(
+                      value,
+                      maxAttributeChars
+                    );
                   }
                 }
-                payload.push({
-                  index: idx + 1,
-                  tag: el.tagName.toLowerCase(),
-                  text: includeText ? boundedElementText(el) : '',
-                  attributes: attrs,
-                });
               }
-
-              return {
-                elements: payload,
-                total: elements.length,
-                truncated: elements.length > payload.length,
-                contentTruncated,
-              };
-            } finally {
-              if (hadNameHelper) nameHelperOwner.__name = previousNameHelper;
-              else delete nameHelperOwner.__name;
+              payload.push({
+                index: idx + 1,
+                tag: el.tagName.toLowerCase(),
+                text: includeText ? boundedElementText(el) : '',
+                attributes: attrs,
+              });
             }
+
+            return {
+              elements: payload,
+              total: elements.length,
+              truncated: elements.length > payload.length,
+              contentTruncated,
+            };
           },
           {
             selector: params.selector,
