@@ -1700,6 +1700,39 @@ esac
     expect((session as any)._getPageLoadingStatus(activePage)).toBeNull();
   });
 
+  it('refreshes readiness state when browser-page synchronization replaces the active page', () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const oldPage = {
+      url: vi.fn(() => 'https://example.com/old'),
+      on: vi.fn(),
+    } as any;
+    const replacementPage = {
+      url: vi.fn(() => 'https://example.com/replacement'),
+      on: vi.fn(),
+    } as any;
+
+    session.update_current_page(oldPage, 'Old page', 'https://example.com/old');
+    (session as any)._setPageLoadingStatus(
+      oldPage,
+      'document',
+      'OLD PAGE TIMEOUT'
+    );
+    session.browser_context = {
+      pages: () => [replacementPage],
+    } as any;
+
+    (session as any)._syncTabsWithBrowserPages();
+
+    expect(session.agent_current_page).toBe(replacementPage);
+    expect((session as any).currentPageLoadingStatus).toBeNull();
+    expect((session as any)._getPageLoadingStatus(oldPage)).toBe(
+      'OLD PAGE TIMEOUT'
+    );
+    expect((session as any)._getPageLoadingStatus(replacementPage)).toBeNull();
+  });
+
   it('exposes DOM readiness timeouts through loading_status', async () => {
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({}),

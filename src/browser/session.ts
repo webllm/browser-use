@@ -1049,15 +1049,20 @@ export class BrowserSession {
     }
   }
 
+  private _assignAgentCurrentPage(page: Page | null) {
+    const nextPage = page ?? null;
+    this._attachDialogHandler(nextPage);
+    this.agent_current_page = nextPage;
+    this.currentPageLoadingStatus = this._getPageLoadingStatus(nextPage);
+  }
+
   private _setActivePage(page: Page | null) {
     const currentTab = this._tabs[this.currentTabIndex];
     if (currentTab) {
       this.tabPages.set(currentTab.page_id, page ?? null);
       this.session_manager.set_focused_target(currentTab.target_id ?? null);
     }
-    this._attachDialogHandler(page);
-    this.agent_current_page = page ?? null;
-    this.currentPageLoadingStatus = this._getPageLoadingStatus(page);
+    this._assignAgentCurrentPage(page);
   }
 
   private async _syncCurrentTabFromPage(page: Page | null) {
@@ -1184,7 +1189,9 @@ export class BrowserSession {
       this.currentTitle = boundBrowserStateTitle(
         activeTab.title || activeTab.url
       );
-      this.agent_current_page = this.tabPages.get(activeTab.page_id) ?? null;
+      this._assignAgentCurrentPage(
+        this.tabPages.get(activeTab.page_id) ?? null
+      );
       this.human_current_page =
         this.human_current_page ?? this.agent_current_page;
     }
@@ -2195,7 +2202,7 @@ export class BrowserSession {
     preferredTabIndex: number
   ) {
     if (!this.browser_context) {
-      this.agent_current_page = null;
+      this._assignAgentCurrentPage(null);
       this.human_current_page = null;
       return;
     }
@@ -2209,7 +2216,7 @@ export class BrowserSession {
     }
 
     this.tabPages = new Map();
-    this.agent_current_page = null;
+    this._assignAgentCurrentPage(null);
     this.human_current_page = null;
     this._syncTabsWithBrowserPages();
 
@@ -2292,7 +2299,7 @@ export class BrowserSession {
     this.pageLoadingStatuses = new WeakMap<Page, PageLoadingStatuses>();
     this.browser = null;
     this.browser_context = null;
-    this.agent_current_page = null;
+    this._assignAgentCurrentPage(null);
     this.human_current_page = null;
     this._dialogHandlersAttached = new WeakSet<Page>();
     this.session_manager.clear();
@@ -2693,11 +2700,11 @@ export class BrowserSession {
       }
       const pages = this.browser_context.pages();
       if (pages.length > 0) {
-        this.agent_current_page = pages[0] as any;
+        this._assignAgentCurrentPage(pages[0] as any);
         this.human_current_page = pages[0] as any;
       } else {
         const page = await this.browser_context.newPage();
-        this.agent_current_page = page as any;
+        this._assignAgentCurrentPage(page as any);
         this.human_current_page = page as any;
       }
 
@@ -2814,7 +2821,7 @@ export class BrowserSession {
 
     this.browser = null;
     this.browser_context = null;
-    this.agent_current_page = null;
+    this._assignAgentCurrentPage(null);
     this.human_current_page = null;
     this.browser_pid = null;
     this._browserLaunchToken = null;
@@ -8005,7 +8012,7 @@ export class BrowserSession {
 
       // Create new page directly to avoid circular dependency
       const newPage = await this.browser_context.newPage();
-      this.agent_current_page = newPage;
+      this._assignAgentCurrentPage(newPage);
 
       // Update human tab reference if there is no human tab yet
       if (!this.human_current_page || this.human_current_page.isClosed()) {
@@ -8049,7 +8056,7 @@ export class BrowserSession {
             // Ignore cleanup errors; the page was already reset best effort.
           }
           if (this.agent_current_page === newPage) {
-            this.agent_current_page = null;
+            this._assignAgentCurrentPage(null);
           }
           if (this.human_current_page === newPage) {
             this.human_current_page = null;
@@ -8080,7 +8087,7 @@ export class BrowserSession {
             `❌ Failed to close crashed page ${logUrl} via CDP: ${(error as Error).message} (something is very wrong or system is extremely overloaded)`
           );
         }
-        this.agent_current_page = null; // Clear reference to closed page
+        this._assignAgentCurrentPage(null); // Clear reference to closed page
         return false;
       }
     } catch (error) {
@@ -8117,7 +8124,7 @@ export class BrowserSession {
 
     // Create fresh page directly (avoid decorated methods to prevent circular dependency)
     const newPage = await this.browser_context.newPage();
-    this.agent_current_page = newPage;
+    this._assignAgentCurrentPage(newPage);
 
     // Update human tab reference if there is no human tab yet
     if (!this.human_current_page || this.human_current_page.isClosed()) {
@@ -8192,7 +8199,7 @@ export class BrowserSession {
 
       // Clear page references
       const blockedPage = this.agent_current_page;
-      this.agent_current_page = null;
+      this._assignAgentCurrentPage(null);
       if (blockedPage === this.human_current_page) {
         this.human_current_page = null;
       }
