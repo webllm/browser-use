@@ -953,10 +953,12 @@ describe('Controller Integration Tests', () => {
           </main>
         `);
         await fallbackPage.evaluate(() => {
+          (globalThis as any).__innerTextReads = 0;
           Object.defineProperty(document.body, 'innerText', {
             configurable: false,
             get() {
-              throw new Error('force bounded fallback');
+              (globalThis as any).__innerTextReads += 1;
+              return 'InjectedNeedle';
             },
           });
           Object.defineProperty(globalThis, '__name', {
@@ -991,6 +993,11 @@ describe('Controller Integration Tests', () => {
           { pattern: 'FallbackClosed' },
           { browser_session: browserSession as any }
         );
+        const injectedResult = await controller.registry.execute_action(
+          'search_page',
+          { pattern: 'InjectedNeedle' },
+          { browser_session: browserSession as any }
+        );
 
         expect(result.extracted_content).toContain(
           'Found 1 matches for "FallbackNeedle"'
@@ -1004,6 +1011,14 @@ describe('Controller Integration Tests', () => {
         expect(closedDetailsResult.extracted_content).toBe(
           'No matches found for "FallbackClosed".'
         );
+        expect(injectedResult.extracted_content).toBe(
+          'No matches found for "InjectedNeedle".'
+        );
+        expect(
+          await fallbackPage.evaluate(
+            () => (globalThis as any).__innerTextReads
+          )
+        ).toBe(0);
       } finally {
         await fallbackPage.close();
       }

@@ -2246,6 +2246,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
             if (
               !preflightNode &&
               rawInputChars <= maxNativeInputChars &&
+              !Object.prototype.hasOwnProperty.call(sourceNode, 'innerText') &&
               'innerText' in sourceNode
             ) {
               try {
