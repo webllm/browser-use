@@ -700,6 +700,8 @@ describe('skill-cli alignment', () => {
 
     expect(input.success).toBe(true);
     expect(inputSpy).toHaveBeenCalledWith(node, 'hello', { clear: false });
+    expect(input.data).toEqual({ input: 2, characters: 5, clear: false });
+    expect(JSON.stringify(input.data)).not.toContain('hello');
     expect(scroll.success).toBe(true);
     expect(scrollSpy).toHaveBeenCalledWith('up', 250);
     expect(back.success).toBe(true);
@@ -712,8 +714,11 @@ describe('skill-cli alignment', () => {
     expect(closeTabSpy).toHaveBeenCalledWith(session.active_tab?.target_id);
     expect(keys.success).toBe(true);
     expect(sendKeysSpy).toHaveBeenCalledWith('Control+a');
+    expect(keys.data).toEqual({ keys: true });
     expect(select.success).toBe(true);
     expect(selectSpy).toHaveBeenCalledWith(node, 'Option A');
+    expect(select.data).toEqual({ index: 2, selected: true });
+    expect(JSON.stringify(select.data)).not.toContain('Option A');
     expect(html.success).toBe(true);
     expect((html.data as any).html).toBe('<html></html>');
     expect(getPageHtmlSpy).toHaveBeenCalledTimes(1);

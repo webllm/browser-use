@@ -193,7 +193,8 @@ describe('skill-cli direct alignment', () => {
       expect(sendKeysSpy).toHaveBeenCalledWith('--remote');
       expect(localLauncher).toHaveBeenCalledTimes(1);
       expect(createBrowserSpy).not.toHaveBeenCalled();
-      expect(stdout.read()).toContain('Typed: --remote');
+      expect(stdout.read()).toContain('Typed 8 characters');
+      expect(stdout.read()).not.toContain('--remote');
       expect(stderr.read()).toBe('');
     } finally {
       clear_direct_state(stateFile);
@@ -1121,6 +1122,8 @@ describe('skill-cli direct alignment', () => {
       dblclick: vi.fn(async () => {}),
       click: vi.fn(async () => {}),
     };
+    const inputText = vi.fn(async () => {});
+    const sendKeys = vi.fn(async () => {});
     const session = {
       start: vi.fn(async () => {}),
       tabs: [{ target_id: 'target-1', url: 'https://example.com' }],
@@ -1132,6 +1135,8 @@ describe('skill-cli direct alignment', () => {
       select_dropdown_option: vi.fn(async () => ['Option A']),
       get_dom_element_by_index: vi.fn(async () => ({ index: 4 })),
       get_locate_element: vi.fn(async () => locator),
+      _input_text_element_node: inputText,
+      send_keys: sendKeys,
       get_current_page: vi.fn(async () => ({
         url: () => 'https://example.com',
         waitForFunction,
@@ -1177,6 +1182,22 @@ describe('skill-cli direct alignment', () => {
       ).toBe(0);
       expect(
         await run_direct_command(['select', '4', 'Option A'], {
+          state_file: stateFile,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          session_factory: () => session as any,
+        })
+      ).toBe(0);
+      expect(
+        await run_direct_command(['input', '4', 'super-secret-input'], {
+          state_file: stateFile,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          session_factory: () => session as any,
+        })
+      ).toBe(0);
+      expect(
+        await run_direct_command(['keys', 'super-secret-keys'], {
           state_file: stateFile,
           stdout: stdout.stream,
           stderr: stderr.stream,
@@ -1231,6 +1252,12 @@ describe('skill-cli direct alignment', () => {
         { index: 4 },
         'Option A'
       );
+      expect(inputText).toHaveBeenCalledWith(
+        { index: 4 },
+        'super-secret-input',
+        { clear: true }
+      );
+      expect(sendKeys).toHaveBeenCalledWith('super-secret-keys');
       expect(session.wait_for_element).toHaveBeenCalledWith('#app', 2500);
       expect(waitForFunction).toHaveBeenCalledTimes(1);
       expect(locator.hover).toHaveBeenCalledWith({ timeout: 5000 });
@@ -1240,6 +1267,8 @@ describe('skill-cli direct alignment', () => {
         timeout: 5000,
       });
       expect(session.validate_page_after_action).toHaveBeenCalledTimes(4);
+      expect(stdout.read()).not.toContain('Option A');
+      expect(stdout.read()).not.toContain('super-secret');
       expect(stderr.read()).toBe('');
     } finally {
       clear_direct_state(stateFile);

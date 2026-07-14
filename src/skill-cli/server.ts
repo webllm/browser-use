@@ -328,7 +328,7 @@ export class SkillCliServer {
     if (action === 'type') {
       const text = String(params.text ?? '');
       await browser_session.send_keys(text);
-      return { typed: text };
+      return { typed: true, characters: text.length };
     }
 
     if (action === 'input') {
@@ -342,7 +342,11 @@ export class SkillCliServer {
       const text = String(params.text ?? '');
       const clear = typeof params.clear === 'boolean' ? params.clear : true;
       await browser_session._input_text_element_node(node, text, { clear });
-      return { input: Number(params.index), text, clear };
+      return {
+        input: Number(params.index),
+        characters: text.length,
+        clear,
+      };
     }
 
     if (action === 'state') {
@@ -469,7 +473,7 @@ export class SkillCliServer {
         throw new Error('Missing keys');
       }
       await browser_session.send_keys(keys);
-      return { keys };
+      return { keys: true };
     }
 
     if (action === 'select') {
@@ -484,14 +488,10 @@ export class SkillCliServer {
       if (!value) {
         throw new Error('Missing value');
       }
-      const selected = await browser_session.select_dropdown_option(
-        node,
-        value
-      );
+      await browser_session.select_dropdown_option(node, value);
       return {
         index: Number(params.index),
-        value,
-        selected,
+        selected: true,
       };
     }
 

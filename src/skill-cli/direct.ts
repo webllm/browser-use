@@ -1146,7 +1146,7 @@ export const run_direct_command = async (
         throw new Error('Missing text');
       }
       await session.send_keys?.(text);
-      writeLine(environment.stdout, `Typed: ${text}`);
+      writeLine(environment.stdout, `Typed ${text.length} characters`);
     } else if (command === 'input') {
       const index = Number(args[1] ?? Number.NaN);
       const text = args.slice(2).join(' ').trim();
@@ -1155,7 +1155,10 @@ export const run_direct_command = async (
       }
       const { node } = await requireDirectNodeByIndex(session, String(index));
       await session._input_text_element_node?.(node, text, { clear: true });
-      writeLine(environment.stdout, `Typed "${text}" into element [${index}]`);
+      writeLine(
+        environment.stdout,
+        `Typed ${text.length} characters into element [${index}]`
+      );
     } else if (command === 'screenshot') {
       const screenshotArgs = args.slice(1);
       const fullPage = screenshotArgs.some(
@@ -1230,7 +1233,7 @@ export const run_direct_command = async (
         throw new Error('Missing keys');
       }
       await session.send_keys?.(keys);
-      writeLine(environment.stdout, `Sent keys: ${keys}`);
+      writeLine(environment.stdout, 'Sent key sequence');
     } else if (command === 'select') {
       const index = args[1];
       const value = args.slice(2).join(' ').trim();
@@ -1244,7 +1247,7 @@ export const run_direct_command = async (
       await session.select_dropdown_option?.(node, value);
       writeLine(
         environment.stdout,
-        `Selected "${value}" for element [${numericIndex}]`
+        `Selected option for element [${numericIndex}]`
       );
     } else if (command === 'wait') {
       const waitCommand = args[1] ?? '';
