@@ -146,6 +146,44 @@ describe('storage state watchdog alignment', () => {
     }
   });
 
+  it('retries auto-save after an atomic storage write fails', async () => {
+    const { tempDir, storagePath } = createTempStoragePath();
+    const originalRename = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, 'renameSync')
+      .mockImplementationOnce(() => {
+        throw new Error('simulated rename failure');
+      })
+      .mockImplementation(originalRename);
+    try {
+      const session = new BrowserSession({
+        profile: {
+          storage_state: storagePath,
+        },
+      });
+      const storageState = vi.fn(async () => ({
+        cookies: [{ name: 'sid', value: '123' }],
+        origins: [],
+      }));
+      session.browser_context = { storageState } as any;
+      const watchdog = new StorageStateWatchdog({ browser_session: session });
+      session.attach_watchdog(watchdog);
+
+      await expect(
+        session.event_bus.dispatch_or_throw(new SaveStorageStateEvent())
+      ).rejects.toThrow('failed with 1 error(s)');
+      expect(fs.existsSync(storagePath)).toBe(false);
+
+      await (watchdog as any)._checkAndAutoSave();
+
+      expect(fs.existsSync(storagePath)).toBe(true);
+      expect(storageState).toHaveBeenCalledTimes(3);
+    } finally {
+      renameSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('filters saved storage state by allowed_domains', async () => {
     const { tempDir, storagePath } = createTempStoragePath();
     try {

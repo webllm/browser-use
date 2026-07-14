@@ -134,7 +134,7 @@ export class StorageStateWatchdog extends BaseWatchdog {
       cookies: Array.isArray(normalized.cookies) ? normalized.cookies : [],
       origins: Array.isArray(normalized.origins) ? normalized.origins : [],
     });
-    this._lastSavedSnapshot = this._snapshotStorageState(snapshot);
+    const serializedSnapshot = this._snapshotStorageState(snapshot);
 
     const dirPath = path.dirname(targetPath);
     ensurePrivateDirectoryIfCreated(dirPath);
@@ -154,6 +154,7 @@ export class StorageStateWatchdog extends BaseWatchdog {
 
     fs.renameSync(tempPath, targetPath);
     chmodPrivateFile(targetPath);
+    this._lastSavedSnapshot = serializedSnapshot;
 
     await this.event_bus.dispatch(
       new StorageStateSavedEvent({
@@ -186,10 +187,6 @@ export class StorageStateWatchdog extends BaseWatchdog {
     const parsed = JSON.parse(raw) as StorageStatePayload;
     const cookies = Array.isArray(parsed.cookies) ? parsed.cookies : [];
     const origins = Array.isArray(parsed.origins) ? parsed.origins : [];
-    this._lastSavedSnapshot = this._snapshotStorageState({
-      cookies,
-      origins,
-    });
 
     const allowedCookies = this._filterCookies(cookies);
     if (
@@ -203,6 +200,10 @@ export class StorageStateWatchdog extends BaseWatchdog {
       origins.length > 0
         ? await this._applyOriginsStorage(origins as OriginState[])
         : 0;
+    this._lastSavedSnapshot = this._snapshotStorageState({
+      cookies,
+      origins,
+    });
 
     await this.event_bus.dispatch(
       new StorageStateLoadedEvent({
