@@ -230,6 +230,44 @@ describe('Codex auth store', () => {
     });
   });
 
+  it('does not follow an auth file swapped to a symlink after validation', async () => {
+    if (process.platform === 'win32') return;
+    const configDir = await makeTempDir();
+    const authPath = path.join(configDir, 'auth.json');
+    const targetPath = path.join(configDir, 'unrelated.json');
+    await fs.writeFile(authPath, '{}');
+    await fs.writeFile(
+      targetPath,
+      JSON.stringify({
+        version: 1,
+        providers: {
+          'openai-codex': {
+            tokens: {
+              access_token: 'must-not-load',
+              refresh_token: 'must-not-load',
+            },
+          },
+        },
+      })
+    );
+    const originalLstat = fs.lstat.bind(fs);
+    vi.spyOn(fs, 'lstat').mockImplementationOnce(async (filePath) => {
+      const stats = await originalLstat(filePath);
+      await fs.unlink(authPath);
+      await fs.symlink(targetPath, authPath);
+      return stats;
+    });
+
+    await expect(getCodexAuthStatus({ configDir })).resolves.toMatchObject({
+      authenticated: false,
+      error: {
+        code: 'codex_auth_store_invalid_file',
+        relogin_required: true,
+      },
+    });
+    expect(await fs.readFile(targetPath, 'utf8')).toContain('must-not-load');
+  });
+
   it('does not persist oversized Codex token state', async () => {
     const configDir = await makeTempDir();
 

@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -17,6 +17,7 @@ const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
 const MAX_CODEX_AUTH_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CODEX_AUTH_ERROR_BYTES = 64 * 1024;
 export const MAX_CODEX_AUTH_FILE_BYTES = 1024 * 1024;
+const CODEX_AUTH_READ_CHUNK_BYTES = 64 * 1024;
 
 export interface CodexTokens {
   access_token: string;
@@ -177,7 +178,7 @@ const readBoundedAuthFile = async (
   code: string
 ): Promise<string> => {
   const stats = await fs.lstat(filePath);
-  if (!stats.isFile()) {
+  if (stats.isSymbolicLink() || !stats.isFile()) {
     throw new CodexAuthError(`${label} is not a regular file.`, code, true);
   }
   if (stats.size > MAX_CODEX_AUTH_FILE_BYTES) {
@@ -187,15 +188,61 @@ const readBoundedAuthFile = async (
       true
     );
   }
-  const raw = await fs.readFile(filePath, 'utf-8');
-  if (Buffer.byteLength(raw, 'utf8') > MAX_CODEX_AUTH_FILE_BYTES) {
-    throw new CodexAuthError(
-      `${label} exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
-      code,
-      true
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fsConstants.O_NONBLOCK;
+  const noFollowFlag =
+    process.platform === 'win32' ? 0 : (fsConstants.O_NOFOLLOW ?? 0);
+  let handle: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    handle = await fs.open(
+      filePath,
+      fsConstants.O_RDONLY | nonBlockingFlag | noFollowFlag
     );
+  } catch (error) {
+    if (
+      ['ELOOP', 'ENXIO'].includes((error as NodeJS.ErrnoException).code ?? '')
+    ) {
+      throw new CodexAuthError(`${label} is not a regular file.`, code, true);
+    }
+    throw error;
   }
-  return raw;
+
+  try {
+    const openedStats = await handle.stat();
+    if (!openedStats.isFile()) {
+      throw new CodexAuthError(`${label} is not a regular file.`, code, true);
+    }
+    if (openedStats.size > MAX_CODEX_AUTH_FILE_BYTES) {
+      throw new CodexAuthError(
+        `${label} exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
+        code,
+        true
+      );
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_CODEX_AUTH_FILE_BYTES) {
+      const remaining = MAX_CODEX_AUTH_FILE_BYTES + 1 - totalBytes;
+      const chunk = Buffer.allocUnsafe(
+        Math.min(CODEX_AUTH_READ_CHUNK_BYTES, remaining)
+      );
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      if (totalBytes > MAX_CODEX_AUTH_FILE_BYTES) {
+        throw new CodexAuthError(
+          `${label} exceeds ${MAX_CODEX_AUTH_FILE_BYTES} bytes.`,
+          code,
+          true
+        );
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    await handle.close();
+  }
 };
 
 const readStore = async (authStorePath: string): Promise<CodexAuthStore> => {
