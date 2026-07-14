@@ -229,6 +229,27 @@ describe('CliMCPServer', () => {
     expect(textFrom(result)).toContain('maximum pixel count of 4');
   });
 
+  it('rechecks the PNG byte limit after canvas resizing', async () => {
+    const compactTwoByTwoPng =
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACAQAAAABazTCJAAAADElEQVR42mNgYGAAAAAEAAHI6uv5AAAAAElFTkSuQmCC';
+    expect(Buffer.from(compactTwoByTwoPng, 'base64')).toHaveLength(69);
+    const runner = vi.fn(async (_argv: string[], options: any) => {
+      options.stdout.write(JSON.stringify({ screenshot: compactTwoByTwoPng }));
+      return 0;
+    });
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxScreenshotBytes: 80,
+    });
+
+    const result = await server.callTool('browser_screenshot', { max_dim: 1 });
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).toContain(
+      'maximum encoded size of 80 bytes after resizing'
+    );
+  });
+
   it('routes in-memory screenshot requests to the bounded screenshot tool', async () => {
     const runner = vi.fn(async () => 0);
     const server = new CliMCPServer('test', '1.0.0', {

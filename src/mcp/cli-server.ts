@@ -440,7 +440,13 @@ export class CliMCPServer {
     const height = Math.max(1, Math.round(image.height * scale));
     const canvas = createCanvas(width, height);
     canvas.getContext('2d').drawImage(image, 0, 0, width, height);
-    return canvas.toBuffer('image/png').toString('base64');
+    const resized = canvas.toBuffer('image/png');
+    if (resized.length > this.maxScreenshotBytes) {
+      throw new Error(
+        `Screenshot exceeds maximum encoded size of ${this.maxScreenshotBytes} bytes after resizing`
+      );
+    }
+    return resized.toString('base64');
   }
 
   private redirectConsoleToStderr(): () => void {
