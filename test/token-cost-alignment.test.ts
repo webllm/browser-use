@@ -101,6 +101,69 @@ describe('TokenCost alignment', () => {
     expect(cost?.prompt_cache_creation_cost).toBeCloseTo(0.00003);
   });
 
+  it('keeps malformed usage and pricing from corrupting cost totals', async () => {
+    const tokenCost = new TokenCost(true);
+    const malformedUsage = {
+      prompt_tokens: 10,
+      prompt_cached_tokens: 20,
+      prompt_cache_creation_tokens: -1,
+      prompt_cache_creation_5m_tokens: Number.POSITIVE_INFINITY,
+      prompt_cache_creation_1h_tokens: null,
+      prompt_image_tokens: null,
+      completion_tokens: Number.NaN,
+      total_tokens: Number.NaN,
+      pricing_multiplier: Number.POSITIVE_INFINITY,
+    };
+
+    const cost = await tokenCost.calculateCost(
+      'claude-sonnet-4-6',
+      malformedUsage
+    );
+    tokenCost.addUsage('claude-sonnet-4-6', malformedUsage);
+    const summary = await tokenCost.get_usage_summary();
+
+    expect(cost).toMatchObject({
+      new_prompt_tokens: 10,
+      new_prompt_cost: 0,
+      prompt_read_cached_tokens: 10,
+      completion_tokens: 0,
+      completion_cost: 0,
+    });
+    expect(cost?.prompt_read_cached_cost).toBeCloseTo(0.000003);
+    expect(cost?.prompt_cache_creation_cost).toBeNull();
+    expect(summary.total_tokens).toBe(10);
+    expect(summary.total_cost).toBeCloseTo(0.000003);
+    expect(Number.isFinite(summary.total_cost)).toBe(true);
+
+    (tokenCost as any).pricingData = {
+      'malformed-model': {
+        input_cost_per_token: -1,
+        output_cost_per_token: Number.POSITIVE_INFINITY,
+        cache_read_input_token_cost: Number.NaN,
+        cache_creation_input_token_cost: -1,
+        cache_creation_1h_input_token_cost: Number.POSITIVE_INFINITY,
+        max_tokens: null,
+        max_input_tokens: null,
+        max_output_tokens: null,
+      },
+    };
+    const malformedPricingCost = await tokenCost.calculateCost(
+      'malformed-model',
+      {
+        prompt_tokens: 10,
+        prompt_cached_tokens: 2,
+        prompt_cache_creation_tokens: 2,
+        prompt_image_tokens: null,
+        completion_tokens: 4,
+        total_tokens: 14,
+      }
+    );
+    expect(malformedPricingCost?.new_prompt_cost).toBe(0);
+    expect(malformedPricingCost?.prompt_read_cached_cost).toBeNull();
+    expect(malformedPricingCost?.prompt_cache_creation_cost).toBeNull();
+    expect(malformedPricingCost?.completion_cost).toBe(0);
+  });
+
   it('prices provider-prefixed gateway Claude ids without a metadata fetch', async () => {
     const tokenCost = new TokenCost(true);
     const pricing = await tokenCost.getModelPricing(

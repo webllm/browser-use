@@ -138,6 +138,42 @@ describe('ChatBrowserUse alignment', () => {
     });
   });
 
+  it('rejects malformed gateway usage values at the provider boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createFetchResponse(200, {
+        completion: 'gateway response',
+        usage: {
+          prompt_tokens: 'not-a-number',
+          prompt_cached_tokens: -1,
+          prompt_cache_creation_tokens: 'Infinity',
+          prompt_cache_creation_5m_tokens: -2,
+          prompt_cache_creation_1h_tokens: 3.5,
+          prompt_image_tokens: false,
+          completion_tokens: Number.MAX_SAFE_INTEGER + 1,
+          total_tokens: -1,
+          pricing_multiplier: 0,
+        },
+      })
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+    });
+
+    const result = await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(result.usage).toEqual({
+      prompt_tokens: 0,
+      prompt_cached_tokens: null,
+      prompt_cache_creation_tokens: null,
+      prompt_cache_creation_5m_tokens: null,
+      prompt_cache_creation_1h_tokens: null,
+      prompt_image_tokens: null,
+      completion_tokens: 0,
+      total_tokens: 0,
+      pricing_multiplier: null,
+    });
+  });
+
   it('returns partial text but rejects truncated structured output', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       createFetchResponse(200, {

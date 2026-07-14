@@ -5,7 +5,10 @@ import axios from 'axios';
 import { CONFIG } from '../config.js';
 import { createLogger } from '../logging-config.js';
 import type { BaseChatModel } from '../llm/base.js';
-import type { ChatInvokeUsage } from '../llm/views.js';
+import {
+  type ChatInvokeUsage,
+  normalizeChatInvokeUsage,
+} from '../llm/views.js';
 import { create_task_with_error_handling } from '../utils.js';
 import {
   CachedPricingData,
@@ -111,6 +114,12 @@ const usagePromptCost = (cost: TokenCostCalculated | null) => {
     (cost.prompt_cache_creation_cost ?? 0)
   );
 };
+
+const nonNegativeFinite = (value: number | null | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+
+const finiteCost = (value: number) =>
+  Number.isFinite(value) && value >= 0 ? value : 0;
 
 export class TokenCost {
   private includeCost: boolean;
@@ -233,7 +242,7 @@ export class TokenCost {
     const entry: TokenUsageEntry = {
       model,
       timestamp: new Date(),
-      usage,
+      usage: normalizeChatInvokeUsage(usage),
     };
     this.usageHistory.push(entry);
     return entry;
@@ -338,7 +347,7 @@ export class TokenCost {
 
   public async calculateCost(
     model: string,
-    usage: ChatInvokeUsage
+    rawUsage: ChatInvokeUsage
   ): Promise<TokenCostCalculated | null> {
     if (!this.includeCost) {
       return null;
@@ -347,49 +356,57 @@ export class TokenCost {
     if (!pricing) {
       return null;
     }
+    const usage = normalizeChatInvokeUsage(rawUsage);
     const cached = usage.prompt_cached_tokens ?? 0;
     const uncachedPrompt = usage.prompt_tokens - cached;
     const pricingMultiplier = usage.pricing_multiplier ?? 1;
+    const inputCost = nonNegativeFinite(pricing.input_cost_per_token);
+    const outputCost = nonNegativeFinite(pricing.output_cost_per_token);
+    const cacheReadCost = nonNegativeFinite(
+      pricing.cache_read_input_token_cost
+    );
+    const cacheCreationCost = nonNegativeFinite(
+      pricing.cache_creation_input_token_cost
+    );
+    const rawCacheCreation1hCost = pricing.cache_creation_1h_input_token_cost;
+    const cacheCreation1hCost =
+      typeof rawCacheCreation1hCost === 'number' &&
+      Number.isFinite(rawCacheCreation1hCost) &&
+      rawCacheCreation1hCost >= 0
+        ? rawCacheCreation1hCost
+        : null;
     const cacheCreation5m = usage.prompt_cache_creation_5m_tokens;
     const cacheCreation1h = usage.prompt_cache_creation_1h_tokens;
     let promptCacheCreationCost: number | null;
     if (cacheCreation5m != null || cacheCreation1h != null) {
       promptCacheCreationCost =
-        (cacheCreation5m ?? 0) *
-          (pricing.cache_creation_input_token_cost ?? 0) +
-        (cacheCreation1h ?? 0) *
-          (pricing.cache_creation_1h_input_token_cost ??
-            pricing.cache_creation_input_token_cost ??
-            0);
+        (cacheCreation5m ?? 0) * cacheCreationCost +
+        (cacheCreation1h ?? 0) * (cacheCreation1hCost ?? cacheCreationCost);
     } else {
       promptCacheCreationCost =
-        usage.prompt_cache_creation_tokens &&
-        pricing.cache_creation_input_token_cost
-          ? usage.prompt_cache_creation_tokens *
-            pricing.cache_creation_input_token_cost
+        usage.prompt_cache_creation_tokens && cacheCreationCost
+          ? usage.prompt_cache_creation_tokens * cacheCreationCost
           : null;
     }
     return {
       new_prompt_tokens: usage.prompt_tokens,
-      new_prompt_cost:
-        uncachedPrompt *
-        (pricing.input_cost_per_token ?? 0) *
-        pricingMultiplier,
+      new_prompt_cost: finiteCost(
+        uncachedPrompt * inputCost * pricingMultiplier
+      ),
       prompt_read_cached_tokens: usage.prompt_cached_tokens ?? null,
       prompt_read_cached_cost:
-        cached && pricing.cache_read_input_token_cost
-          ? cached * pricing.cache_read_input_token_cost * pricingMultiplier
+        cached && cacheReadCost
+          ? finiteCost(cached * cacheReadCost * pricingMultiplier)
           : null,
       prompt_cached_creation_tokens: usage.prompt_cache_creation_tokens ?? null,
       prompt_cache_creation_cost:
         promptCacheCreationCost == null
           ? null
-          : promptCacheCreationCost * pricingMultiplier,
+          : finiteCost(promptCacheCreationCost * pricingMultiplier),
       completion_tokens: usage.completion_tokens,
-      completion_cost:
-        usage.completion_tokens *
-        (pricing.output_cost_per_token ?? 0) *
-        pricingMultiplier,
+      completion_cost: finiteCost(
+        usage.completion_tokens * outputCost * pricingMultiplier
+      ),
     };
   }
 

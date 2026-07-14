@@ -12,7 +12,11 @@ import {
 } from '../exceptions.js';
 import type { Message } from '../messages.js';
 import { zodSchemaToJsonSchema } from '../schema.js';
-import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
+import {
+  ChatInvokeCompletion,
+  type ChatInvokeUsage,
+  normalizeChatInvokeUsage,
+} from '../views.js';
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const VALID_MODELS = new Set(['bu-latest', 'bu-1-0', 'bu-2-0']);
@@ -204,35 +208,7 @@ export class ChatBrowserUse implements BaseChatModel {
       return null;
     }
 
-    return {
-      prompt_tokens: Number(usage.prompt_tokens ?? 0) || 0,
-      prompt_cached_tokens:
-        usage.prompt_cached_tokens == null
-          ? null
-          : Number(usage.prompt_cached_tokens),
-      prompt_cache_creation_tokens:
-        usage.prompt_cache_creation_tokens == null
-          ? null
-          : Number(usage.prompt_cache_creation_tokens),
-      prompt_cache_creation_5m_tokens:
-        usage.prompt_cache_creation_5m_tokens == null
-          ? null
-          : Number(usage.prompt_cache_creation_5m_tokens),
-      prompt_cache_creation_1h_tokens:
-        usage.prompt_cache_creation_1h_tokens == null
-          ? null
-          : Number(usage.prompt_cache_creation_1h_tokens),
-      prompt_image_tokens:
-        usage.prompt_image_tokens == null
-          ? null
-          : Number(usage.prompt_image_tokens),
-      completion_tokens: Number(usage.completion_tokens ?? 0) || 0,
-      total_tokens: Number(usage.total_tokens ?? 0) || 0,
-      pricing_multiplier:
-        usage.pricing_multiplier == null
-          ? null
-          : Number(usage.pricing_multiplier),
-    };
+    return normalizeChatInvokeUsage(usage);
   }
 
   private raiseHttpError(statusCode: number, detail: string): never {
