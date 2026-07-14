@@ -6,6 +6,10 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
+import {
+  MAX_BROWSER_TIMER_DELAY_MS,
+  MAX_BROWSER_TIMER_DELAY_SECONDS,
+} from '../src/browser/timeouts.js';
 
 const importProfileModule = async () => {
   vi.resetModules();
@@ -55,6 +59,22 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
           [name]: value,
         })
     ).toThrow(`${name} must be a finite non-negative number`);
+  });
+
+  it.each([
+    ['timeout', MAX_BROWSER_TIMER_DELAY_MS + 1],
+    ['slow_mo', MAX_BROWSER_TIMER_DELAY_MS + 1],
+    ['maximum_wait_page_load_time', MAX_BROWSER_TIMER_DELAY_SECONDS + 1],
+  ])('rejects timer-overflowing %s values', async (name, value) => {
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(
+      () =>
+        new BrowserProfile({
+          downloads_path: os.tmpdir(),
+          [name]: value,
+        })
+    ).toThrow(`${name} must be no greater than`);
   });
 
   it('allows the all-elements viewport sentinel but rejects other negative expansions', async () => {

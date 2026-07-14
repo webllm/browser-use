@@ -23,6 +23,10 @@ import {
   extractExtensionArchive,
   writeLimitedExtensionStream,
 } from './extension-security.js';
+import {
+  MAX_BROWSER_TIMER_DELAY_MS,
+  MAX_BROWSER_TIMER_DELAY_SECONDS,
+} from './timeouts.js';
 
 const logger = createLogger('browser_use.browser.profile');
 
@@ -465,14 +469,17 @@ const validateViewportSize = (
 
 const validateOptionalNonNegativeNumber = (
   value: number | null,
-  name: string
+  name: string,
+  max = Number.MAX_VALUE
 ) => {
-  if (value !== null) {
-    try {
-      validate_float_range(value, 0, Number.MAX_VALUE);
-    } catch {
-      throw new Error(`${name} must be a finite non-negative number`);
-    }
+  if (value === null) {
+    return;
+  }
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a finite non-negative number`);
+  }
+  if (value > max) {
+    throw new Error(`${name} must be no greater than ${max}`);
   }
 };
 
@@ -496,12 +503,21 @@ const validateProfileNumericOptions = (options: BrowserProfileOptions) => {
     }
   }
 
+  validateOptionalNonNegativeNumber(
+    options.device_scale_factor,
+    'device_scale_factor'
+  );
+
   for (const [name, value] of [
-    ['device_scale_factor', options.device_scale_factor],
     ['slow_mo', options.slow_mo],
     ['timeout', options.timeout],
     ['default_navigation_timeout', options.default_navigation_timeout],
     ['default_timeout', options.default_timeout],
+  ] as const) {
+    validateOptionalNonNegativeNumber(value, name, MAX_BROWSER_TIMER_DELAY_MS);
+  }
+
+  for (const [name, value] of [
     ['minimum_wait_page_load_time', options.minimum_wait_page_load_time],
     [
       'wait_for_network_idle_page_load_time',
@@ -510,7 +526,11 @@ const validateProfileNumericOptions = (options: BrowserProfileOptions) => {
     ['maximum_wait_page_load_time', options.maximum_wait_page_load_time],
     ['wait_between_actions', options.wait_between_actions],
   ] as const) {
-    validateOptionalNonNegativeNumber(value, name);
+    validateOptionalNonNegativeNumber(
+      value,
+      name,
+      MAX_BROWSER_TIMER_DELAY_SECONDS
+    );
   }
 
   if (

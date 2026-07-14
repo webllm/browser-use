@@ -127,6 +127,10 @@ import { ScreenshotWatchdog } from './watchdogs/screenshot-watchdog.js';
 import { SecurityWatchdog } from './watchdogs/security-watchdog.js';
 import { StorageStateWatchdog } from './watchdogs/storage-state-watchdog.js';
 import type { BaseWatchdog } from './watchdogs/base.js';
+import {
+  MAX_BROWSER_TIMER_DELAY_MS,
+  MAX_BROWSER_TIMER_DELAY_SECONDS,
+} from './timeouts.js';
 
 const execFileAsync = promisify(execFile);
 const PLAYWRIGHT_OPTION_KEY_OVERRIDES: Record<string, string> = {
@@ -145,6 +149,40 @@ const REMOTE_RECONNECT_ATTEMPT_TIMEOUT_MS = 15_000;
 const requireFiniteBrowserActionNumber = (value: number, name: string) => {
   if (!Number.isFinite(value) || Math.abs(value) > Number.MAX_SAFE_INTEGER) {
     throw new BrowserError(`${name} must be a finite safe number`);
+  }
+  return value;
+};
+
+const requireBrowserTimeoutMs = (value: number, name: string) => {
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_BROWSER_TIMER_DELAY_MS
+  ) {
+    throw new BrowserError(
+      `${name} must be between 0 and ${MAX_BROWSER_TIMER_DELAY_MS} milliseconds`
+    );
+  }
+  return value;
+};
+
+const optionalBrowserTimeoutMs = (
+  value: number | null | undefined,
+  name: string
+) =>
+  value === null || value === undefined
+    ? null
+    : requireBrowserTimeoutMs(value, name);
+
+const requireBrowserTimeoutSeconds = (value: number, name: string) => {
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_BROWSER_TIMER_DELAY_SECONDS
+  ) {
+    throw new BrowserError(
+      `${name} must be between 0 and ${MAX_BROWSER_TIMER_DELAY_SECONDS} seconds`
+    );
   }
   return value;
 };
@@ -1545,9 +1583,7 @@ export class BrowserSession {
     }
 
     const timeoutMs =
-      Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-        ? timeoutSeconds * 1000
-        : this.RECONNECT_WAIT_TIMEOUT * 1000;
+      requireBrowserTimeoutSeconds(timeoutSeconds, 'reconnect timeout') * 1000;
 
     let timeoutHandle: NodeJS.Timeout | null = null;
     try {
@@ -1718,6 +1754,7 @@ export class BrowserSession {
     timeoutMs: number,
     signal: AbortSignal | null = null
   ) {
+    requireBrowserTimeoutMs(timeoutMs, 'wait timeout');
     if (timeoutMs <= 0) {
       this._throwIfAborted(signal);
       return;
@@ -3263,11 +3300,10 @@ export class BrowserSession {
     const normalized = normalize_url(url);
     let completedUrl = normalized;
     const waitUntil = options.wait_until ?? 'domcontentloaded';
-    const timeoutMs =
-      typeof options.timeout_ms === 'number' &&
-      Number.isFinite(options.timeout_ms)
-        ? Math.max(0, options.timeout_ms)
-        : null;
+    const timeoutMs = optionalBrowserTimeoutMs(
+      options.timeout_ms,
+      'navigation timeout'
+    );
     this._recordRecentEvent('navigation_started', { url: normalized });
     const page = await this._withAbort(this.get_current_page(), signal);
     if (page?.goto) {
@@ -3363,11 +3399,10 @@ export class BrowserSession {
     const normalized = normalize_url(url);
     let completedUrl = normalized;
     const waitUntil = options.wait_until ?? 'domcontentloaded';
-    const timeoutMs =
-      typeof options.timeout_ms === 'number' &&
-      Number.isFinite(options.timeout_ms)
-        ? Math.max(0, options.timeout_ms)
-        : null;
+    const timeoutMs = optionalBrowserTimeoutMs(
+      options.timeout_ms,
+      'navigation timeout'
+    );
     const previousTabIndex = this.currentTabIndex;
     const previousTab = this._tabs[this.currentTabIndex] ?? null;
     const newTab: TabInfo = this._createTabInfo({
@@ -3656,7 +3691,10 @@ export class BrowserSession {
   async wait(seconds: number, options: BrowserActionOptions = {}) {
     const signal = options.signal ?? null;
     this._throwIfAborted(signal);
-    const boundedSeconds = Math.max(Number(seconds) || 0, 0);
+    const boundedSeconds = requireBrowserTimeoutSeconds(
+      seconds,
+      'wait duration'
+    );
     const delayMs = boundedSeconds * 1000;
     if (delayMs <= 0) {
       return;
@@ -5813,13 +5851,20 @@ export class BrowserSession {
     selector: string,
     timeout: number = 10000
   ): Promise<void> {
+    const boundedTimeout = requireBrowserTimeoutMs(
+      timeout,
+      'element wait timeout'
+    );
     const page = await this.get_current_page();
     if (!page) {
       throw new Error('No page available');
     }
     await this.validate_page_after_action(page);
     try {
-      await page.waitForSelector(selector, { state: 'visible', timeout });
+      await page.waitForSelector(selector, {
+        state: 'visible',
+        timeout: boundedTimeout,
+      });
     } finally {
       await this.validate_page_after_action(page);
     }
@@ -6120,9 +6165,13 @@ export class BrowserSession {
     timeout: number = 5.0
   ): Promise<boolean> {
     try {
+      const boundedTimeout = requireBrowserTimeoutSeconds(
+        timeout,
+        'page responsiveness timeout'
+      );
       const evalPromise = page.evaluate('1');
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('timeout')), timeout * 1000);
+        setTimeout(() => reject(new Error('timeout')), boundedTimeout * 1000);
       });
 
       await Promise.race([evalPromise, timeoutPromise]);
@@ -8099,7 +8148,9 @@ export class BrowserSession {
     timeout: number = 5.0
   ): Promise<boolean> {
     try {
-      const timeoutMs = timeout * 1000;
+      const timeoutMs =
+        requireBrowserTimeoutSeconds(timeout, 'page responsiveness timeout') *
+        1000;
       await Promise.race([
         page.evaluate('1'),
         new Promise((_, reject) =>

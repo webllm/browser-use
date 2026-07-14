@@ -61,6 +61,10 @@ import { BrowserSession, systemChrome } from '../src/browser/session.js';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { DEFAULT_MAX_AUTO_DOWNLOAD_BYTES } from '../src/browser/download-limits.js';
 import {
+  MAX_BROWSER_TIMER_DELAY_MS,
+  MAX_BROWSER_TIMER_DELAY_SECONDS,
+} from '../src/browser/timeouts.js';
+import {
   MAX_STORAGE_STATE_FILE_BYTES,
   MAX_STORAGE_STATE_ORIGINS,
 } from '../src/browser/storage-state-limits.js';
@@ -2514,6 +2518,39 @@ esac
     expect(getPage).not.toHaveBeenCalled();
     expect(fakePage.mouse.click).not.toHaveBeenCalled();
     expect(fakePage.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('rejects timer-overflowing browser action timeouts', async () => {
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    const getPage = vi.spyOn(session, 'get_current_page');
+
+    await expect(session.wait(Infinity)).rejects.toThrow(
+      'wait duration must be between'
+    );
+    await expect(
+      session.wait(MAX_BROWSER_TIMER_DELAY_SECONDS + 1)
+    ).rejects.toThrow('wait duration must be between');
+    await expect(
+      session.wait_for_element('#ready', MAX_BROWSER_TIMER_DELAY_MS + 1)
+    ).rejects.toThrow('element wait timeout must be between');
+    await expect(
+      session.navigate_to('https://example.com', { timeout_ms: -1 })
+    ).rejects.toThrow('navigation timeout must be between');
+    await expect(
+      session.create_new_tab('https://example.com', {
+        timeout_ms: Infinity,
+      })
+    ).rejects.toThrow('navigation timeout must be between');
+
+    (session as any)._reconnecting = true;
+    await expect(
+      session.wait_for_reconnect(MAX_BROWSER_TIMER_DELAY_SECONDS + 1)
+    ).rejects.toThrow('reconnect timeout must be between');
+    (session as any)._reconnecting = false;
+
+    expect(getPage).not.toHaveBeenCalled();
   });
 
   it('switches tabs by 4-char tab_id aliases', async () => {
