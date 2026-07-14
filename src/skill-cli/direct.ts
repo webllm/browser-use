@@ -22,6 +22,10 @@ import {
 } from '../process-identity.js';
 import { formatDirectUsage, isDirectCommandName } from './direct-commands.js';
 import {
+  assertBoundedCookieImportFile,
+  parseBoundedCookieImport,
+} from './cookie-import.js';
+import {
   evaluateBoundedCliScript,
   readBoundedCliElementData,
 } from './page-inspection.js';
@@ -1466,11 +1470,9 @@ export const run_direct_command = async (
           throw new Error('Usage: cookies import <file>');
         }
         const inputPath = path.resolve(file);
+        assertBoundedCookieImportFile(fs.statSync(inputPath), inputPath);
         const raw = fs.readFileSync(inputPath, 'utf8');
-        const cookies = JSON.parse(raw) as unknown;
-        if (!Array.isArray(cookies)) {
-          throw new Error('Cookie import file must contain a JSON array');
-        }
+        const cookies = parseBoundedCookieImport(raw);
         const allowedCookies = filterDirectAllowedCookies(session, cookies);
         if (allowedCookies.length > 0) {
           await session.browser_context.addCookies(allowedCookies);

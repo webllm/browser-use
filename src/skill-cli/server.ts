@@ -9,6 +9,10 @@ import {
 } from '../browser/page-content.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
+  assertBoundedCookieImportFile,
+  parseBoundedCookieImport,
+} from './cookie-import.js';
+import {
   evaluateBoundedCliScript,
   readBoundedCliElementData,
 } from './page-inspection.js';
@@ -760,11 +764,9 @@ export class SkillCliServer {
         throw new Error('Browser context does not support importing cookies');
       }
       const filePath = path.resolve(file);
+      assertBoundedCookieImportFile(await fsp.stat(filePath), filePath);
       const raw = await fsp.readFile(filePath, 'utf8');
-      const cookies = JSON.parse(raw) as unknown;
-      if (!Array.isArray(cookies)) {
-        throw new Error('Cookie import file must contain a JSON array');
-      }
+      const cookies = parseBoundedCookieImport(raw);
       const importedCookies = cookies.map((cookie) => {
         if (!cookie || typeof cookie !== 'object') {
           throw new Error('Each imported cookie must be a JSON object');
