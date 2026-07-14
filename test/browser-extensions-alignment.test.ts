@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ReadableStream } from 'node:stream/web';
 import AdmZip from 'adm-zip';
 import { loadOrInstallExtension } from '../src/browser/extensions.js';
 import { MAX_EXTENSION_MANIFEST_BYTES } from '../src/browser/extension-security.js';
@@ -28,16 +27,7 @@ describe('Browser extension cache alignment', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({
-        ok: true,
-        statusText: 'OK',
-        body: new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(Buffer.from('not-a-zip'));
-            controller.close();
-          },
-        }),
-      })
+      vi.fn().mockResolvedValue(new Response('not-a-zip', { status: 200 }))
     );
 
     try {

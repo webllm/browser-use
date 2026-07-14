@@ -12,6 +12,7 @@ import { createLogger } from '../logging-config.js';
 import {
   assertExtensionContentLength,
   extractExtensionArchive,
+  fetchExtensionResponse,
   readExtensionManifest,
   redactExtensionUrl,
   writeLimitedExtensionStream,
@@ -93,7 +94,7 @@ async function downloadCrx(crxUrl: string, crxPath: string): Promise<boolean> {
       `[🛠️] Downloading extension from ${redactExtensionUrl(crxUrl)}...`
     );
 
-    const response = await fetch(crxUrl, {
+    const response = await fetchExtensionResponse(crxUrl, {
       signal: abortController.signal,
     });
     if (!response.ok || !response.body) {

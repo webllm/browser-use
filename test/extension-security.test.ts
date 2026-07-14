@@ -12,11 +12,77 @@ import {
   MAX_EXTENSION_UNCOMPRESSED_BYTES,
   assertExtensionContentLength,
   extractExtensionArchive,
+  fetchExtensionResponse,
   readExtensionManifest,
   writeLimitedExtensionStream,
 } from '../src/browser/extension-security.js';
 
 describe('extension download and extraction safety', () => {
+  it('follows only bounded HTTPS extension redirects', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://cdn.example/extension.crx' },
+        })
+      )
+      .mockResolvedValueOnce(new Response('archive', { status: 200 }));
+
+    await expect(
+      fetchExtensionResponse('https://store.example/download', {
+        fetchImpl: fetchImpl as typeof fetch,
+      })
+    ).resolves.toMatchObject({ status: 200 });
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      new URL('https://store.example/download'),
+      expect.objectContaining({ redirect: 'manual' })
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      new URL('https://cdn.example/extension.crx'),
+      expect.objectContaining({ redirect: 'manual' })
+    );
+
+    await expect(
+      fetchExtensionResponse('http://store.example/download', {
+        fetchImpl: fetchImpl as typeof fetch,
+      })
+    ).rejects.toThrow('must use HTTPS');
+
+    const downgradeFetch = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://cdn.example/extension.crx' },
+        })
+    );
+    await expect(
+      fetchExtensionResponse('https://store.example/download', {
+        fetchImpl: downgradeFetch as typeof fetch,
+      })
+    ).rejects.toThrow('must use HTTPS');
+  });
+
+  it('limits extension download redirect chains', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: '/next' },
+        })
+    );
+
+    await expect(
+      fetchExtensionResponse('https://store.example/download', {
+        fetchImpl: fetchImpl as typeof fetch,
+        maxRedirects: 0,
+      })
+    ).rejects.toThrow('Too many extension download redirects');
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it('rejects declared and streamed downloads above the byte limit', async () => {
     expect(() =>
       assertExtensionContentLength(String(MAX_EXTENSION_DOWNLOAD_BYTES + 1))

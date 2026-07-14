@@ -10,6 +10,7 @@ export const MAX_EXTENSION_ARCHIVE_ENTRIES = 10_000;
 export const MAX_EXTENSION_ENTRY_BYTES = 100 * 1024 * 1024;
 export const MAX_EXTENSION_UNCOMPRESSED_BYTES = 250 * 1024 * 1024;
 export const MAX_EXTENSION_MANIFEST_BYTES = 1024 * 1024;
+export const MAX_EXTENSION_DOWNLOAD_REDIRECTS = 5;
 const EXTENSION_MANIFEST_READ_CHUNK_BYTES = 64 * 1024;
 
 const chmodPrivate = async (targetPath: string, mode: number) => {
@@ -188,6 +189,53 @@ export const assertExtensionContentLength = (
     throw new Error(
       `Extension download exceeds ${MAX_EXTENSION_DOWNLOAD_BYTES} bytes`
     );
+  }
+};
+
+export const fetchExtensionResponse = async (
+  crxUrl: string,
+  options: {
+    fetchImpl?: typeof fetch;
+    signal?: AbortSignal;
+    maxRedirects?: number;
+  } = {}
+): Promise<Response> => {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const maxRedirects =
+    Number.isSafeInteger(options.maxRedirects) &&
+    Number(options.maxRedirects) >= 0
+      ? Number(options.maxRedirects)
+      : MAX_EXTENSION_DOWNLOAD_REDIRECTS;
+  let currentUrl = new URL(crxUrl);
+  let redirectCount = 0;
+
+  while (true) {
+    if (currentUrl.protocol !== 'https:') {
+      throw new Error('Extension downloads and redirects must use HTTPS');
+    }
+
+    const response = await fetchImpl(currentUrl, {
+      signal: options.signal,
+      redirect: 'manual',
+    });
+    if (response.status < 300 || response.status >= 400) {
+      return response;
+    }
+
+    try {
+      void response.body?.cancel().catch(() => undefined);
+    } catch {
+      // The redirect response is already being discarded.
+    }
+    if (redirectCount >= maxRedirects) {
+      throw new Error('Too many extension download redirects');
+    }
+    const location = response.headers.get('location');
+    if (!location) {
+      throw new Error('Extension download redirect is missing a location');
+    }
+    currentUrl = new URL(location, currentUrl);
+    redirectCount += 1;
   }
 };
 
