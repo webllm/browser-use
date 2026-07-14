@@ -149,7 +149,8 @@ const redactAgentValue = (agent: AgentReference, value: unknown): unknown => {
     if (typeof entry === 'string') {
       return redactSensitiveDataFromString(
         entry.slice(0, MAX_STRING_LENGTH),
-        agent.sensitive_data ?? null
+        agent.sensitive_data ?? null,
+        MAX_STRING_LENGTH
       ).slice(0, MAX_STRING_LENGTH);
     }
     if (typeof entry === 'bigint') {
@@ -209,7 +210,8 @@ const redactAgentValue = (agent: AgentReference, value: unknown): unknown => {
           }
           const key = redactSensitiveDataFromString(
             rawKey.slice(0, MAX_REDACTED_VALUE_KEY_LENGTH),
-            agent.sensitive_data ?? null
+            agent.sensitive_data ?? null,
+            MAX_REDACTED_VALUE_KEY_LENGTH
           ).slice(0, MAX_REDACTED_VALUE_KEY_LENGTH);
           remainingEntries -= 1;
           if (!key) continue;

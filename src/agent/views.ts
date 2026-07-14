@@ -31,42 +31,99 @@ export interface StructuredOutputParser<T = unknown> {
 
 type SensitiveDataMap = Record<string, string | Record<string, string>>;
 export const MAX_AGENT_HISTORY_FILE_BYTES = 64 * 1024 * 1024;
+export const MAX_REDACTED_TEXT_CHARS = 16 * 1024 * 1024;
+const MAX_SENSITIVE_PLACEHOLDERS = 1_024;
+const MAX_SENSITIVE_PATTERN_CHARS = 256 * 1024;
+const MAX_SENSITIVE_SECRET_CHARS = 64 * 1024;
+const MAX_SENSITIVE_KEY_CHARS = 256;
 const MAX_AGENT_HISTORY_VALUE_DEPTH = 100;
 const MAX_AGENT_HISTORY_VALUE_ENTRIES = 100_000;
 
 export const redactSensitiveDataFromString = (
   value: string,
-  sensitive_data: SensitiveDataMap | null
+  sensitive_data: SensitiveDataMap | null,
+  maxOutputChars = MAX_REDACTED_TEXT_CHARS
 ) => {
   if (!sensitive_data) {
     return value;
   }
 
-  const placeholders: Array<[key: string, secret: string]> = [];
+  const boundedMaxOutputChars =
+    Number.isFinite(maxOutputChars) && maxOutputChars >= 0
+      ? Math.floor(maxOutputChars)
+      : MAX_REDACTED_TEXT_CHARS;
+  const failClosed = () => '<redacted>'.slice(0, boundedMaxOutputChars);
+  const placeholders = new Map<string, string>();
+  let patternChars = 0;
+  const addPlaceholder = (rawKey: string, secret: string) => {
+    if (!secret || placeholders.has(secret)) return true;
+    if (
+      secret.length > MAX_SENSITIVE_SECRET_CHARS ||
+      placeholders.size >= MAX_SENSITIVE_PLACEHOLDERS ||
+      patternChars + secret.length > MAX_SENSITIVE_PATTERN_CHARS
+    ) {
+      return false;
+    }
+    const key = rawKey
+      .slice(0, MAX_SENSITIVE_KEY_CHARS)
+      .replace(/[^a-zA-Z0-9_.: -]/g, '_');
+    placeholders.set(secret, key || 'value');
+    patternChars += secret.length;
+    return true;
+  };
+
   for (const [keyOrDomain, content] of Object.entries(sensitive_data)) {
     if (typeof content === 'string' && content) {
-      placeholders.push([keyOrDomain, content]);
+      if (!addPlaceholder(keyOrDomain, content)) return failClosed();
     } else if (content && typeof content === 'object') {
       for (const [key, val] of Object.entries(content)) {
-        if (val) {
-          placeholders.push([key, val]);
+        if (typeof val === 'string' && val) {
+          if (!addPlaceholder(key, val)) return failClosed();
         }
       }
     }
   }
 
-  const entries = placeholders.sort(
-    ([, left], [, right]) => right.length - left.length
+  const entries = [...placeholders.entries()].sort(
+    ([left], [right]) => right.length - left.length
   );
   if (!entries.length) {
     return value;
   }
 
-  let filtered = value;
-  for (const [key, secret] of entries) {
-    filtered = filtered.split(secret).join(`<secret>${key}</secret>`);
+  let matcher: RegExp;
+  try {
+    matcher = new RegExp(
+      entries
+        .map(([secret]) => secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|'),
+      'g'
+    );
+  } catch {
+    return failClosed();
   }
-  return filtered;
+
+  const keysBySecret = new Map(entries);
+  const output: string[] = [];
+  let remaining = boundedMaxOutputChars;
+  let offset = 0;
+  const append = (chunk: string) => {
+    if (!chunk || remaining <= 0) return;
+    const bounded = chunk.slice(0, remaining);
+    output.push(bounded);
+    remaining -= bounded.length;
+  };
+
+  let match: RegExpExecArray | null;
+  while (remaining > 0 && (match = matcher.exec(value)) !== null) {
+    append(value.slice(offset, match.index));
+    if (remaining <= 0) break;
+    const key = keysBySecret.get(match[0]) ?? 'value';
+    append(`<secret>${key}</secret>`);
+    offset = match.index + match[0].length;
+  }
+  if (remaining > 0) append(value.slice(offset));
+  return output.join('');
 };
 
 const ensurePrivateDirectoryIfCreated = (dirPath: string) => {
@@ -789,7 +846,11 @@ export class AgentHistory {
     value: string,
     sensitive_data: SensitiveDataMap | null
   ) {
-    return redactSensitiveDataFromString(value, sensitive_data);
+    return redactSensitiveDataFromString(
+      value,
+      sensitive_data,
+      MAX_AGENT_HISTORY_FILE_BYTES
+    );
   }
 
   private static _filterSensitiveData<T>(

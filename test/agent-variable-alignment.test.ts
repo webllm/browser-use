@@ -221,6 +221,38 @@ describe('Agent variable alignment', () => {
     );
   });
 
+  it('does not reprocess placeholders inserted by an earlier secret match', () => {
+    expect(
+      redactSensitiveDataFromString('token=alpha-secret', {
+        a: 'alpha-secret',
+        marker: 'a',
+      })
+    ).toBe('token=<secret>a</secret>');
+  });
+
+  it('matches overlapping and regex-significant secrets literally', () => {
+    expect(
+      redactSensitiveDataFromString('first=a+b second=a+ tail=[x]', {
+        long: 'a+b',
+        short: 'a+',
+        brackets: '[x]',
+      })
+    ).toBe(
+      'first=<secret>long</secret> second=<secret>short</secret> tail=<secret>brackets</secret>'
+    );
+  });
+
+  it('caps redacted output expansion', () => {
+    const redacted = redactSensitiveDataFromString(
+      'a'.repeat(1_000),
+      { ['x'.repeat(256)]: 'a' },
+      100
+    );
+
+    expect(redacted).toHaveLength(100);
+    expect(redacted.startsWith('<secret>')).toBe(true);
+  });
+
   it('redacts sensitive values at arbitrary array nesting depth', () => {
     const history = new AgentHistoryList([
       new AgentHistory(
