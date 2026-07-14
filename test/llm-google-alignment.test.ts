@@ -355,6 +355,22 @@ describe('Google LLM alignment', () => {
     expect(response.completion).toBe('recovered');
   });
 
+  it.each([
+    ['non-finite retries', { maxRetries: Number.POSITIVE_INFINITY }],
+    ['fractional retries', { maxRetries: 1.5 }],
+    ['excessive retries', { maxRetries: 101 }],
+    ['negative retries', { maxRetries: -1 }],
+    ['non-finite base delay', { retryBaseDelay: Number.NaN }],
+    ['negative maximum delay', { retryMaxDelay: -1 }],
+    ['invalid retryable status code', { retryableStatusCodes: [429, 99] }],
+    [
+      'excessive retryable status codes',
+      { retryableStatusCodes: new Array(101).fill(500) },
+    ],
+  ])('rejects %s', (_label, options) => {
+    expect(() => new ChatGoogle(options)).toThrow();
+  });
+
   it('omits output_schema field from Gemini response schema', async () => {
     generateContentMock.mockResolvedValue(
       buildResult('{"query":"topic","value":"ok"}')

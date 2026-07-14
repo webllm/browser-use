@@ -15,6 +15,57 @@ import { GoogleMessageSerializer } from './serializer.js';
 import { get_browser_use_version } from '../../utils.js';
 import { createNoRedirectFetch } from '../http.js';
 
+const MAX_GOOGLE_RETRY_ATTEMPTS = 100;
+const MAX_GOOGLE_RETRY_DELAY_SECONDS = 2_147_483_647 / 1000;
+const MAX_GOOGLE_RETRYABLE_STATUS_CODES = 100;
+
+const requireGoogleRetryInteger = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be an integer between ${minimum} and ${maximum}`
+    );
+  }
+  return value;
+};
+
+const requireGoogleRetryDelay = (name: string, value: number) => {
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > MAX_GOOGLE_RETRY_DELAY_SECONDS
+  ) {
+    throw new RangeError(
+      `${name} must be a finite number between 0 and ${MAX_GOOGLE_RETRY_DELAY_SECONDS}`
+    );
+  }
+  return value;
+};
+
+const normalizeGoogleRetryableStatusCodes = (value: number[]) => {
+  if (!Array.isArray(value)) {
+    throw new TypeError('retryableStatusCodes must be an array');
+  }
+  if (value.length > MAX_GOOGLE_RETRYABLE_STATUS_CODES) {
+    throw new RangeError(
+      `retryableStatusCodes must contain at most ${MAX_GOOGLE_RETRYABLE_STATUS_CODES} items`
+    );
+  }
+  const normalized = value.map((statusCode, index) =>
+    requireGoogleRetryInteger(
+      `retryableStatusCodes[${index}]`,
+      statusCode,
+      100,
+      599
+    )
+  );
+  return [...new Set(normalized)];
+};
+
 export interface ChatGoogleOptions {
   model?: string;
   apiKey?: string;
@@ -137,10 +188,25 @@ export class ChatGoogle implements BaseChatModel {
     this.config = config ? { ...config } : null;
     this.includeSystemInUser = includeSystemInUser;
     this.supportsStructuredOutput = supportsStructuredOutput;
-    this.maxRetries = Math.max(1, maxRetries);
-    this.retryableStatusCodes = [...retryableStatusCodes];
-    this.retryBaseDelay = retryBaseDelay;
-    this.retryMaxDelay = retryMaxDelay;
+    this.maxRetries = Math.max(
+      1,
+      requireGoogleRetryInteger(
+        'maxRetries',
+        maxRetries,
+        0,
+        MAX_GOOGLE_RETRY_ATTEMPTS
+      )
+    );
+    this.retryableStatusCodes =
+      normalizeGoogleRetryableStatusCodes(retryableStatusCodes);
+    this.retryBaseDelay = requireGoogleRetryDelay(
+      'retryBaseDelay',
+      retryBaseDelay
+    );
+    this.retryMaxDelay = requireGoogleRetryDelay(
+      'retryMaxDelay',
+      retryMaxDelay
+    );
 
     const resolvedGoogleAuthOptions =
       credentials == null
