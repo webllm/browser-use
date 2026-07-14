@@ -339,19 +339,38 @@ export const save_direct_state = (
   state: DirectModeState,
   state_file: string = DIRECT_STATE_FILE
 ) => {
-  fs.mkdirSync(path.dirname(state_file), { recursive: true, mode: 0o700 });
+  const stateDir = path.dirname(state_file);
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   if (
     process.platform !== 'win32' &&
     path.resolve(state_file) === path.resolve(DIRECT_STATE_FILE)
   ) {
-    fs.chmodSync(path.dirname(state_file), 0o700);
+    fs.chmodSync(stateDir, 0o700);
   }
-  fs.writeFileSync(state_file, JSON.stringify(state, null, 2), {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
-  if (process.platform !== 'win32') {
-    fs.chmodSync(state_file, 0o600);
+
+  const tempPath = path.join(
+    stateDir,
+    `.${path.basename(state_file)}.${process.pid}.${randomUUID()}.tmp`
+  );
+  let renamed = false;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tempPath, 0o600);
+    }
+    fs.renameSync(tempPath, state_file);
+    renamed = true;
+    if (process.platform !== 'win32') {
+      fs.chmodSync(state_file, 0o600);
+    }
+  } finally {
+    if (!renamed) {
+      fs.rmSync(tempPath, { force: true });
+    }
   }
 };
 

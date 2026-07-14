@@ -77,6 +77,37 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('retains the previous direct-mode state when atomic replacement fails', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    save_direct_state(
+      { mode: 'local', cdp_url: 'http://127.0.0.1:9222' },
+      stateFile
+    );
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('replace failed');
+    });
+
+    try {
+      expect(() =>
+        save_direct_state(
+          { mode: 'local', cdp_url: 'http://127.0.0.1:9333' },
+          stateFile
+        )
+      ).toThrow('replace failed');
+      expect(load_direct_state(stateFile)).toMatchObject({
+        cdp_url: 'http://127.0.0.1:9222',
+      });
+      expect(fs.readdirSync(tempDir)).toEqual(['state.json']);
+    } finally {
+      renameSpy.mockRestore();
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects unregistered commands before launching or connecting', async () => {
     const stdout = createWritable();
     const stderr = createWritable();
