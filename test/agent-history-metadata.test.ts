@@ -104,6 +104,29 @@ describe('Agent history metadata alignment', () => {
     expect(loaded.final_result()).toBe('payload result');
   });
 
+  it('bounds screenshot reads while preserving history alignment', () => {
+    const readers: Array<ReturnType<typeof vi.fn>> = [];
+    const items = Array.from({ length: 105 }, () => {
+      const state = new BrowserStateHistory('', '', [], [], 'shot.png');
+      const reader = vi
+        .spyOn(state, 'get_screenshot')
+        .mockReturnValue('iVBORw0KGgo=');
+      readers.push(reader);
+      return new AgentHistory(null, [], state);
+    });
+
+    const screenshots = new AgentHistoryList(items).screenshots();
+
+    expect(screenshots).toHaveLength(105);
+    expect(screenshots.slice(0, 5)).toEqual(new Array(5).fill(null));
+    expect(
+      readers.slice(0, 5).every((reader) => reader.mock.calls.length === 0)
+    ).toBe(true);
+    expect(
+      readers.slice(5).every((reader) => reader.mock.calls.length === 1)
+    ).toBe(true);
+  });
+
   it('rejects oversized and non-regular history files', () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'agent-history-limits-')

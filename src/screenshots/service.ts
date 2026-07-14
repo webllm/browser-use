@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-
-const decodeBase64 = (data: string) => Buffer.from(data, 'base64');
+import { randomUUID } from 'node:crypto';
+import {
+  decodeBoundedScreenshotBase64,
+  readBoundedScreenshotFileSync,
+} from './file.js';
 
 const chmodPrivatePath = (targetPath: string, mode: number) => {
   if (process.platform === 'win32') {
@@ -34,12 +37,28 @@ export class ScreenshotService {
   }
 
   async store_screenshot(screenshot_b64: string, step_number: number) {
+    if (!Number.isSafeInteger(step_number) || step_number < 0) {
+      throw new RangeError(
+        'Screenshot step number must be a non-negative integer'
+      );
+    }
+    const screenshot = decodeBoundedScreenshotBase64(screenshot_b64);
     const filename = `step_${step_number}.png`;
     const filepath = path.join(this.screenshotsDir, filename);
-    await fs.promises.writeFile(filepath, decodeBase64(screenshot_b64), {
-      mode: 0o600,
-    });
-    await chmodPrivateFile(filepath);
+    const temporaryPath = path.join(
+      this.screenshotsDir,
+      `.${filename}.${process.pid}.${randomUUID()}.tmp`
+    );
+    try {
+      await fs.promises.writeFile(temporaryPath, screenshot.data, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+      await chmodPrivateFile(temporaryPath);
+      await fs.promises.rename(temporaryPath, filepath);
+    } finally {
+      await fs.promises.rm(temporaryPath, { force: true }).catch(() => {});
+    }
     return filepath;
   }
 
@@ -47,11 +66,9 @@ export class ScreenshotService {
     if (!screenshot_path) {
       return null;
     }
-    try {
-      const data = await fs.promises.readFile(screenshot_path);
-      return data.toString('base64');
-    } catch {
-      return null;
-    }
+    return (
+      readBoundedScreenshotFileSync(screenshot_path)?.data.toString('base64') ??
+      null
+    );
   }
 }

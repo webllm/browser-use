@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import {
   ContentPartImageParam,
   ContentPartTextParam,
@@ -7,6 +6,10 @@ import {
   UserMessage,
   type Message,
 } from '../llm/messages.js';
+import { readBoundedScreenshotFileSync } from '../screenshots/file.js';
+
+const MAX_JUDGE_SCREENSHOTS = 10;
+const MAX_JUDGE_SCREENSHOT_BYTES = 20 * 1024 * 1024;
 
 const truncateText = (
   text: string,
@@ -20,17 +23,6 @@ const truncateText = (
     return `...[text truncated]${text.slice(-(maxLength - 20))}`;
   }
   return `${text.slice(0, maxLength - 23)}...[text truncated]...`;
-};
-
-const encodeImage = (imagePath: string): string | null => {
-  try {
-    if (!fs.existsSync(imagePath)) {
-      return null;
-    }
-    return fs.readFileSync(imagePath).toString('base64');
-  } catch {
-    return null;
-  }
 };
 
 export interface ConstructJudgeMessagesOptions {
@@ -68,18 +60,30 @@ export const construct_judge_messages = (
 
   const encoded_images: ContentPartImageParam[] = [];
   if (use_vision !== false) {
+    const boundedMaxImages =
+      Number.isSafeInteger(max_images) && max_images >= 0
+        ? Math.min(max_images, MAX_JUDGE_SCREENSHOTS)
+        : MAX_JUDGE_SCREENSHOTS;
     const selected =
-      screenshot_paths.length > max_images
-        ? screenshot_paths.slice(-max_images)
-        : screenshot_paths;
+      boundedMaxImages === 0 ? [] : screenshot_paths.slice(-boundedMaxImages);
+    let remainingBytes = MAX_JUDGE_SCREENSHOT_BYTES;
     for (const screenshotPath of selected) {
-      const encoded = encodeImage(screenshotPath);
-      if (!encoded) {
+      if (remainingBytes <= 0) break;
+      const screenshot = readBoundedScreenshotFileSync(
+        screenshotPath,
+        remainingBytes
+      );
+      if (!screenshot) {
         continue;
       }
+      remainingBytes -= screenshot.data.length;
       encoded_images.push(
         new ContentPartImageParam(
-          new ImageURL(`data:image/png;base64,${encoded}`, 'auto', 'image/png')
+          new ImageURL(
+            `data:${screenshot.mediaType};base64,${screenshot.data.toString('base64')}`,
+            'auto',
+            screenshot.mediaType
+          )
         )
       );
     }

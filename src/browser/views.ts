@@ -1,7 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { DOMState } from '../dom/views.js';
 import type { DOMHistoryElement } from '../dom/history-tree-processor/view.js';
+import { readBoundedScreenshotFileSync } from '../screenshots/file.js';
 import {
   boundBrowserStateText,
   boundBrowserStateTitle,
@@ -165,17 +164,11 @@ export class BrowserStateHistory {
       return null;
     }
 
-    const resolved = path.resolve(this.screenshot_path);
-    if (!fs.existsSync(resolved)) {
-      return null;
-    }
-
-    try {
-      const data = fs.readFileSync(resolved);
-      return data.toString('base64');
-    } catch {
-      return null;
-    }
+    return (
+      readBoundedScreenshotFileSync(this.screenshot_path)?.data.toString(
+        'base64'
+      ) ?? null
+    );
   }
 
   to_dict() {

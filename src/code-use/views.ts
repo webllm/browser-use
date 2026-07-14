@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import { uuid7str } from '../utils.js';
 import type { UsageSummary } from '../tokens/views.js';
+import { readBoundedScreenshotFileSync } from '../screenshots/file.js';
 
 export type CellType = 'code' | 'markdown';
 export type ExecutionStatus = 'pending' | 'running' | 'success' | 'error';
@@ -66,11 +66,13 @@ export class CodeAgentState {
   }
 
   get_screenshot() {
-    if (!this.screenshot_path || !fs.existsSync(this.screenshot_path)) {
+    if (!this.screenshot_path) {
       return null;
     }
-    return Buffer.from(fs.readFileSync(this.screenshot_path)).toString(
-      'base64'
+    return (
+      readBoundedScreenshotFileSync(this.screenshot_path)?.data.toString(
+        'base64'
+      ) ?? null
     );
   }
 }

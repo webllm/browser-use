@@ -44,7 +44,10 @@ describe('Agent full judge alignment', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'judge-msg-test-'));
     try {
       const screenshotPath = path.join(tempDir, 'shot.png');
-      fs.writeFileSync(screenshotPath, Buffer.from('not-a-real-png'));
+      fs.writeFileSync(
+        screenshotPath,
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      );
 
       const messages = construct_judge_messages({
         task: 'Validate output',
@@ -75,6 +78,52 @@ describe('Agent full judge alignment', () => {
         (part: any) => part?.type === 'image_url'
       );
       expect(noVisionImageParts.length).toBe(0);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores unsafe screenshot files and caps judge image count', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'judge-msg-test-'));
+    try {
+      const screenshotPath = path.join(tempDir, 'shot.png');
+      const textPath = path.join(tempDir, 'secret.txt');
+      fs.writeFileSync(
+        screenshotPath,
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      );
+      fs.writeFileSync(textPath, 'not an image');
+      const cappedMessages = construct_judge_messages({
+        task: 'Validate output',
+        final_result: 'done',
+        agent_steps: [],
+        screenshot_paths: [textPath, ...new Array(20).fill(screenshotPath)],
+        max_images: Number.POSITIVE_INFINITY,
+        use_vision: true,
+      });
+      const imageParts = (cappedMessages[1] as any).content.filter(
+        (part: any) => part?.type === 'image_url'
+      );
+
+      expect(imageParts).toHaveLength(10);
+      expect(
+        imageParts.every((part: any) =>
+          String(part.image_url?.url ?? '').startsWith('data:image/png;base64,')
+        )
+      ).toBe(true);
+
+      const unsafeMessages = construct_judge_messages({
+        task: 'Validate output',
+        final_result: 'done',
+        agent_steps: [],
+        screenshot_paths: [textPath],
+        use_vision: true,
+      });
+      expect(
+        (unsafeMessages[1] as any).content.filter(
+          (part: any) => part?.type === 'image_url'
+        )
+      ).toHaveLength(0);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

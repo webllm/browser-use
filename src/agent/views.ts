@@ -44,6 +44,8 @@ const MAX_ACTION_HASH_ENTRIES = 10_000;
 const MAX_ACTION_HASH_SERIALIZED_CHARS = 128 * 1024;
 const MAX_ACTION_HASH_FIELD_CHARS = 64 * 1024;
 const MAX_ACTION_HASH_NAME_CHARS = 512;
+const MAX_HISTORY_SCREENSHOT_FILES = 100;
+const MAX_HISTORY_SCREENSHOT_TOTAL_BYTES = 20 * 1024 * 1024;
 export const MAX_ACTION_LOOP_WINDOW = 10_000;
 const MAX_PAGE_FINGERPRINTS = 5;
 const MAX_PAGE_FINGERPRINT_URL_CHARS = 16 * 1024;
@@ -1495,11 +1497,34 @@ export class AgentHistoryList<TStructured = unknown> {
       return [];
     }
     const items = n_last == null ? this.history : this.history.slice(-n_last);
+    const firstReadableIndex = Math.max(
+      0,
+      items.length - MAX_HISTORY_SCREENSHOT_FILES
+    );
     const screenshots: Array<string | null> = [];
-    for (const item of items) {
+    let retainedBytes = 0;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]!;
+      if (
+        index < firstReadableIndex ||
+        retainedBytes >= MAX_HISTORY_SCREENSHOT_TOTAL_BYTES
+      ) {
+        if (return_none_if_not_screenshot) screenshots.push(null);
+        continue;
+      }
       const screenshot = item.state.get_screenshot();
       if (screenshot) {
-        screenshots.push(screenshot);
+        const screenshotBytes = Buffer.byteLength(screenshot, 'base64');
+        if (
+          retainedBytes + screenshotBytes <=
+          MAX_HISTORY_SCREENSHOT_TOTAL_BYTES
+        ) {
+          retainedBytes += screenshotBytes;
+          screenshots.push(screenshot);
+        } else {
+          retainedBytes = MAX_HISTORY_SCREENSHOT_TOTAL_BYTES;
+          if (return_none_if_not_screenshot) screenshots.push(null);
+        }
       } else if (return_none_if_not_screenshot) {
         screenshots.push(null);
       }
