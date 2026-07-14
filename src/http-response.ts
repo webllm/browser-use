@@ -10,6 +10,13 @@ export class HttpResponseTooLargeError extends Error {
   }
 }
 
+export class HttpRequestTimeoutError extends Error {
+  constructor() {
+    super('HTTP request timed out');
+    this.name = 'HttpRequestTimeoutError';
+  }
+}
+
 type ResponseLike = {
   headers?: { get?: (name: string) => string | null } | null;
   body?: ReadableStream<Uint8Array> | null;
@@ -65,7 +72,7 @@ export const runWithHttpTimeout = async <T>(
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
   }
   const timeout = setTimeout(
-    () => abortRequest(new Error('HTTP request timed out')),
+    () => abortRequest(new HttpRequestTimeoutError()),
     normalizeRequestTimeout(timeoutMs)
   );
   try {

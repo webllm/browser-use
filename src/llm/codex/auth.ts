@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CONFIG } from '../../config.js';
-import { readBoundedResponseJson } from '../../http-response.js';
+import {
+  HttpRequestTimeoutError,
+  readBoundedResponseJson,
+  runWithHttpTimeout,
+} from '../../http-response.js';
 
 export const CODEX_PROVIDER = 'openai-codex';
 export const DEFAULT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
@@ -617,30 +621,43 @@ const fetchWithTimeout = async <T>(
   consume: (response: Response) => Promise<T>
 ): Promise<T> => {
   const fetchImplementation = options.fetchImplementation ?? fetch;
-  const timeoutMs = options.timeoutMs ?? 20_000;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  const upstreamSignal = init.signal;
-  const onUpstreamAbort = () => controller.abort();
-  if (upstreamSignal?.aborted) {
-    controller.abort();
-  } else {
-    upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
-  }
-  let response: Response | null = null;
+  const requestedTimeoutMs = options.timeoutMs ?? 20_000;
+  const timeoutMs =
+    Number.isFinite(requestedTimeoutMs) && requestedTimeoutMs > 0
+      ? Math.max(1, Math.floor(requestedTimeoutMs))
+      : 20_000;
+  const responseHolder: { current: Response | null } = { current: null };
   try {
-    response = await fetchImplementation(url, {
-      ...init,
-      signal: controller.signal,
-      redirect: 'error',
-    });
-    return await consume(response);
-  } finally {
-    if (response?.body && !response.bodyUsed) {
-      await response.body.cancel().catch(() => undefined);
+    return await runWithHttpTimeout(
+      async (signal) => {
+        const response = await fetchImplementation(url, {
+          ...init,
+          signal,
+          redirect: 'error',
+        });
+        responseHolder.current = response;
+        return await consume(response);
+      },
+      timeoutMs,
+      init.signal
+    );
+  } catch (error) {
+    if (error instanceof HttpRequestTimeoutError) {
+      throw new CodexAuthError(
+        `Codex auth request timed out after ${timeoutMs}ms.`,
+        'codex_auth_timeout'
+      );
     }
-    clearTimeout(timeout);
-    upstreamSignal?.removeEventListener('abort', onUpstreamAbort);
+    throw error;
+  } finally {
+    const response = responseHolder.current;
+    if (response?.body && !response.bodyUsed) {
+      try {
+        void response.body.cancel().catch(() => undefined);
+      } catch {
+        // The bounded auth request has already completed or timed out.
+      }
+    }
   }
 };
 

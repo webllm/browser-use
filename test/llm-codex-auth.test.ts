@@ -485,7 +485,41 @@ describe('Codex auth store', () => {
         fetchImplementation: fetchMock as typeof fetch,
         timeoutMs: 20,
       })
-    ).rejects.toMatchObject({ code: 'codex_refresh_invalid_json' });
+    ).rejects.toMatchObject({ code: 'codex_auth_timeout' });
+  });
+
+  it('times out when the Codex fetch adapter ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () => await new Promise<Response>(() => undefined)
+    );
+
+    await expect(
+      refreshCodexOAuth('access', 'refresh', {
+        fetchImplementation: fetchMock as typeof fetch,
+        timeoutMs: 10,
+      })
+    ).rejects.toMatchObject({ code: 'codex_auth_timeout' });
+  });
+
+  it('times out when the Codex response stream ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {
+              // Intentionally never enqueue or close.
+            },
+          }),
+          { status: 200 }
+        )
+    );
+
+    await expect(
+      refreshCodexOAuth('access', 'refresh', {
+        fetchImplementation: fetchMock as typeof fetch,
+        timeoutMs: 10,
+      })
+    ).rejects.toMatchObject({ code: 'codex_auth_timeout' });
   });
 
   it('uses CodexAuthError for missing refresh tokens before network calls', async () => {
