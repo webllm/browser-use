@@ -9,7 +9,10 @@ import {
   HistoryItem,
   MessageManagerState,
 } from '../src/agent/message-manager/views.js';
-import { MessageManager } from '../src/agent/message-manager/service.js';
+import {
+  MAX_MESSAGE_MANAGER_HISTORY_ITEMS,
+  MessageManager,
+} from '../src/agent/message-manager/service.js';
 import { SystemMessage, type Message } from '../src/llm/messages.js';
 import type { FileSystem } from '../src/filesystem/file-system.js';
 
@@ -56,6 +59,18 @@ const appendHistoryItems = (
 };
 
 describe('Agent message compaction', () => {
+  it.each([
+    5,
+    6.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    MAX_MESSAGE_MANAGER_HISTORY_ITEMS + 1,
+  ])('rejects invalid message history limit %s', (maxHistoryItems) => {
+    expect(() => createBoundedHistoryManager(maxHistoryItems)).toThrow(
+      `max_history_items must be null or an integer between 6 and ${MAX_MESSAGE_MANAGER_HISTORY_ITEMS}`
+    );
+  });
+
   it.each([
     ['compact_every_n_steps', Number.POSITIVE_INFINITY],
     ['compact_every_n_steps', 0],

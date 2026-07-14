@@ -28,6 +28,7 @@ const MAX_READ_STATE_IMAGE_CANDIDATES = 100;
 const MAX_READ_STATE_IMAGE_BASE64_CHARS = 20 * 1024 * 1024;
 const MAX_COMPACTION_HISTORY_CHARS = 1024 * 1024;
 const MAX_MESSAGE_TASK_CHARS = 100_000;
+export const MAX_MESSAGE_MANAGER_HISTORY_ITEMS = 100_000;
 const RESULT_TRUNCATION_NOTICE = '... [Content truncated at 60k characters]';
 const COMPACTION_HISTORY_TRUNCATION_NOTICE =
   '\n<sys>[... additional history omitted for compaction ...]</sys>';
@@ -137,8 +138,15 @@ export class MessageManager {
     > | null = null,
     private readonly llmScreenshotSize: [number, number] | null = null
   ) {
-    if (this.maxHistoryItems != null && this.maxHistoryItems <= 5) {
-      throw new Error('max_history_items must be null or greater than 5');
+    if (
+      this.maxHistoryItems != null &&
+      (!Number.isSafeInteger(this.maxHistoryItems) ||
+        this.maxHistoryItems < 6 ||
+        this.maxHistoryItems > MAX_MESSAGE_MANAGER_HISTORY_ITEMS)
+    ) {
+      throw new RangeError(
+        `max_history_items must be null or an integer between 6 and ${MAX_MESSAGE_MANAGER_HISTORY_ITEMS}`
+      );
     }
 
     this.task = task;
