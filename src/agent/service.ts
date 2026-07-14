@@ -402,6 +402,7 @@ const defaultAgentOptions = () => ({
 
 const MAX_AGENT_TIMEOUT_SECONDS = 24 * 60 * 60;
 const MAX_AGENT_RUN_STEPS = 1_000_000;
+const MAX_AGENT_RERUN_RETRIES = 100;
 const MAX_AGENT_FAILURES = 10_000;
 const MAX_AGENT_ACTIONS_PER_STEP = 1_000;
 const MAX_AGENT_HISTORY_ITEMS = 100_000;
@@ -3598,6 +3599,33 @@ export class Agent<
       signal = null,
     } = options;
 
+    const validatedMaxRetries = requireBoundedInteger(
+      'max_retries',
+      max_retries,
+      1,
+      MAX_AGENT_RERUN_RETRIES
+    );
+    const validatedDelayBetweenActions = requireBoundedNumber(
+      'delay_between_actions',
+      delay_between_actions,
+      0,
+      MAX_AGENT_TIMEOUT_SECONDS
+    );
+    const validatedMaxStepInterval = requireBoundedNumber(
+      'max_step_interval',
+      max_step_interval,
+      0,
+      MAX_AGENT_TIMEOUT_SECONDS
+    );
+    if (!history || !Array.isArray(history.history)) {
+      throw new TypeError('history must contain an array of history items');
+    }
+    if (history.history.length > MAX_AGENT_RUN_STEPS) {
+      throw new RangeError(
+        `history cannot exceed ${MAX_AGENT_RUN_STEPS} replay steps`
+      );
+    }
+
     this._throwIfAborted(signal);
 
     // Mirror python c011 behavior: rerun should not emit create-session events.
@@ -3618,14 +3646,17 @@ export class Agent<
         const stepName =
           stepNumber === 0 ? 'Initial actions' : `Step ${stepNumber}`;
         const savedInterval = historyItem.metadata?.step_interval;
-        let stepDelay = delay_between_actions;
+        let stepDelay = validatedDelayBetweenActions;
         let delaySource = `using default delay=${this._formatDelaySeconds(stepDelay)}`;
         if (
           typeof savedInterval === 'number' &&
           Number.isFinite(savedInterval)
         ) {
-          stepDelay = Math.min(savedInterval, max_step_interval);
-          if (savedInterval > max_step_interval) {
+          stepDelay = Math.max(
+            0,
+            Math.min(savedInterval, validatedMaxStepInterval)
+          );
+          if (savedInterval > validatedMaxStepInterval) {
             delaySource = `capped to ${this._formatDelaySeconds(stepDelay)} (saved was ${savedInterval.toFixed(1)}s)`;
           } else {
             delaySource = `using saved step_interval=${this._formatDelaySeconds(stepDelay)}`;
@@ -3688,7 +3719,7 @@ export class Agent<
         let attempt = 0;
         let stepSucceeded = false;
         let menuReopened = false;
-        while (attempt < max_retries) {
+        while (attempt < validatedMaxRetries) {
           this._throwIfAborted(signal);
           try {
             const stepResult =
@@ -3750,8 +3781,8 @@ export class Agent<
               }
             }
 
-            if (attempt === max_retries) {
-              const message = `${stepName} failed after ${max_retries} attempts: ${
+            if (attempt === validatedMaxRetries) {
+              const message = `${stepName} failed after ${validatedMaxRetries} attempts: ${
                 errorMessage
               }`;
               this.logger.error(this._redactSensitiveText(message));
@@ -3766,7 +3797,7 @@ export class Agent<
                 30
               );
               this.logger.warning(
-                `${stepName} failed (attempt ${attempt}/${max_retries}), retrying in ${retryDelay}s...`
+                `${stepName} failed (attempt ${attempt}/${validatedMaxRetries}), retrying in ${retryDelay}s...`
               );
               await this._sleep(retryDelay, signal);
             }

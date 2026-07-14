@@ -2447,6 +2447,27 @@ describe('Agent constructor browser session alignment', () => {
     await agent.close();
   });
 
+  it.each([
+    ['max_retries', { max_retries: Number.POSITIVE_INFINITY }],
+    ['fractional max_retries', { max_retries: 1.5 }],
+    ['zero max_retries', { max_retries: 0 }],
+    ['delay_between_actions', { delay_between_actions: Number.NaN }],
+    ['negative delay_between_actions', { delay_between_actions: -1 }],
+    ['max_step_interval', { max_step_interval: Number.POSITIVE_INFINITY }],
+  ])('rejects invalid rerun option %s', async (_name, options) => {
+    const agent = new Agent({
+      task: 'invalid rerun options',
+      llm: createLlm(),
+    });
+    try {
+      await expect(
+        agent.rerun_history({ history: [] } as any, options)
+      ).rejects.toThrow(RangeError);
+    } finally {
+      await agent.close();
+    }
+  });
+
   it('uses step_name in no-action rerun logs for metadata-free steps (python c011 parity)', async () => {
     const agent = new Agent({
       task: 'test rerun no-action step name parity',
