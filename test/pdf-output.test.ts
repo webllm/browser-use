@@ -81,4 +81,25 @@ describe('bounded CDP PDF output', () => {
       }
     }
   );
+
+  it.each([MAX_SAVED_PDF_BYTES + 1, Number.MAX_SAFE_INTEGER])(
+    'enforces the hard byte limit for oversized budget %s',
+    async (limit) => {
+      const send = vi.fn();
+      const byteLength = vi
+        .spyOn(Buffer, 'byteLength')
+        .mockReturnValue(MAX_SAVED_PDF_BYTES + 1);
+      try {
+        await expect(
+          readBoundedCdpPdf(
+            { send },
+            { data: Buffer.from('pdf').toString('base64') },
+            limit
+          )
+        ).rejects.toThrow('maximum size');
+      } finally {
+        byteLength.mockRestore();
+      }
+    }
+  );
 });

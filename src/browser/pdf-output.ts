@@ -33,7 +33,7 @@ export const readBoundedCdpPdf = async (
   maxBytes = MAX_SAVED_PDF_BYTES
 ): Promise<Buffer> => {
   const boundedMaxBytes = Number.isFinite(maxBytes)
-    ? Math.max(1, Math.floor(maxBytes))
+    ? Math.min(MAX_SAVED_PDF_BYTES, Math.max(1, Math.floor(maxBytes)))
     : MAX_SAVED_PDF_BYTES;
   const stream = typeof result.stream === 'string' ? result.stream : '';
   if (!stream) {
