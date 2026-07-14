@@ -4,14 +4,18 @@ import { uuid7str } from '../utils.js';
 import { createLogger } from '../logging-config.js';
 import { redactSensitiveDataFromString } from './views.js';
 
-const MAX_STRING_LENGTH = 100_000;
-const MAX_URL_LENGTH = 100_000;
-const MAX_TASK_LENGTH = 100_000;
-const MAX_COMMENT_LENGTH = 2_000;
+export const MAX_STRING_LENGTH = 500_000;
+export const MAX_URL_LENGTH = 100_000;
+export const MAX_TASK_LENGTH = 100_000;
+export const MAX_COMMENT_LENGTH = 2_000;
 export const MAX_FILE_CONTENT_SIZE = 50 * 1024 * 1024;
 const FILE_READ_CHUNK_SIZE = 64 * 1024;
 const MAX_LLM_MODEL_LENGTH = 200;
 const MAX_END_REASON_LENGTH = 100;
+const MAX_ID_LENGTH = 255;
+const MAX_FEEDBACK_TYPE_LENGTH = 10;
+const MAX_FILE_NAME_LENGTH = 255;
+const MAX_CONTENT_TYPE_LENGTH = 100;
 
 const logger = createLogger('browser_use.agent.cloud_events');
 
@@ -20,6 +24,16 @@ const estimateBase64DecodedBytes = (value: string) =>
 
 const extractBase64Payload = (value: string) =>
   value.includes(',') ? value.split(',').slice(1).join(',') : value;
+
+const assertMaximumLength = (
+  field: string,
+  value: string | null | undefined,
+  maximum: number
+) => {
+  if (value != null && value.length > maximum) {
+    throw new Error(`${field} exceeds maximum length of ${maximum}`);
+  }
+};
 
 const readBoundedOutputFile = async (filePath: string) => {
   const nonBlockingFlag =
@@ -165,6 +179,8 @@ export abstract class BaseEvent {
     this.id = init.id ?? uuid7str();
     this.user_id = init.user_id ?? '';
     this.device_id = init.device_id ?? null;
+    assertMaximumLength('user_id', this.user_id, MAX_ID_LENGTH);
+    assertMaximumLength('device_id', this.device_id, MAX_ID_LENGTH);
   }
 
   toJSON() {
@@ -191,6 +207,14 @@ export class UpdateAgentTaskEvent extends BaseEvent {
     super('UpdateAgentTaskEvent', init);
     this.stopped = init.stopped ?? null;
     this.paused = init.paused ?? null;
+    assertMaximumLength('done_output', init.done_output, MAX_STRING_LENGTH);
+    assertMaximumLength(
+      'user_feedback_type',
+      init.user_feedback_type,
+      MAX_FEEDBACK_TYPE_LENGTH
+    );
+    assertMaximumLength('user_comment', init.user_comment, MAX_COMMENT_LENGTH);
+    assertMaximumLength('gif_url', init.gif_url, MAX_URL_LENGTH);
     this.done_output = init.done_output ?? null;
     this.finished_at = init.finished_at ?? null;
     this.agent_state = init.agent_state ?? null;
@@ -204,13 +228,14 @@ export class UpdateAgentTaskEvent extends BaseEvent {
       throw new Error('Agent must have _task_start_time attribute');
     }
     const finalResult = agent.history.final_result();
+    const redactedFinalResult =
+      finalResult == null ? null : redactAgentString(agent, finalResult);
     return new UpdateAgentTaskEvent({
       id: String(agent.task_id),
       device_id: getDeviceId(agent),
       stopped: agent.state.stopped,
       paused: agent.state.paused,
-      done_output:
-        finalResult == null ? null : redactAgentString(agent, finalResult),
+      done_output: redactedFinalResult?.slice(0, MAX_STRING_LENGTH) ?? null,
       finished_at: agent.history.is_done() ? new Date() : null,
       agent_state: serializeAgentState(agent),
       user_feedback_type: null,
@@ -252,6 +277,12 @@ export class CreateAgentOutputFileEvent extends BaseEvent {
     created_at?: Date;
   }) {
     super('CreateAgentOutputFileEvent', init);
+    assertMaximumLength('file_name', init.file_name, MAX_FILE_NAME_LENGTH);
+    assertMaximumLength(
+      'content_type',
+      init.content_type,
+      MAX_CONTENT_TYPE_LENGTH
+    );
     this.task_id = init.task_id;
     this.file_name = init.file_name;
     if (init.file_content != null) {
@@ -321,6 +352,14 @@ export class CreateAgentStepEvent extends BaseEvent {
     created_at?: Date;
   }) {
     super('CreateAgentStepEvent', init);
+    assertMaximumLength(
+      'evaluation_previous_goal',
+      init.evaluation_previous_goal,
+      MAX_STRING_LENGTH
+    );
+    assertMaximumLength('memory', init.memory, MAX_STRING_LENGTH);
+    assertMaximumLength('next_goal', init.next_goal, MAX_STRING_LENGTH);
+    assertMaximumLength('url', init.url, MAX_URL_LENGTH);
     this.created_at = init.created_at ?? new Date();
     this.agent_task_id = init.agent_task_id;
     this.step = init.step;
@@ -337,6 +376,11 @@ export class CreateAgentStepEvent extends BaseEvent {
         );
       }
     }
+    assertMaximumLength(
+      'screenshot_url',
+      init.screenshot_url,
+      MAX_FILE_CONTENT_SIZE
+    );
     this.screenshot_url = init.screenshot_url ?? null;
     this.url = init.url;
   }
@@ -447,6 +491,14 @@ export class CreateAgentTaskEvent extends BaseEvent {
     if (init.task.length > MAX_TASK_LENGTH) {
       throw new Error(`task exceeds maximum length of ${MAX_TASK_LENGTH}`);
     }
+    assertMaximumLength('done_output', init.done_output, MAX_STRING_LENGTH);
+    assertMaximumLength(
+      'user_feedback_type',
+      init.user_feedback_type,
+      MAX_FEEDBACK_TYPE_LENGTH
+    );
+    assertMaximumLength('user_comment', init.user_comment, MAX_COMMENT_LENGTH);
+    assertMaximumLength('gif_url', init.gif_url, MAX_URL_LENGTH);
     this.llm_model = init.llm_model;
     this.task = init.task;
     this.stopped = init.stopped ?? false;
@@ -526,6 +578,21 @@ export class CreateAgentSessionEvent extends BaseEvent {
     browser_session_data?: Record<string, unknown> | null;
   }) {
     super('CreateAgentSessionEvent', init);
+    assertMaximumLength(
+      'browser_session_id',
+      init.browser_session_id,
+      MAX_ID_LENGTH
+    );
+    assertMaximumLength(
+      'browser_session_live_url',
+      init.browser_session_live_url,
+      MAX_URL_LENGTH
+    );
+    assertMaximumLength(
+      'browser_session_cdp_url',
+      init.browser_session_cdp_url,
+      MAX_URL_LENGTH
+    );
     this.browser_session_id = init.browser_session_id;
     this.browser_session_live_url = init.browser_session_live_url ?? '';
     this.browser_session_cdp_url = init.browser_session_cdp_url ?? '';

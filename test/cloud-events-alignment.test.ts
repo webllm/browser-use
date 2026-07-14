@@ -4,11 +4,13 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CreateAgentOutputFileEvent,
+  CreateAgentSessionEvent,
   CreateAgentTaskEvent,
   CreateAgentStepEvent,
   UpdateAgentTaskEvent,
   UpdateAgentSessionEvent,
   MAX_FILE_CONTENT_SIZE,
+  MAX_STRING_LENGTH,
 } from '../src/agent/cloud-events.js';
 
 describe('cloud events alignment', () => {
@@ -226,6 +228,87 @@ describe('cloud events alignment', () => {
         _task_start_time: 1_760_000_000,
       } as any)
     ).toThrow('task exceeds maximum length of 100000');
+  });
+
+  it('enforces Python-aligned optional task and identity field lengths', () => {
+    expect(
+      () =>
+        new UpdateAgentTaskEvent({
+          id: 'task-fields',
+          user_id: 'u'.repeat(256),
+        })
+    ).toThrow('user_id exceeds maximum length of 255');
+    expect(
+      () =>
+        new UpdateAgentTaskEvent({
+          id: 'task-fields',
+          done_output: 'x'.repeat(MAX_STRING_LENGTH + 1),
+        })
+    ).toThrow(`done_output exceeds maximum length of ${MAX_STRING_LENGTH}`);
+    expect(
+      () =>
+        new CreateAgentTaskEvent({
+          agent_session_id: 'session-fields',
+          llm_model: 'model',
+          task: 'task',
+          user_feedback_type: 'x'.repeat(11),
+        })
+    ).toThrow('user_feedback_type exceeds maximum length of 10');
+  });
+
+  it('enforces Python-aligned step text, screenshot, and URL lengths', () => {
+    const base = {
+      agent_task_id: 'task-step-fields',
+      step: 1,
+      evaluation_previous_goal: '',
+      memory: '',
+      next_goal: '',
+      actions: [],
+      url: '',
+    };
+
+    expect(
+      () =>
+        new CreateAgentStepEvent({
+          ...base,
+          memory: 'x'.repeat(MAX_STRING_LENGTH + 1),
+        })
+    ).toThrow(`memory exceeds maximum length of ${MAX_STRING_LENGTH}`);
+    expect(
+      () =>
+        new CreateAgentStepEvent({
+          ...base,
+          screenshot_url: 'x'.repeat(MAX_FILE_CONTENT_SIZE + 1),
+        })
+    ).toThrow(
+      `screenshot_url exceeds maximum length of ${MAX_FILE_CONTENT_SIZE}`
+    );
+    expect(
+      () => new CreateAgentStepEvent({ ...base, url: 'x'.repeat(100_001) })
+    ).toThrow('url exceeds maximum length of 100000');
+  });
+
+  it('enforces Python-aligned output and browser-session metadata lengths', () => {
+    expect(
+      () =>
+        new CreateAgentOutputFileEvent({
+          task_id: 'task-output-fields',
+          file_name: 'x'.repeat(256),
+        })
+    ).toThrow('file_name exceeds maximum length of 255');
+    expect(
+      () =>
+        new CreateAgentSessionEvent({
+          browser_session_id: 'x'.repeat(256),
+        })
+    ).toThrow('browser_session_id exceeds maximum length of 255');
+    expect(
+      () =>
+        new CreateAgentSessionEvent({
+          browser_session_id: 'session',
+          browser_session_cdp_url: 'x'.repeat(100_001),
+        })
+    ).toThrow('browser_session_cdp_url exceeds maximum length of 100000');
   });
 
   it('CreateAgentOutputFileEvent enforces python-aligned 50MB base64 size guard', () => {
