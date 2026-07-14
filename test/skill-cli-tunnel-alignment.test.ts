@@ -278,6 +278,42 @@ describe('skill-cli tunnel alignment', () => {
     }
   });
 
+  it('retains tunnel ownership metadata when atomic replacement fails', () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const manager = new TunnelManager({ tunnel_dir: tunnelDir });
+    (manager as any).save_tunnel_info(
+      3000,
+      4321,
+      'https://old.trycloudflare.com',
+      '/usr/bin/cloudflared'
+    );
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('replace failed');
+    });
+
+    try {
+      expect(() =>
+        (manager as any).save_tunnel_info(
+          3000,
+          9876,
+          'https://new.trycloudflare.com',
+          '/usr/bin/cloudflared'
+        )
+      ).toThrow('replace failed');
+      expect(JSON.parse(fs.readFileSync(infoPath, 'utf8'))).toMatchObject({
+        pid: 4321,
+        url: 'https://old.trycloudflare.com',
+      });
+      expect(fs.readdirSync(tunnelDir)).toEqual(['3000.json']);
+    } finally {
+      renameSpy.mockRestore();
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns cloudflared spawn errors instead of crashing the process', async () => {
     const tunnelDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-tunnel-')

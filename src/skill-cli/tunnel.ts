@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   getProcessArguments,
   type ProcessArgumentsReader,
@@ -156,13 +157,30 @@ export class TunnelManager {
     binaryPath: string
   ) {
     this.ensure_tunnel_dir();
-    fs.writeFileSync(
-      this.get_tunnel_file(port),
-      JSON.stringify({ port, pid, url, binary_path: binaryPath }),
-      { encoding: 'utf-8', mode: 0o600 }
+    const targetPath = this.get_tunnel_file(port);
+    const tempPath = path.join(
+      this.tunnel_dir,
+      `.${path.basename(targetPath)}.${process.pid}.${randomUUID()}.tmp`
     );
-    if (process.platform !== 'win32') {
-      fs.chmodSync(this.get_tunnel_file(port), 0o600);
+    let renamed = false;
+    try {
+      fs.writeFileSync(
+        tempPath,
+        JSON.stringify({ port, pid, url, binary_path: binaryPath }),
+        { encoding: 'utf-8', mode: 0o600, flag: 'wx' }
+      );
+      if (process.platform !== 'win32') {
+        fs.chmodSync(tempPath, 0o600);
+      }
+      fs.renameSync(tempPath, targetPath);
+      renamed = true;
+      if (process.platform !== 'win32') {
+        fs.chmodSync(targetPath, 0o600);
+      }
+    } finally {
+      if (!renamed) {
+        fs.rmSync(tempPath, { force: true });
+      }
     }
   }
 
