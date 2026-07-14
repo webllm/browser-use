@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runTunnelCommand } from '../src/cli.js';
 import {
   MAX_TUNNEL_INFO_BYTES,
+  MAX_TUNNEL_STARTUP_LOG_BYTES,
   TunnelManager,
 } from '../src/skill-cli/tunnel.js';
 
@@ -375,6 +376,42 @@ describe('skill-cli tunnel alignment', () => {
         error: 'Failed to start cloudflared: spawn EACCES',
       });
       expect(child.unref).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops tunnel startup when the cloudflared log exceeds its limit', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const logPath = path.join(tunnelDir, '3000.log');
+    const killProcess = vi.fn(async () => true);
+    const spawnImpl = vi.fn(() => {
+      fs.truncateSync(logPath, MAX_TUNNEL_STARTUP_LOG_BYTES + 1);
+      return {
+        pid: 4321,
+        unref: vi.fn(),
+        once: vi.fn(),
+      } as any;
+    });
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: () => '/usr/bin/cloudflared',
+        spawn_impl: spawnImpl as any,
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
+        kill_process: killProcess,
+      });
+
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error: `cloudflared startup log exceeded ${MAX_TUNNEL_STARTUP_LOG_BYTES} bytes`,
+      });
+      expect(killProcess).toHaveBeenCalledWith(4321, expect.any(Function));
+      expect(fs.existsSync(path.join(tunnelDir, '3000.json'))).toBe(false);
     } finally {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }

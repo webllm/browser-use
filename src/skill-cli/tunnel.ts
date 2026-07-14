@@ -11,6 +11,7 @@ import {
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
 export const MAX_TUNNEL_INFO_BYTES = 64 * 1024;
+export const MAX_TUNNEL_STARTUP_LOG_BYTES = 1024 * 1024;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -372,10 +373,31 @@ export class TunnelManager {
 
     this.ensure_tunnel_dir();
     const logPath = this.get_tunnel_log_file(port);
-    const logFd = fs.openSync(logPath, 'w', 0o600);
+    const logFd = fs.openSync(logPath, 'w+', 0o600);
     if (process.platform !== 'win32') {
       fs.chmodSync(logPath, 0o600);
     }
+    let logOffset = 0;
+    let logContent = '';
+    const refreshLogContent = () => {
+      const stats = fs.fstatSync(logFd);
+      if (!stats.isFile()) {
+        throw new Error('cloudflared startup log is not a regular file');
+      }
+      if (stats.size < logOffset) {
+        logOffset = 0;
+        logContent = '';
+      }
+      const readableEnd = Math.min(stats.size, MAX_TUNNEL_STARTUP_LOG_BYTES);
+      const bytesToRead = readableEnd - logOffset;
+      if (bytesToRead > 0) {
+        const chunk = Buffer.allocUnsafe(bytesToRead);
+        const bytesRead = fs.readSync(logFd, chunk, 0, bytesToRead, logOffset);
+        logOffset += bytesRead;
+        logContent += chunk.subarray(0, bytesRead).toString('utf8');
+      }
+      return stats.size > MAX_TUNNEL_STARTUP_LOG_BYTES;
+    };
     try {
       const child = this.spawn_impl(
         binaryPath,
@@ -393,6 +415,7 @@ export class TunnelManager {
       });
 
       const deadline = Date.now() + 15_000;
+      let startupFailure: string | null = null;
       while (Date.now() < deadline) {
         const spawnError = spawnFailure.error;
         if (spawnError) {
@@ -400,20 +423,23 @@ export class TunnelManager {
             error: `Failed to start cloudflared: ${spawnError.message}`,
           };
         }
+        try {
+          if (refreshLogContent()) {
+            startupFailure = `cloudflared startup log exceeded ${MAX_TUNNEL_STARTUP_LOG_BYTES} bytes`;
+            break;
+          }
+        } catch (error) {
+          startupFailure = `Failed to read cloudflared startup log: ${(error as Error).message}`;
+          break;
+        }
         const pid = child.pid;
         if (typeof pid === 'number' && !this.is_process_alive_impl(pid)) {
-          const content = fs.existsSync(logPath)
-            ? fs.readFileSync(logPath, 'utf-8')
-            : '';
           return {
-            error: `cloudflared exited unexpectedly: ${content.slice(0, 500)}`,
+            error: `cloudflared exited unexpectedly: ${logContent.slice(0, 500)}`,
           };
         }
 
-        const content = fs.existsSync(logPath)
-          ? fs.readFileSync(logPath, 'utf-8')
-          : '';
-        const match = content.match(TUNNEL_URL_PATTERN);
+        const match = logContent.match(TUNNEL_URL_PATTERN);
         if (match?.[1] && typeof child.pid === 'number') {
           this.save_tunnel_info(port, child.pid, match[1], binaryPath);
           return { url: match[1], port };
@@ -445,11 +471,16 @@ export class TunnelManager {
         ) {
           this.save_tunnel_info(port, child.pid, '', binaryPath);
           return {
-            error: `Timed out waiting for cloudflare tunnel URL and could not stop process ${child.pid}; run tunnel stop ${port} to retry cleanup`,
+            error: startupFailure
+              ? `${startupFailure} and could not stop process ${child.pid}; run tunnel stop ${port} to retry cleanup`
+              : `Timed out waiting for cloudflare tunnel URL and could not stop process ${child.pid}; run tunnel stop ${port} to retry cleanup`,
           };
         }
       }
-      return { error: 'Timed out waiting for cloudflare tunnel URL (15s)' };
+      return {
+        error:
+          startupFailure ?? 'Timed out waiting for cloudflare tunnel URL (15s)',
+      };
     } finally {
       fs.closeSync(logFd);
     }
