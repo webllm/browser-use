@@ -120,6 +120,29 @@ describe('Codex auth store', () => {
     expect(await fs.readdir(configDir)).toEqual(['auth.json']);
   });
 
+  it('removes an acquired Codex auth lock when initialization fails', async () => {
+    const configDir = await makeTempDir();
+    const lockPath = path.join(configDir, 'auth.json.lock');
+    const handle = await fs.open(lockPath, 'wx', 0o600);
+    const writeSpy = vi
+      .spyOn(handle, 'writeFile')
+      .mockRejectedValueOnce(new Error('lock write failed'));
+    const closeSpy = vi.spyOn(handle, 'close');
+    const openSpy = vi.spyOn(fs, 'open').mockResolvedValueOnce(handle);
+
+    await expect(
+      saveCodexTokens(
+        { access_token: 'access', refresh_token: 'refresh' },
+        { configDir }
+      )
+    ).rejects.toThrow('lock write failed');
+
+    expect(writeSpy).toHaveBeenCalledOnce();
+    expect(closeSpy).toHaveBeenCalledOnce();
+    expect(openSpy).toHaveBeenCalledWith(lockPath, 'wx', 0o600);
+    await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('reports missing credentials with relogin-required auth error', async () => {
     const configDir = await makeTempDir();
 

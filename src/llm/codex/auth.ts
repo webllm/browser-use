@@ -284,11 +284,13 @@ const withAuthStoreLock = async <T>(
 
   const start = Date.now();
   const staleMs = Math.max(timeoutMs * 2, 30_000);
-  let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
 
-  while (!handle) {
+  while (true) {
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    let acquired = false;
     try {
       handle = await fs.open(lockPath, 'wx', 0o600);
+      acquired = true;
       await handle.writeFile(
         JSON.stringify({
           pid: process.pid,
@@ -299,6 +301,13 @@ const withAuthStoreLock = async <T>(
       handle = null;
       break;
     } catch (error) {
+      if (acquired) {
+        if (handle) {
+          await handle.close().catch(() => undefined);
+        }
+        await fs.unlink(lockPath).catch(() => undefined);
+        throw error;
+      }
       const nodeError = error as NodeJS.ErrnoException;
       if (nodeError.code !== 'EEXIST') {
         throw error;
