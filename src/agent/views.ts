@@ -32,6 +32,7 @@ export interface StructuredOutputParser<T = unknown> {
 type SensitiveDataMap = Record<string, string | Record<string, string>>;
 export const MAX_AGENT_HISTORY_FILE_BYTES = 64 * 1024 * 1024;
 export const MAX_REDACTED_TEXT_CHARS = 16 * 1024 * 1024;
+export const MAX_LOADED_AGENT_HISTORY_ITEMS = 100_000;
 const MAX_SENSITIVE_PLACEHOLDERS = 1_024;
 const MAX_SENSITIVE_PATTERN_CHARS = 256 * 1024;
 const MAX_SENSITIVE_SECRET_CHARS = 64 * 1024;
@@ -48,6 +49,33 @@ const MAX_PAGE_FINGERPRINTS = 5;
 const MAX_PAGE_FINGERPRINT_URL_CHARS = 16 * 1024;
 const MAX_PAGE_FINGERPRINT_HASH_CHARS = 128;
 const MAX_STAGNANT_PAGE_COUNT = 1_000_000;
+const MAX_LOADED_ACTIONS_PER_HISTORY_ITEM = 1_000;
+const MAX_LOADED_RESULTS_PER_HISTORY_ITEM = 1_000;
+const MAX_LOADED_STATE_COLLECTION_ITEMS = 10_000;
+
+const isHistoryRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const requireHistoryRecord = (value: unknown, label: string) => {
+  if (!isHistoryRecord(value)) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  return value;
+};
+
+const requireHistoryArray = (
+  value: unknown,
+  label: string,
+  maxItems: number
+): unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`${label} must be an array`);
+  }
+  if (value.length > maxItems) {
+    throw new RangeError(`${label} must contain at most ${maxItems} items`);
+  }
+  return value;
+};
 
 export const redactSensitiveDataFromString = (
   value: string,
@@ -1638,38 +1666,92 @@ export class AgentHistoryList<TStructured = unknown> {
     payload: Record<string, unknown>,
     outputModel: typeof AgentOutput
   ): AgentHistoryList {
-    const historyItems = ((payload as { history?: any[] }).history ?? []).map(
-      (entry) => {
-        const modelOutput = entry.model_output
-          ? outputModel.fromJSON(entry.model_output)
-          : null;
-        const result = (entry.result ?? []).map(
-          (item: ActionResultInit) => new ActionResult(item)
-        );
-        const state = new (BrowserStateHistory as any)(
-          entry.state?.url ?? '',
-          entry.state?.title ?? '',
-          entry.state?.tabs ?? [],
-          entry.state?.interacted_element ?? [],
-          entry.state?.screenshot_path ?? null
-        ) as BrowserStateHistory;
-        const metadata = entry.metadata
-          ? new StepMetadata(
-              entry.metadata.step_start_time,
-              entry.metadata.step_end_time,
-              entry.metadata.step_number,
-              entry.metadata.step_interval ?? null
-            )
-          : null;
-        return new AgentHistory(
-          modelOutput,
-          result,
-          state,
-          metadata,
-          entry.state_message ?? null
-        );
-      }
+    const root = requireHistoryRecord(payload, 'Agent history payload');
+    const rawHistory = root.history ?? [];
+    const historyEntries = requireHistoryArray(
+      rawHistory,
+      'Agent history payload.history',
+      MAX_LOADED_AGENT_HISTORY_ITEMS
     );
+    const historyItems = historyEntries.map((rawEntry, index) => {
+      const entry = requireHistoryRecord(
+        rawEntry,
+        `Agent history entry ${index}`
+      );
+      let modelOutput: AgentOutput | null = null;
+      if (entry.model_output != null) {
+        const rawModelOutput = requireHistoryRecord(
+          entry.model_output,
+          `Agent history entry ${index}.model_output`
+        );
+        if (rawModelOutput.action != null) {
+          requireHistoryArray(
+            rawModelOutput.action,
+            `Agent history entry ${index}.model_output.action`,
+            MAX_LOADED_ACTIONS_PER_HISTORY_ITEM
+          );
+        }
+        modelOutput = outputModel.fromJSON(rawModelOutput);
+      }
+
+      const rawResults = requireHistoryArray(
+        entry.result ?? [],
+        `Agent history entry ${index}.result`,
+        MAX_LOADED_RESULTS_PER_HISTORY_ITEM
+      );
+      const result = rawResults.map((item, resultIndex) => {
+        const rawResult = requireHistoryRecord(
+          item,
+          `Agent history entry ${index}.result[${resultIndex}]`
+        );
+        return new ActionResult(rawResult as ActionResultInit);
+      });
+
+      const rawState = requireHistoryRecord(
+        entry.state ?? {},
+        `Agent history entry ${index}.state`
+      );
+      const tabs = requireHistoryArray(
+        rawState.tabs ?? [],
+        `Agent history entry ${index}.state.tabs`,
+        MAX_LOADED_STATE_COLLECTION_ITEMS
+      );
+      const interactedElements = requireHistoryArray(
+        rawState.interacted_element ?? [],
+        `Agent history entry ${index}.state.interacted_element`,
+        MAX_LOADED_STATE_COLLECTION_ITEMS
+      );
+      const state = new (BrowserStateHistory as any)(
+        rawState.url ?? '',
+        rawState.title ?? '',
+        tabs,
+        interactedElements,
+        rawState.screenshot_path ?? null
+      ) as BrowserStateHistory;
+
+      const rawMetadata =
+        entry.metadata == null
+          ? null
+          : requireHistoryRecord(
+              entry.metadata,
+              `Agent history entry ${index}.metadata`
+            );
+      const metadata = rawMetadata
+        ? new StepMetadata(
+            rawMetadata.step_start_time as number,
+            rawMetadata.step_end_time as number,
+            rawMetadata.step_number as number,
+            (rawMetadata.step_interval as number | null | undefined) ?? null
+          )
+        : null;
+      return new AgentHistory(
+        modelOutput,
+        result,
+        state,
+        metadata,
+        (entry.state_message as string | null | undefined) ?? null
+      );
+    });
     return new AgentHistoryList(historyItems);
   }
 

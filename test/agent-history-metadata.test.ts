@@ -9,6 +9,7 @@ import {
   AgentHistoryList,
   AgentOutput,
   MAX_AGENT_HISTORY_FILE_BYTES,
+  MAX_LOADED_AGENT_HISTORY_ITEMS,
   StepMetadata,
 } from '../src/agent/views.js';
 
@@ -121,6 +122,43 @@ describe('Agent history metadata alignment', () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects malformed or excessive history collections', () => {
+    expect(() =>
+      AgentHistoryList.load_from_dict({ history: {} } as any, AgentOutput)
+    ).toThrow('payload.history must be an array');
+    expect(() =>
+      AgentHistoryList.load_from_dict({ history: [null] } as any, AgentOutput)
+    ).toThrow('entry 0 must be an object');
+    expect(() =>
+      AgentHistoryList.load_from_dict(
+        { history: [{ result: {} }] } as any,
+        AgentOutput
+      )
+    ).toThrow('entry 0.result must be an array');
+    expect(() =>
+      AgentHistoryList.load_from_dict(
+        {
+          history: [
+            {
+              model_output: { action: new Array(1_001).fill({}) },
+            },
+          ],
+        } as any,
+        AgentOutput
+      )
+    ).toThrow('model_output.action must contain at most 1000 items');
+    expect(() =>
+      AgentHistoryList.load_from_dict(
+        {
+          history: new Array(MAX_LOADED_AGENT_HISTORY_ITEMS + 1).fill({}),
+        } as any,
+        AgentOutput
+      )
+    ).toThrow(
+      `payload.history must contain at most ${MAX_LOADED_AGENT_HISTORY_ITEMS} items`
+    );
   });
 
   it('preserves existing history when atomic replacement fails', () => {
