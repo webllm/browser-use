@@ -9,6 +9,10 @@ import {
   StorageStateSavedEvent,
 } from '../events.js';
 import { BaseWatchdog } from './base.js';
+import {
+  readBoundedStorageStateFile,
+  serializeBoundedStorageState,
+} from '../storage-state-limits.js';
 
 type StorageStatePayload = {
   cookies?: unknown[];
@@ -140,7 +144,7 @@ export class StorageStateWatchdog extends BaseWatchdog {
     ensurePrivateDirectoryIfCreated(dirPath);
 
     const tempPath = `${targetPath}.tmp`;
-    writePrivateFile(tempPath, JSON.stringify(snapshot, null, 2));
+    writePrivateFile(tempPath, serializeBoundedStorageState(snapshot, 2));
 
     if (fs.existsSync(targetPath)) {
       const backupPath = `${targetPath}.bak`;
@@ -183,8 +187,9 @@ export class StorageStateWatchdog extends BaseWatchdog {
       return;
     }
 
-    const raw = fs.readFileSync(targetPath, 'utf-8');
-    const parsed = JSON.parse(raw) as StorageStatePayload;
+    const parsed = readBoundedStorageStateFile(
+      targetPath
+    ) as StorageStatePayload;
     const cookies = Array.isArray(parsed.cookies) ? parsed.cookies : [];
     const origins = Array.isArray(parsed.origins) ? parsed.origins : [];
 
@@ -296,7 +301,7 @@ export class StorageStateWatchdog extends BaseWatchdog {
   private _snapshotStorageState(state: StorageStatePayload) {
     const cookies = Array.isArray(state.cookies) ? state.cookies : [];
     const origins = Array.isArray(state.origins) ? state.origins : [];
-    return JSON.stringify({
+    return serializeBoundedStorageState({
       cookies,
       origins,
     });

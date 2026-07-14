@@ -12,6 +12,7 @@ import {
   StorageStateSavedEvent,
 } from '../src/browser/events.js';
 import { StorageStateWatchdog } from '../src/browser/watchdogs/storage-state-watchdog.js';
+import { MAX_STORAGE_STATE_FILE_BYTES } from '../src/browser/storage-state-limits.js';
 
 const createTempStoragePath = () => {
   const tempDir = fs.mkdtempSync(
@@ -102,6 +103,28 @@ describe('storage state watchdog alignment', () => {
       expect(JSON.parse(fs.readFileSync(storagePath, 'utf-8'))).toEqual(
         originalState
       );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects oversized storage state before creating the browser context', () => {
+    const { tempDir, storagePath } = createTempStoragePath();
+    try {
+      fs.writeFileSync(storagePath, '{}');
+      fs.truncateSync(storagePath, MAX_STORAGE_STATE_FILE_BYTES + 1);
+      const session = new BrowserSession({
+        profile: {
+          user_data_dir: null,
+          storage_state: storagePath,
+        },
+      });
+
+      expect(() =>
+        (session as any)._toPlaywrightOptions(
+          session.browser_profile.kwargs_for_new_context()
+        )
+      ).toThrow(`exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

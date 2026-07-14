@@ -61,6 +61,10 @@ import { BrowserSession, systemChrome } from '../src/browser/session.js';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { DEFAULT_MAX_AUTO_DOWNLOAD_BYTES } from '../src/browser/download-limits.js';
 import {
+  MAX_STORAGE_STATE_FILE_BYTES,
+  MAX_STORAGE_STATE_ORIGINS,
+} from '../src/browser/storage-state-limits.js';
+import {
   DownloadProgressEvent,
   TabCreatedEvent,
 } from '../src/browser/events.js';
@@ -4683,6 +4687,60 @@ describe('Storage State', () => {
         expect(fs.statSync(statePath).mode & 0o777).toBe(0o600);
       }
     } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not save storage state that exceeds structural limits', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storage-test-'));
+    const statePath = path.join(tempDir, 'state.json');
+    const session = new BrowserSession();
+    session.browser_context = {
+      storageState: vi.fn(async () => ({
+        cookies: [],
+        origins: Array(MAX_STORAGE_STATE_ORIGINS + 1).fill({}),
+      })),
+    } as any;
+    const warningSpy = vi
+      .spyOn(session.logger, 'warning')
+      .mockImplementation(() => {});
+
+    try {
+      await session.save_storage_state(statePath);
+
+      expect(fs.existsSync(statePath)).toBe(false);
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`exceeds ${MAX_STORAGE_STATE_ORIGINS} origins`)
+      );
+    } finally {
+      warningSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not load oversized storage state files', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storage-test-'));
+    const statePath = path.join(tempDir, 'state.json');
+    fs.writeFileSync(statePath, '{}');
+    fs.truncateSync(statePath, MAX_STORAGE_STATE_FILE_BYTES + 1);
+    const addCookies = vi.fn(async () => {});
+    const newPage = vi.fn(async () => ({}));
+    const session = new BrowserSession();
+    session.browser_context = { addCookies, newPage } as any;
+    const warningSpy = vi
+      .spyOn(session.logger, 'warning')
+      .mockImplementation(() => {});
+
+    try {
+      await session.load_storage_state(statePath);
+
+      expect(addCookies).not.toHaveBeenCalled();
+      expect(newPage).not.toHaveBeenCalled();
+      expect(warningSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`exceeds ${MAX_STORAGE_STATE_FILE_BYTES} bytes`)
+      );
+    } finally {
+      warningSpy.mockRestore();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });

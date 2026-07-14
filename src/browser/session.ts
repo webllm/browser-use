@@ -44,6 +44,10 @@ import {
 } from './dropdown-options.js';
 import { getProcessCommandLine } from '../process-identity.js';
 import {
+  readBoundedStorageStateFile,
+  serializeBoundedStorageState,
+} from './storage-state-limits.js';
+import {
   EventBus,
   type EventDispatchOptions,
   type EventPayload,
@@ -1823,7 +1827,7 @@ export class BrowserSession {
         this._assertClientCertificatesScoped(rawVal);
       }
       const valueToConvert =
-        rawKey === 'storage_state' && this._has_url_access_restrictions()
+        rawKey === 'storage_state'
           ? this._prepareStorageStateForContext(rawVal)
           : rawVal;
       const convertedValue = this._toPlaywrightOptions(valueToConvert);
@@ -1881,11 +1885,11 @@ export class BrowserSession {
       return value;
     }
 
-    let storageState = value;
+    let storageState: unknown = value;
     if (typeof value === 'string') {
       const resolvedPath = path.resolve(value);
       try {
-        storageState = JSON.parse(fs.readFileSync(resolvedPath, 'utf-8'));
+        storageState = readBoundedStorageStateFile(resolvedPath);
       } catch (error) {
         throw new BrowserError(
           `Cannot safely load storage_state from ${resolvedPath}: ${(error as Error).message}`
@@ -1898,9 +1902,13 @@ export class BrowserSession {
       typeof storageState !== 'object' ||
       Array.isArray(storageState)
     ) {
-      throw new BrowserError(
-        'storage_state must contain a JSON object when domain restrictions are configured.'
-      );
+      throw new BrowserError('storage_state must contain a JSON object.');
+    }
+
+    try {
+      serializeBoundedStorageState(storageState);
+    } catch (error) {
+      throw new BrowserError((error as Error).message);
     }
 
     return this._sanitize_storage_state_for_save(storageState);
@@ -5033,10 +5041,14 @@ export class BrowserSession {
       const rawStorageState = await this.browser_context.storageState();
       const storageState =
         this._sanitize_storage_state_for_save(rawStorageState);
+      const serializedStorageState = serializeBoundedStorageState(
+        storageState,
+        2
+      );
 
       // Write to temporary file first
       const tempPath = `${resolvedPath}.tmp`;
-      writePrivateStorageFile(tempPath, JSON.stringify(storageState, null, 2));
+      writePrivateStorageFile(tempPath, serializedStorageState);
 
       // Backup existing file if present
       if (fs.existsSync(resolvedPath)) {
@@ -5081,8 +5093,7 @@ export class BrowserSession {
         return;
       }
 
-      const storageStateContent = fs.readFileSync(resolvedPath, 'utf-8');
-      const storageState = JSON.parse(storageStateContent);
+      const storageState = readBoundedStorageStateFile(resolvedPath);
 
       if (this.browser_context?.addCookies) {
         // Add cookies to context
