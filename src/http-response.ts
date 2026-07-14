@@ -48,19 +48,31 @@ export const runWithHttpTimeout = async <T>(
   upstreamSignal?: AbortSignal | null
 ): Promise<T> => {
   const controller = new AbortController();
+  let rejectCancellation: (reason: unknown) => void = () => undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const abortRequest = (reason: unknown) => {
+    if (controller.signal.aborted) return;
+    controller.abort(reason);
+    rejectCancellation(reason);
+  };
   const onUpstreamAbort = () =>
-    controller.abort(upstreamSignal?.reason ?? new Error('Request aborted'));
+    abortRequest(upstreamSignal?.reason ?? new Error('Request aborted'));
   if (upstreamSignal?.aborted) {
     onUpstreamAbort();
   } else {
     upstreamSignal?.addEventListener('abort', onUpstreamAbort, { once: true });
   }
   const timeout = setTimeout(
-    () => controller.abort(new Error('HTTP request timed out')),
+    () => abortRequest(new Error('HTTP request timed out')),
     normalizeRequestTimeout(timeoutMs)
   );
   try {
-    return await operation(controller.signal);
+    const operationPromise = Promise.resolve().then(() =>
+      operation(controller.signal)
+    );
+    return await Promise.race([operationPromise, cancellation]);
   } finally {
     clearTimeout(timeout);
     upstreamSignal?.removeEventListener('abort', onUpstreamAbort);

@@ -69,4 +69,26 @@ describe('bounded HTTP responses', () => {
       )
     ).rejects.toThrow('HTTP request timed out');
   });
+
+  it('rejects at the deadline when an HTTP adapter ignores abort signals', async () => {
+    await expect(
+      runWithHttpTimeout(
+        async () => await new Promise<never>(() => undefined),
+        5
+      )
+    ).rejects.toThrow('HTTP request timed out');
+  });
+
+  it('propagates upstream cancellation when an HTTP adapter ignores it', async () => {
+    const upstream = new AbortController();
+    const request = runWithHttpTimeout(
+      async () => await new Promise<never>(() => undefined),
+      30_000,
+      upstream.signal
+    );
+
+    upstream.abort(new Error('caller cancelled'));
+
+    await expect(request).rejects.toThrow('caller cancelled');
+  });
 });
