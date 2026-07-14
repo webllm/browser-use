@@ -729,6 +729,41 @@ export const defaultMessageCompactionSettings =
     compaction_llm: null,
   });
 
+const MAX_MESSAGE_COMPACTION_STEPS = 1_000_000;
+const MAX_MESSAGE_COMPACTION_TRIGGER_CHARS = 16 * 1024 * 1024;
+const MAX_MESSAGE_COMPACTION_TRIGGER_TOKENS = 4 * 1024 * 1024;
+const MAX_MESSAGE_COMPACTION_CHARS_PER_TOKEN = 1_000;
+const MAX_MESSAGE_COMPACTION_KEEP_ITEMS = 100_000;
+const MAX_MESSAGE_COMPACTION_SUMMARY_CHARS = 1024 * 1024;
+
+const requireMessageCompactionInteger = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be an integer between ${minimum} and ${maximum}`
+    );
+  }
+  return value;
+};
+
+const requireMessageCompactionNumber = (
+  name: string,
+  value: number,
+  minimum: number,
+  maximum: number
+) => {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new RangeError(
+      `${name} must be a finite number between ${minimum} and ${maximum}`
+    );
+  }
+  return value;
+};
+
 export const normalizeMessageCompactionSettings = (
   settings: Partial<MessageCompactionSettings> | MessageCompactionSettings
 ): MessageCompactionSettings => {
@@ -743,12 +778,53 @@ export const normalizeMessageCompactionSettings = (
     );
   }
 
+  merged.compact_every_n_steps = requireMessageCompactionInteger(
+    'message_compaction.compact_every_n_steps',
+    merged.compact_every_n_steps,
+    1,
+    MAX_MESSAGE_COMPACTION_STEPS
+  );
+  merged.chars_per_token = requireMessageCompactionNumber(
+    'message_compaction.chars_per_token',
+    merged.chars_per_token,
+    Number.EPSILON,
+    MAX_MESSAGE_COMPACTION_CHARS_PER_TOKEN
+  );
+  merged.keep_last_items = requireMessageCompactionInteger(
+    'message_compaction.keep_last_items',
+    merged.keep_last_items,
+    0,
+    MAX_MESSAGE_COMPACTION_KEEP_ITEMS
+  );
+  merged.summary_max_chars = requireMessageCompactionInteger(
+    'message_compaction.summary_max_chars',
+    merged.summary_max_chars,
+    0,
+    MAX_MESSAGE_COMPACTION_SUMMARY_CHARS
+  );
+
   if (merged.trigger_token_count != null) {
-    merged.trigger_char_count = Math.floor(
-      merged.trigger_token_count * merged.chars_per_token
+    merged.trigger_token_count = requireMessageCompactionInteger(
+      'message_compaction.trigger_token_count',
+      merged.trigger_token_count,
+      1,
+      MAX_MESSAGE_COMPACTION_TRIGGER_TOKENS
+    );
+    merged.trigger_char_count = requireMessageCompactionInteger(
+      'message_compaction trigger threshold',
+      Math.floor(merged.trigger_token_count * merged.chars_per_token),
+      1,
+      MAX_MESSAGE_COMPACTION_TRIGGER_CHARS
     );
   } else if (merged.trigger_char_count == null) {
     merged.trigger_char_count = 40000;
+  } else {
+    merged.trigger_char_count = requireMessageCompactionInteger(
+      'message_compaction.trigger_char_count',
+      merged.trigger_char_count,
+      1,
+      MAX_MESSAGE_COMPACTION_TRIGGER_CHARS
+    );
   }
 
   return merged;

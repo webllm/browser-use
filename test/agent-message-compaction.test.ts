@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BaseChatModel } from '../src/llm/base.js';
 import { Agent } from '../src/agent/service.js';
-import { AgentStepInfo } from '../src/agent/views.js';
+import {
+  AgentStepInfo,
+  normalizeMessageCompactionSettings,
+} from '../src/agent/views.js';
 import {
   HistoryItem,
   MessageManagerState,
@@ -53,6 +56,35 @@ const appendHistoryItems = (
 };
 
 describe('Agent message compaction', () => {
+  it.each([
+    ['compact_every_n_steps', Number.POSITIVE_INFINITY],
+    ['compact_every_n_steps', 0],
+    ['trigger_char_count', Number.NaN],
+    ['trigger_char_count', -1],
+    ['trigger_token_count', Number.POSITIVE_INFINITY],
+    ['chars_per_token', 0],
+    ['keep_last_items', -1],
+    ['summary_max_chars', Number.POSITIVE_INFINITY],
+  ])('rejects invalid %s values', (key, value) => {
+    const settings = {
+      trigger_char_count: null,
+      trigger_token_count: null,
+      [key]: value,
+    };
+
+    expect(() => normalizeMessageCompactionSettings(settings)).toThrow();
+  });
+
+  it('rejects token thresholds whose derived character count is excessive', () => {
+    expect(() =>
+      normalizeMessageCompactionSettings({
+        trigger_char_count: null,
+        trigger_token_count: 4_000_000,
+        chars_per_token: 1_000,
+      })
+    ).toThrow(/trigger threshold/);
+  });
+
   it('compacts history into compacted_memory when thresholds are met', async () => {
     const compactionInvoke = vi.fn(async () => ({
       completion: 'Summary of history',
