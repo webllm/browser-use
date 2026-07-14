@@ -1,8 +1,10 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CONFIG } from '../../config.js';
 import {
+  HttpRequestTimeoutError,
   readBoundedResponseJson,
   readBoundedResponseText,
+  runWithHttpTimeout,
 } from '../../http-response.js';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
@@ -271,57 +273,51 @@ export class ChatBrowserUse implements BaseChatModel {
     payload: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<Record<string, unknown>> {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), this.timeoutMs);
-    const onAbort = () => controller.abort();
-
-    if (signal) {
-      if (signal.aborted) {
-        controller.abort();
-      } else {
-        signal.addEventListener('abort', onAbort, { once: true });
-      }
-    }
-
     try {
-      const response = await this.fetchImplementation(
-        `${this.baseUrl}/v1/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-          redirect: 'error',
-        }
-      );
-
-      if (!response.ok) {
-        let detail = '';
-        try {
-          const errorText = await readBoundedResponseText(
-            response,
-            MAX_ERROR_RESPONSE_BYTES
+      return await runWithHttpTimeout(
+        async (requestSignal) => {
+          const response = await this.fetchImplementation(
+            `${this.baseUrl}/v1/chat/completions`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(payload),
+              signal: requestSignal,
+              redirect: 'error',
+            }
           );
-          try {
-            detail = getJsonErrorDetail(JSON.parse(errorText));
-          } catch {
-            detail = errorText;
-          }
-        } catch (error) {
-          detail = error instanceof Error ? error.message : '';
-        }
-        throw new HttpStatusError(response.status, detail);
-      }
 
-      const result = await readBoundedResponseJson(response);
-      return result && typeof result === 'object'
-        ? (result as Record<string, unknown>)
-        : {};
+          if (!response.ok) {
+            let detail = '';
+            try {
+              const errorText = await readBoundedResponseText(
+                response,
+                MAX_ERROR_RESPONSE_BYTES
+              );
+              try {
+                detail = getJsonErrorDetail(JSON.parse(errorText));
+              } catch {
+                detail = errorText;
+              }
+            } catch (error) {
+              detail = error instanceof Error ? error.message : '';
+            }
+            throw new HttpStatusError(response.status, detail);
+          }
+
+          const result = await readBoundedResponseJson(response);
+          return result && typeof result === 'object'
+            ? (result as Record<string, unknown>)
+            : {};
+        },
+        this.timeoutMs,
+        signal
+      );
     } catch (error) {
-      if (isAbortError(error) && !signal?.aborted) {
+      if (error instanceof HttpRequestTimeoutError) {
         throw new ModelProviderError(
           `Request timed out after ${Math.round(this.timeoutMs / 1000)}s`,
           408,
@@ -329,9 +325,6 @@ export class ChatBrowserUse implements BaseChatModel {
         );
       }
       throw error;
-    } finally {
-      clearTimeout(timeoutHandle);
-      signal?.removeEventListener('abort', onAbort);
     }
   }
 

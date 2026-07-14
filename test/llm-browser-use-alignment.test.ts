@@ -306,6 +306,44 @@ describe('ChatBrowserUse alignment', () => {
     );
   });
 
+  it('times out when the Browser Use fetch adapter ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () => await new Promise<Response>(() => undefined)
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      timeout: 0.01,
+      maxRetries: 1,
+    });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      { statusCode: 408 }
+    );
+  });
+
+  it('times out when the Browser Use response stream ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {
+              // Intentionally never enqueue or close.
+            },
+          }),
+          { status: 200 }
+        )
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      timeout: 0.01,
+      maxRetries: 1,
+    });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      { statusCode: 408 }
+    );
+  });
+
   it('requires BROWSER_USE_API_KEY when apiKey is not provided', () => {
     delete process.env.BROWSER_USE_API_KEY;
     expect(() => new ChatBrowserUse()).toThrow(/BROWSER_USE_API_KEY/);
