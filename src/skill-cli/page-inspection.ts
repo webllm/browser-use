@@ -4,10 +4,158 @@ export const MAX_CLI_ELEMENT_ATTRIBUTES = 64;
 export const MAX_CLI_ATTRIBUTE_NAME_CHARS = 256;
 export const MAX_CLI_ATTRIBUTE_VALUE_CHARS = 4 * 1024;
 export const MAX_CLI_ELEMENT_TEXT_NODES = 50_000;
+export const MAX_CLI_EVAL_OUTPUT_CHARS = 100_000;
+export const MAX_CLI_EVAL_ENTRIES = 5_000;
+export const MAX_CLI_EVAL_DEPTH = 20;
 
 type PageEvaluator = {
   evaluate: (...args: any[]) => Promise<unknown>;
 };
+
+export type BoundedCliEvaluation = {
+  ok: boolean;
+  output?: string;
+  truncated?: boolean;
+  error?: string;
+};
+
+export const evaluateBoundedCliScript = async (
+  page: PageEvaluator,
+  script: string
+): Promise<BoundedCliEvaluation> =>
+  (await page.evaluate(
+    async ({
+      code,
+      maxOutputChars,
+      maxEntries,
+      maxDepth,
+    }: {
+      code: string;
+      maxOutputChars: number;
+      maxEntries: number;
+      maxDepth: number;
+    }) => {
+      try {
+        const raw = await Promise.resolve((0, eval)(code));
+        let remainingTextChars = maxOutputChars;
+        let remainingEntries = maxEntries;
+        let truncated = false;
+        const seen = new WeakSet<object>();
+
+        // Array destructuring prevents esbuild's keepNames transform from
+        // introducing a free `__name` helper into this serialized callback.
+        const [takeText] = [
+          (value: string, limit = maxOutputChars) => {
+            const length = Math.min(value.length, limit, remainingTextChars);
+            const result = value.slice(0, length);
+            remainingTextChars -= result.length;
+            if (result.length < value.length) truncated = true;
+            return result;
+          },
+        ];
+        const [boundedClone] = [
+          (value: unknown, depth = 0): unknown => {
+            if (value === undefined) return '[undefined]';
+            if (value === null) return null;
+            if (typeof value === 'string') return takeText(value);
+            if (typeof value === 'boolean' || typeof value === 'number') {
+              return value;
+            }
+            if (typeof value === 'bigint' || typeof value === 'symbol') {
+              return takeText(String(value), 256);
+            }
+            if (typeof value === 'function') {
+              return `[Function ${takeText(value.name || 'anonymous', 128)}]`;
+            }
+            if (depth >= maxDepth || remainingEntries <= 0) {
+              truncated = true;
+              return '[Truncated]';
+            }
+
+            const objectValue = value as object;
+            if (seen.has(objectValue)) return '[Circular]';
+            seen.add(objectValue);
+
+            if (Array.isArray(value)) {
+              const output: unknown[] = [];
+              const count = Math.min(value.length, remainingEntries);
+              if (count < value.length) truncated = true;
+              for (let index = 0; index < count; index += 1) {
+                remainingEntries -= 1;
+                try {
+                  output.push(boundedClone(value[index], depth + 1));
+                } catch {
+                  output.push('[Unreadable]');
+                }
+              }
+              return output;
+            }
+
+            const output = Object.create(null) as Record<string, unknown>;
+            const record = value as Record<string, unknown>;
+            let propertyCount = 0;
+            try {
+              for (const key in record) {
+                if (!Object.prototype.hasOwnProperty.call(record, key)) {
+                  continue;
+                }
+                if (remainingEntries <= 0 || remainingTextChars <= 0) {
+                  truncated = true;
+                  break;
+                }
+                remainingEntries -= 1;
+                propertyCount += 1;
+                const safeKey = takeText(key, 256);
+                if (!safeKey) break;
+                try {
+                  output[safeKey] = boundedClone(record[key], depth + 1);
+                } catch {
+                  output[safeKey] = '[Unreadable]';
+                }
+              }
+            } catch {
+              truncated = true;
+            }
+            return propertyCount === 0 ? '[Object]' : output;
+          },
+        ];
+
+        let output: string;
+        if (raw === undefined) {
+          output = 'undefined';
+        } else {
+          try {
+            output = JSON.stringify(boundedClone(raw));
+          } catch {
+            output = '[Unserializable]';
+            truncated = true;
+          }
+        }
+        if (output.length > maxOutputChars) {
+          output = output.slice(0, maxOutputChars);
+          truncated = true;
+        }
+        return { ok: true, output, truncated };
+      } catch (error: unknown) {
+        let message = 'Unknown evaluation error';
+        try {
+          message =
+            error instanceof Error
+              ? error.message
+              : String(error ?? 'Unknown evaluation error');
+        } catch {
+          // Keep the safe fallback message.
+        }
+        return { ok: false, error: message.slice(0, 2_000) };
+      }
+    },
+    {
+      code: script,
+      maxOutputChars: MAX_CLI_EVAL_OUTPUT_CHARS,
+      maxEntries: MAX_CLI_EVAL_ENTRIES,
+      maxDepth: MAX_CLI_EVAL_DEPTH,
+    }
+  )) as BoundedCliEvaluation;
 
 export const readBoundedCliElementData = async (
   page: PageEvaluator,

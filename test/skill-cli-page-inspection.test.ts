@@ -1,8 +1,11 @@
+import { chromium } from 'playwright';
 import { describe, expect, it } from 'vitest';
 import {
   MAX_CLI_ATTRIBUTE_VALUE_CHARS,
   MAX_CLI_ELEMENT_ATTRIBUTES,
   MAX_CLI_ELEMENT_TEXT_CHARS,
+  MAX_CLI_EVAL_OUTPUT_CHARS,
+  evaluateBoundedCliScript,
   readBoundedCliElementData,
 } from '../src/skill-cli/page-inspection.js';
 
@@ -100,5 +103,50 @@ describe('bounded skill CLI page inspection', () => {
     expect(text).toHaveLength(MAX_CLI_ELEMENT_TEXT_CHARS);
     expect(Object.keys(attributes)).toHaveLength(MAX_CLI_ELEMENT_ATTRIBUTES);
     expect(attributes['data-0']).toHaveLength(MAX_CLI_ATTRIBUTE_VALUE_CHARS);
+  });
+
+  it('bounds eval values before they leave the page context', async () => {
+    const page = {
+      evaluate: async (fn: (payload: any) => unknown, payload: any) =>
+        await fn(payload),
+    };
+
+    const result = await evaluateBoundedCliScript(
+      page,
+      `({ text: 'x'.repeat(${MAX_CLI_EVAL_OUTPUT_CHARS * 2}) })`
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.truncated).toBe(true);
+    expect(result.output?.length).toBeLessThanOrEqual(
+      MAX_CLI_EVAL_OUTPUT_CHARS
+    );
+  });
+
+  it('serializes eval callbacks without relying on a page-global __name helper', async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.evaluate(() => {
+        Object.defineProperty(globalThis, '__name', {
+          value: 42,
+          configurable: false,
+          writable: false,
+        });
+      });
+
+      const result = await evaluateBoundedCliScript(
+        page,
+        '({ answer: 42, nested: [true, null] })'
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        output: '{"answer":42,"nested":[true,null]}',
+        truncated: false,
+      });
+    } finally {
+      await browser.close();
+    }
   });
 });

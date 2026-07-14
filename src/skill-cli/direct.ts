@@ -21,7 +21,10 @@ import {
   type ProcessCommandLineReader,
 } from '../process-identity.js';
 import { formatDirectUsage, isDirectCommandName } from './direct-commands.js';
-import { readBoundedCliElementData } from './page-inspection.js';
+import {
+  evaluateBoundedCliScript,
+  readBoundedCliElementData,
+} from './page-inspection.js';
 
 export interface DirectModeState {
   mode?: 'local' | 'remote';
@@ -1595,10 +1598,26 @@ export const run_direct_command = async (
       if (!script) {
         throw new Error('Missing js');
       }
-      const result = await session.execute_javascript?.(script);
+      const page = await session.get_current_page?.();
+      if (!page?.evaluate) {
+        throw new Error('No active page available for eval');
+      }
+      await validateDirectPageAfterAction(session, page);
+      let evaluation;
+      try {
+        evaluation = await evaluateBoundedCliScript(page, script);
+      } finally {
+        await validateDirectPageAfterAction(session, page);
+      }
+      if (!evaluation.ok) {
+        throw new Error(evaluation.error || 'JavaScript evaluation failed');
+      }
+      const truncationNote = evaluation.truncated
+        ? '\n...[result truncated by browser-use safety limits]'
+        : '';
       writeLine(
         environment.stdout,
-        result === undefined ? 'undefined' : JSON.stringify(result)
+        `${evaluation.output ?? 'undefined'}${truncationNote}`
       );
     } else {
       throw new Error(`Unknown command: ${command}`);

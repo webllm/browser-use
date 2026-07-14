@@ -1247,6 +1247,64 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('bounds eval output inside the page before writing direct-mode output', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const evaluate = vi.fn(
+      async (fn: (input: any) => unknown, input: any) => await fn(input)
+    );
+    const session = {
+      start: vi.fn(async () => {}),
+      get_current_page: vi.fn(async () => ({
+        url: () => 'https://example.com',
+        evaluate,
+      })),
+      validate_page_after_action: vi.fn(async () => {}),
+      execute_javascript: vi.fn(async () => {
+        throw new Error('unbounded eval path must not be used');
+      }),
+      event_bus: { stop: vi.fn(async () => {}) },
+      detach_all_watchdogs: vi.fn(),
+    };
+
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        active_url: 'https://example.com',
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(
+        ['eval', "'x'.repeat(200000)"],
+        {
+          state_file: stateFile,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+          session_factory: () => session as any,
+        }
+      );
+
+      expect(exitCode).toBe(0);
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      expect(session.execute_javascript).not.toHaveBeenCalled();
+      expect(session.validate_page_after_action).toHaveBeenCalledTimes(2);
+      expect(stdout.read()).toContain(
+        '...[result truncated by browser-use safety limits]'
+      );
+      expect(stderr.read()).toBe('');
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('supports direct-mode get commands and extract placeholder output', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

@@ -8,7 +8,10 @@ import {
   MAX_PAGE_HTML_SELECTOR_CHARS,
 } from '../browser/page-content.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
-import { readBoundedCliElementData } from './page-inspection.js';
+import {
+  evaluateBoundedCliScript,
+  readBoundedCliElementData,
+} from './page-inspection.js';
 
 export interface SkillCliServerOptions {
   registry?: SessionRegistry;
@@ -515,8 +518,30 @@ export class SkillCliServer {
       if (!script) {
         throw new Error('Missing js');
       }
+      const page = await browser_session.get_current_page?.();
+      if (!page?.evaluate) {
+        throw new Error('No active page available for eval');
+      }
+      const evaluation = await this._run_with_page_validation(
+        browser_session,
+        () => evaluateBoundedCliScript(page, script)
+      );
+      if (!evaluation.ok) {
+        throw new Error(evaluation.error || 'JavaScript evaluation failed');
+      }
+      let result: unknown = evaluation.output;
+      if (evaluation.output === 'undefined') {
+        result = undefined;
+      } else if (evaluation.output !== undefined) {
+        try {
+          result = JSON.parse(evaluation.output);
+        } catch {
+          // A size-truncated JSON value is intentionally returned as text.
+        }
+      }
       return {
-        result: await browser_session.execute_javascript(script),
+        result,
+        ...(evaluation.truncated ? { truncated: true } : {}),
       };
     }
 

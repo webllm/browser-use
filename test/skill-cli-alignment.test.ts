@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { BrowserSession } from '../src/browser/session.js';
+import { MAX_CLI_EVAL_OUTPUT_CHARS } from '../src/skill-cli/page-inspection.js';
 import {
   Request,
   Response,
@@ -597,17 +598,14 @@ describe('skill-cli alignment', () => {
     const selectSpy = vi
       .spyOn(session, 'select_dropdown_option')
       .mockResolvedValue(['selected'] as any);
-    const evalSpy = vi
-      .spyOn(session, 'execute_javascript')
-      .mockResolvedValue({ ok: true });
     const getPageHtmlSpy = vi
       .spyOn(session, 'get_page_html')
       .mockResolvedValue('<html></html>');
+    const pageEvaluate = vi.fn(
+      async (fn: (input: any) => unknown, input: any) => await fn(input)
+    );
     vi.spyOn(session, 'get_current_page').mockResolvedValue({
-      evaluate: vi.fn(
-        async (fn: (selector: string) => string | null, selector: string) =>
-          fn(selector)
-      ),
+      evaluate: pageEvaluate,
     } as any);
 
     const registry = new SessionRegistry({
@@ -691,6 +689,14 @@ describe('skill-cli alignment', () => {
         params: { js: '({ ok: true })' },
       })
     );
+    const oversizedEvaluation = await server.handle_request(
+      new Request({
+        id: 'r27-large',
+        action: 'eval',
+        session: 'default',
+        params: { js: "'x'.repeat(200000)" },
+      })
+    );
 
     expect(input.success).toBe(true);
     expect(inputSpy).toHaveBeenCalledWith(node, 'hello', { clear: false });
@@ -713,7 +719,12 @@ describe('skill-cli alignment', () => {
     expect(getPageHtmlSpy).toHaveBeenCalledTimes(1);
     expect(evaluated.success).toBe(true);
     expect((evaluated.data as any).result).toEqual({ ok: true });
-    expect(evalSpy).toHaveBeenCalledWith('({ ok: true })');
+    expect(oversizedEvaluation.success).toBe(true);
+    expect((oversizedEvaluation.data as any).truncated).toBe(true);
+    expect((oversizedEvaluation.data as any).result.length).toBeLessThanOrEqual(
+      MAX_CLI_EVAL_OUTPUT_CHARS
+    );
+    expect(pageEvaluate).toHaveBeenCalled();
   });
 
   it('supports get and extract actions', async () => {
