@@ -8,7 +8,8 @@ const MAX_STRING_LENGTH = 100_000;
 const MAX_URL_LENGTH = 100_000;
 const MAX_TASK_LENGTH = 100_000;
 const MAX_COMMENT_LENGTH = 2_000;
-const MAX_FILE_CONTENT_SIZE = 50 * 1024 * 1024;
+export const MAX_FILE_CONTENT_SIZE = 50 * 1024 * 1024;
+const FILE_READ_CHUNK_SIZE = 64 * 1024;
 const MAX_LLM_MODEL_LENGTH = 200;
 const MAX_END_REASON_LENGTH = 100;
 
@@ -19,6 +20,43 @@ const estimateBase64DecodedBytes = (value: string) =>
 
 const extractBase64Payload = (value: string) =>
   value.includes(',') ? value.split(',').slice(1).join(',') : value;
+
+const readBoundedOutputFile = async (filePath: string) => {
+  const nonBlockingFlag =
+    process.platform === 'win32' ? 0 : fs.constants.O_NONBLOCK;
+  const handle = await fs.promises.open(
+    filePath,
+    fs.constants.O_RDONLY | nonBlockingFlag
+  );
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      throw new Error(`Agent output path is not a regular file: ${filePath}`);
+    }
+    if (stats.size >= MAX_FILE_CONTENT_SIZE) {
+      return null;
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes < MAX_FILE_CONTENT_SIZE) {
+      const remaining = MAX_FILE_CONTENT_SIZE - totalBytes;
+      const buffer = Buffer.allocUnsafe(
+        Math.min(FILE_READ_CHUNK_SIZE, remaining)
+      );
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    if (totalBytes >= MAX_FILE_CONTENT_SIZE) {
+      return null;
+    }
+    return Buffer.concat(chunks, totalBytes);
+  } finally {
+    await handle.close();
+  }
+};
 
 interface AgentReference {
   task_id: string;
@@ -234,13 +272,8 @@ export class CreateAgentOutputFileEvent extends BaseEvent {
 
   static async fromAgentAndFile(agent: AgentReference, outputPath: string) {
     const resolved = path.resolve(outputPath);
-    await fs.promises.access(resolved, fs.constants.F_OK);
-    const stats = await fs.promises.stat(resolved);
-    let fileContent: string | null = null;
-    if (stats.size < MAX_FILE_CONTENT_SIZE) {
-      const data = await fs.promises.readFile(resolved);
-      fileContent = data.toString('base64');
-    }
+    const data = await readBoundedOutputFile(resolved);
+    const fileContent = data?.toString('base64') ?? null;
     return new CreateAgentOutputFileEvent({
       task_id: String(agent.task_id),
       device_id: getDeviceId(agent),

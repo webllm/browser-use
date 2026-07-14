@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CreateAgentOutputFileEvent,
@@ -5,6 +8,7 @@ import {
   CreateAgentStepEvent,
   UpdateAgentTaskEvent,
   UpdateAgentSessionEvent,
+  MAX_FILE_CONTENT_SIZE,
 } from '../src/agent/cloud-events.js';
 
 describe('cloud events alignment', () => {
@@ -234,6 +238,38 @@ describe('cloud events alignment', () => {
           content_type: 'image/gif',
         })
     ).toThrow('file_content exceeds maximum size of 52428800 bytes');
+  });
+
+  it('bounds output files before base64 encoding them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-cloud-file-'));
+    const outputPath = path.join(tempDir, 'output.gif');
+    fs.writeFileSync(outputPath, 'GIF89a');
+
+    try {
+      const smallEvent = await CreateAgentOutputFileEvent.fromAgentAndFile(
+        { task_id: 'task-file', browser_session: { id: 'browser' } } as any,
+        outputPath
+      );
+      expect(smallEvent.file_content).toBe(
+        Buffer.from('GIF89a').toString('base64')
+      );
+
+      fs.truncateSync(outputPath, MAX_FILE_CONTENT_SIZE);
+      const oversizedEvent = await CreateAgentOutputFileEvent.fromAgentAndFile(
+        { task_id: 'task-file', browser_session: { id: 'browser' } } as any,
+        outputPath
+      );
+      expect(oversizedEvent.file_content).toBeNull();
+
+      await expect(
+        CreateAgentOutputFileEvent.fromAgentAndFile(
+          { task_id: 'task-file', browser_session: { id: 'browser' } } as any,
+          tempDir
+        )
+      ).rejects.toThrow('not a regular file');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('CreateAgentStepEvent enforces python-aligned screenshot data URL size guard', () => {
