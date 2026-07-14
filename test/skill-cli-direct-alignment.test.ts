@@ -1555,6 +1555,60 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('rejects oversized screenshots before asking the browser to capture', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-shot-limit-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const stdout = createWritable();
+    const stderr = createWritable();
+    const takeScreenshot = vi.fn(async () =>
+      Buffer.from('image').toString('base64')
+    );
+    const session = {
+      start: vi.fn(async () => {}),
+      get_page_info: vi.fn(async () => ({
+        viewport_width: 100,
+        viewport_height: 100,
+        page_width: 1_000,
+        page_height: 1_000,
+        device_pixel_ratio: 2,
+      })),
+      take_screenshot: takeScreenshot,
+      get_current_page: vi.fn(async () => ({
+        url: () => 'https://example.com',
+      })),
+      event_bus: { stop: vi.fn(async () => {}) },
+      detach_all_watchdogs: vi.fn(),
+    };
+    save_direct_state(
+      {
+        mode: 'local',
+        cdp_url: 'http://127.0.0.1:9222',
+        active_url: 'https://example.com',
+      },
+      stateFile
+    );
+
+    try {
+      const exitCode = await run_direct_command(['screenshot', '--full'], {
+        state_file: stateFile,
+        stdout: stdout.stream,
+        stderr: stderr.stream,
+        session_factory: () => session as any,
+        max_screenshot_pixels: 1_000_000,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(takeScreenshot).not.toHaveBeenCalled();
+      expect(stdout.read()).toBe('');
+      expect(stderr.read()).toContain('maximum pixel count of 1000000');
+    } finally {
+      clear_direct_state(stateFile);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('supports direct-mode cookie commands', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

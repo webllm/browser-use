@@ -73,11 +73,13 @@ const parsePositiveInteger = (
   environmentValue: string | undefined,
   fallback: number
 ): number => {
-  if (Number.isInteger(value) && Number(value) > 0) {
+  if (Number.isSafeInteger(value) && Number(value) > 0) {
     return Number(value);
   }
   const configured = Number(environmentValue ?? fallback);
-  return Number.isInteger(configured) && configured > 0 ? configured : fallback;
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : fallback;
 };
 
 export class CliMCPServer {
@@ -268,6 +270,8 @@ export class CliMCPServer {
     const exitCode = await this.runDirectCommand(argv, {
       stdout: stdout.stream,
       stderr: stderr.stream,
+      max_screenshot_bytes: this.maxScreenshotBytes,
+      max_screenshot_pixels: this.maxScreenshotPixels,
     });
     const output = [stdout.value().trimEnd(), stderr.value().trimEnd()]
       .filter(Boolean)
@@ -320,6 +324,8 @@ export class CliMCPServer {
     const exitCode = await this.runDirectCommand(argv, {
       stdout: stdout.stream,
       stderr: stderr.stream,
+      max_screenshot_bytes: this.maxScreenshotBytes,
+      max_screenshot_pixels: this.maxScreenshotPixels,
     });
     if (exitCode !== 0) {
       return errorResult(

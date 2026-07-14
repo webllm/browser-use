@@ -43,6 +43,8 @@ describe('CliMCPServer', () => {
       expect.objectContaining({
         stdout: expect.any(Object),
         stderr: expect.any(Object),
+        max_screenshot_bytes: expect.any(Number),
+        max_screenshot_pixels: expect.any(Number),
       })
     );
     expect(result.isError).toBeUndefined();

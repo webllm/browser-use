@@ -5436,6 +5436,7 @@ export class BrowserSession {
           // Current viewport dimensions
           viewport_width: window.innerWidth,
           viewport_height: window.innerHeight,
+          device_pixel_ratio: window.devicePixelRatio,
 
           // Total page dimensions
           page_width: Math.max(
@@ -5464,6 +5465,7 @@ export class BrowserSession {
       // Calculate derived values
       const viewport_width = Math.floor(pageData.viewport_width);
       const viewport_height = Math.floor(pageData.viewport_height);
+      const device_pixel_ratio = Number(pageData.device_pixel_ratio);
       const page_width = Math.floor(pageData.page_width);
       const page_height = Math.floor(pageData.page_height);
       const scroll_x = Math.floor(pageData.scroll_x);
@@ -5484,6 +5486,10 @@ export class BrowserSession {
       return {
         viewport_width,
         viewport_height,
+        device_pixel_ratio:
+          Number.isFinite(device_pixel_ratio) && device_pixel_ratio > 0
+            ? device_pixel_ratio
+            : 1,
         page_width,
         page_height,
         scroll_x,

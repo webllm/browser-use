@@ -309,6 +309,8 @@ export interface DirectCliEnvironment {
   }>;
   kill_process?: (pid: number) => void | Promise<void>;
   get_process_command_line?: ProcessCommandLineReader;
+  max_screenshot_bytes?: number | null;
+  max_screenshot_pixels?: number | null;
 }
 
 const DEFAULT_STDOUT: StreamLike = process.stdout;
@@ -391,6 +393,65 @@ const writePrivateBufferFile = (filePath: string, contents: Buffer) => {
   if (process.platform !== 'win32') {
     fs.chmodSync(filePath, 0o600);
   }
+};
+
+const assertDirectScreenshotPixelBudget = async (
+  session: DirectSessionLike,
+  fullPage: boolean,
+  maxPixels: number | null
+) => {
+  if (maxPixels == null) {
+    return;
+  }
+  if (!Number.isSafeInteger(maxPixels) || maxPixels <= 0) {
+    throw new Error('Screenshot pixel limit must be a positive integer');
+  }
+  if (typeof session.get_page_info !== 'function') {
+    throw new Error('Unable to verify screenshot dimensions before capture');
+  }
+  const pageInfo = await session.get_page_info();
+  const cssWidth = Number(
+    fullPage ? pageInfo?.page_width : pageInfo?.viewport_width
+  );
+  const cssHeight = Number(
+    fullPage ? pageInfo?.page_height : pageInfo?.viewport_height
+  );
+  const devicePixelRatio = Number(pageInfo?.device_pixel_ratio ?? 1);
+  if (
+    !Number.isFinite(cssWidth) ||
+    cssWidth <= 0 ||
+    !Number.isFinite(cssHeight) ||
+    cssHeight <= 0 ||
+    !Number.isFinite(devicePixelRatio) ||
+    devicePixelRatio <= 0
+  ) {
+    throw new Error('Unable to verify screenshot dimensions before capture');
+  }
+
+  const width = Math.ceil(cssWidth * devicePixelRatio);
+  const height = Math.ceil(cssHeight * devicePixelRatio);
+  if (width > Math.floor(maxPixels / height)) {
+    throw new Error(`Screenshot exceeds maximum pixel count of ${maxPixels}`);
+  }
+};
+
+const decodeDirectScreenshot = (
+  screenshot: string,
+  maxBytes: number | null
+) => {
+  if (maxBytes != null) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+      throw new Error('Screenshot byte limit must be a positive integer');
+    }
+    if (Buffer.byteLength(screenshot, 'base64') > maxBytes) {
+      throw new Error(`Screenshot exceeds maximum size of ${maxBytes} bytes`);
+    }
+  }
+  const bytes = Buffer.from(screenshot, 'base64');
+  if (maxBytes != null && bytes.length > maxBytes) {
+    throw new Error(`Screenshot exceeds maximum size of ${maxBytes} bytes`);
+  }
+  return bytes;
 };
 
 const isOwnedDirectUserDataDir = (userDataDir: string) => {
@@ -1034,6 +1095,8 @@ export const run_direct_command = async (
     kill_process: options.kill_process ?? defaultKillDirectBrowserProcess,
     get_process_command_line:
       options.get_process_command_line ?? getProcessCommandLine,
+    max_screenshot_bytes: options.max_screenshot_bytes ?? null,
+    max_screenshot_pixels: options.max_screenshot_pixels ?? null,
   };
 
   const { useRemote, args } = extractDirectModeArgs(argv);
@@ -1168,11 +1231,19 @@ export const run_direct_command = async (
         (value) => value !== '--full' && value !== '--full-page'
       );
       const outputPath = outputPathValue ? path.resolve(outputPathValue) : null;
+      await assertDirectScreenshotPixelBudget(
+        session,
+        fullPage,
+        environment.max_screenshot_pixels
+      );
       const screenshot = await session.take_screenshot?.(fullPage);
       if (!screenshot) {
         throw new Error('Failed to capture screenshot');
       }
-      const bytes = Buffer.from(screenshot, 'base64');
+      const bytes = decodeDirectScreenshot(
+        screenshot,
+        environment.max_screenshot_bytes
+      );
       if (outputPath) {
         writePrivateBufferFile(outputPath, bytes);
         writeLine(
