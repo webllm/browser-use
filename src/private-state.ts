@@ -31,8 +31,21 @@ export const readBoundedPrivateFile = (filePath: string, maxBytes: number) => {
   );
   try {
     const stats = fs.fstatSync(descriptor);
-    if (!stats.isFile()) {
+    const currentPathStats = fs.lstatSync(filePath);
+    if (
+      !stats.isFile() ||
+      currentPathStats.isSymbolicLink() ||
+      !currentPathStats.isFile()
+    ) {
       throw new Error(`Private state path is not a regular file: ${filePath}`);
+    }
+    if (
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino ||
+      currentPathStats.dev !== stats.dev ||
+      currentPathStats.ino !== stats.ino
+    ) {
+      throw new Error(`Private state path changed while opening: ${filePath}`);
     }
     if (stats.size > maxBytes) {
       throw new Error(

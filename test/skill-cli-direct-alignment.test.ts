@@ -135,6 +135,37 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('rejects direct state replaced while it is being opened', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const stateFile = path.join(tempDir, 'state.json');
+    const replacementFile = path.join(tempDir, 'replacement.json');
+    fs.writeFileSync(
+      stateFile,
+      JSON.stringify({ mode: 'local', cdp_url: 'http://127.0.0.1:9222' })
+    );
+    fs.writeFileSync(
+      replacementFile,
+      JSON.stringify({ mode: 'remote', session_id: 'replacement' })
+    );
+    const originalOpen = fs.openSync.bind(fs);
+    const openSpy = vi
+      .spyOn(fs, 'openSync')
+      .mockImplementationOnce((...args) => {
+        fs.rmSync(stateFile);
+        fs.renameSync(replacementFile, stateFile);
+        return originalOpen(...args);
+      });
+
+    try {
+      expect(load_direct_state(stateFile)).toEqual({});
+    } finally {
+      openSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('drops invalid direct-mode state field types', () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')

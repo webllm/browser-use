@@ -7,6 +7,7 @@ import {
   getProcessArguments,
   type ProcessArgumentsReader,
 } from '../process-identity.js';
+import { readBoundedPrivateFile } from '../private-state.js';
 
 const TUNNEL_URL_PATTERN = /(https:\/\/\S+\.trycloudflare\.com)/;
 const DEFAULT_TUNNELS_DIR = path.join(os.homedir(), '.browser-use', 'tunnels');
@@ -204,16 +205,7 @@ export class TunnelManager {
     const filePath = this.get_tunnel_file(port);
     let parsed: Partial<TunnelInfo> | null;
     try {
-      const stats = fs.lstatSync(filePath);
-      if (!stats.isFile() || stats.size > MAX_TUNNEL_INFO_BYTES) {
-        this.remove_tunnel_state(port);
-        return null;
-      }
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      if (Buffer.byteLength(raw, 'utf8') > MAX_TUNNEL_INFO_BYTES) {
-        this.remove_tunnel_state(port);
-        return null;
-      }
+      const raw = readBoundedPrivateFile(filePath, MAX_TUNNEL_INFO_BYTES);
       parsed = JSON.parse(raw) as Partial<TunnelInfo> | null;
     } catch {
       this.remove_tunnel_state(port);

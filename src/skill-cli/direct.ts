@@ -19,6 +19,7 @@ import {
   MAX_PAGE_HTML_SELECTOR_CHARS,
 } from '../browser/page-content.js';
 import { isMainModule } from '../entrypoint.js';
+import { readBoundedPrivateFile } from '../private-state.js';
 import {
   getProcessArguments,
   getProcessCommandLine,
@@ -369,14 +370,7 @@ const normalizeDirectState = (value: unknown): DirectModeState => {
 
 export const load_direct_state = (state_file: string = DIRECT_STATE_FILE) => {
   try {
-    const stats = fs.lstatSync(state_file);
-    if (!stats.isFile() || stats.size > MAX_DIRECT_STATE_BYTES) {
-      return {};
-    }
-    const raw = fs.readFileSync(state_file, 'utf8');
-    if (Buffer.byteLength(raw, 'utf8') > MAX_DIRECT_STATE_BYTES) {
-      return {};
-    }
+    const raw = readBoundedPrivateFile(state_file, MAX_DIRECT_STATE_BYTES);
     return normalizeDirectState(JSON.parse(raw));
   } catch {
     return {};
