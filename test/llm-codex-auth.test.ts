@@ -92,6 +92,34 @@ describe('Codex auth store', () => {
     }
   });
 
+  it('removes sensitive temp files when Codex auth replacement fails', async () => {
+    const configDir = await makeTempDir();
+    await saveCodexTokens(
+      { access_token: 'old-access', refresh_token: 'old-refresh' },
+      { configDir }
+    );
+    const renameSpy = vi
+      .spyOn(fs, 'rename')
+      .mockImplementationOnce(async () => {
+        throw new Error('replace failed');
+      });
+
+    await expect(
+      saveCodexTokens(
+        { access_token: 'new-access', refresh_token: 'new-refresh' },
+        { configDir }
+      )
+    ).rejects.toThrow('replace failed');
+    renameSpy.mockRestore();
+
+    const stored = await readCodexTokens({ configDir });
+    expect(stored.tokens).toMatchObject({
+      access_token: 'old-access',
+      refresh_token: 'old-refresh',
+    });
+    expect(await fs.readdir(configDir)).toEqual(['auth.json']);
+  });
+
   it('reports missing credentials with relogin-required auth error', async () => {
     const configDir = await makeTempDir();
 

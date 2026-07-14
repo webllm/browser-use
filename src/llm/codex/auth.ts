@@ -245,13 +245,22 @@ const writeStore = async (
       'codex_auth_store_too_large'
     );
   }
-  await fs.writeFile(tmpPath, serializedStore, {
-    encoding: 'utf-8',
-    mode: 0o600,
-  });
-  await chmodPrivatePath(tmpPath, 0o600);
-  await fs.rename(tmpPath, authStorePath);
-  await chmodPrivatePath(authStorePath, 0o600);
+  let renamed = false;
+  try {
+    await fs.writeFile(tmpPath, serializedStore, {
+      encoding: 'utf-8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    await chmodPrivatePath(tmpPath, 0o600);
+    await fs.rename(tmpPath, authStorePath);
+    renamed = true;
+    await chmodPrivatePath(authStorePath, 0o600);
+  } finally {
+    if (!renamed) {
+      await fs.rm(tmpPath, { force: true });
+    }
+  }
 };
 
 const waitForLockRetry = async (start: number, timeoutMs: number) => {
