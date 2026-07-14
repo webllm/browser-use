@@ -67,6 +67,22 @@ describe('Codex auth store', () => {
     );
   });
 
+  it.each([Number.POSITIVE_INFINITY, 0, -1, 1.5, 300_001])(
+    'rejects unsafe auth lock timeout %s',
+    async (lockTimeoutMs) => {
+      const configDir = await makeTempDir();
+
+      await expect(
+        saveCodexTokens(
+          { access_token: 'access', refresh_token: 'refresh' },
+          { configDir, lockTimeoutMs }
+        )
+      ).rejects.toThrow(
+        'lockTimeoutMs must be an integer between 1 and 300000.'
+      );
+    }
+  );
+
   it('saves and reads Codex tokens from browser-use auth store only', async () => {
     const configDir = await makeTempDir();
     const codexHome = await makeTempDir();

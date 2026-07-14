@@ -18,6 +18,7 @@ export const CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120;
 
 const AUTH_STORE_VERSION = 1;
 const DEFAULT_LOCK_TIMEOUT_MS = 20_000;
+const MAX_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_CODEX_AUTH_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CODEX_AUTH_ERROR_BYTES = 64 * 1024;
 export const MAX_CODEX_AUTH_FILE_BYTES = 1024 * 1024;
@@ -329,6 +330,16 @@ const withAuthStoreLock = async <T>(
   callback: () => Promise<T>,
   timeoutMs = DEFAULT_LOCK_TIMEOUT_MS
 ): Promise<T> => {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > MAX_LOCK_TIMEOUT_MS
+  ) {
+    throw new RangeError(
+      `lockTimeoutMs must be an integer between 1 and ${MAX_LOCK_TIMEOUT_MS}.`
+    );
+  }
+
   const lockPath = `${authStorePath}.lock`;
   const lockDir = path.dirname(lockPath);
   await ensurePrivateDirectory(lockDir);
