@@ -282,6 +282,97 @@ describe('skill-cli tunnel alignment', () => {
     }
   });
 
+  it('stops a tunnel whose ownership metadata cannot be persisted', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const logPath = path.join(tunnelDir, '3000.log');
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const killProcess = vi.fn(async () => true);
+    const originalRename = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, 'renameSync')
+      .mockImplementation((source, destination) => {
+        if (destination === infoPath) {
+          throw new Error('metadata disk failure');
+        }
+        return originalRename(source, destination);
+      });
+    const spawnImpl = vi.fn(() => {
+      fs.writeFileSync(logPath, 'https://demo.trycloudflare.com');
+      return { pid: 4321, unref: vi.fn() } as any;
+    });
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: () => '/usr/bin/cloudflared',
+        spawn_impl: spawnImpl as any,
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
+        kill_process: killProcess,
+        sleep_impl: vi.fn(async () => {}),
+      });
+
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error:
+          'Failed to persist tunnel ownership metadata and stopped process 4321: metadata disk failure',
+      });
+      expect(killProcess).toHaveBeenCalledWith(4321, expect.any(Function));
+      expect(fs.existsSync(infoPath)).toBe(false);
+      expect(fs.existsSync(logPath)).toBe(false);
+    } finally {
+      renameSpy.mockRestore();
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an untracked tunnel when metadata and cleanup both fail', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const logPath = path.join(tunnelDir, '3000.log');
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const originalRename = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, 'renameSync')
+      .mockImplementation((source, destination) => {
+        if (destination === infoPath) {
+          throw new Error('metadata disk failure');
+        }
+        return originalRename(source, destination);
+      });
+    const spawnImpl = vi.fn(() => {
+      fs.writeFileSync(logPath, 'https://demo.trycloudflare.com');
+      return { pid: 9876, unref: vi.fn() } as any;
+    });
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: () => '/usr/bin/cloudflared',
+        spawn_impl: spawnImpl as any,
+        is_process_alive: () => true,
+        get_process_command_line: () =>
+          '/usr/bin/cloudflared tunnel --url http://localhost:3000',
+        kill_process: vi.fn(async () => false),
+        sleep_impl: vi.fn(async () => {}),
+      });
+
+      const result = await manager.start_tunnel(3000);
+      expect(result).toEqual({
+        error:
+          'Failed to persist tunnel ownership metadata; process 9876 may still be running and is not tracked. Stop it manually: metadata disk failure',
+      });
+      expect(fs.existsSync(infoPath)).toBe(false);
+      expect(fs.existsSync(logPath)).toBe(true);
+    } finally {
+      renameSpy.mockRestore();
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
   it('retains tunnel ownership metadata when atomic replacement fails', () => {
     const tunnelDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-tunnel-')

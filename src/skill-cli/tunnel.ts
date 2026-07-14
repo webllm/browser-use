@@ -307,6 +307,36 @@ export class TunnelManager {
     return 'not_owned';
   }
 
+  private async cleanup_unpersisted_tunnel(info: TunnelInfo) {
+    let terminated = false;
+    try {
+      terminated = await this.kill_process_impl(
+        info.pid,
+        () => this.get_tunnel_process_ownership(info) === 'owned'
+      );
+    } catch {
+      // Report the untracked live process below.
+    }
+
+    let isAlive = true;
+    if (!terminated) {
+      try {
+        isAlive = this.is_process_alive_impl(info.pid);
+      } catch {
+        // An unverified process must be treated as live.
+      }
+    }
+    if (terminated || !isAlive) {
+      try {
+        this.remove_tunnel_state(info.port);
+      } catch {
+        // The process is stopped; stale files can be cleaned on the next run.
+      }
+      return true;
+    }
+    return false;
+  }
+
   get_binary_path() {
     if (this.binary_path) {
       return this.binary_path;
@@ -379,6 +409,7 @@ export class TunnelManager {
     }
     let logOffset = 0;
     let logContent = '';
+    let cleanupArtifactsAfterClose = false;
     const refreshLogContent = () => {
       const stats = fs.fstatSync(logFd);
       if (!stats.isFile()) {
@@ -441,7 +472,23 @@ export class TunnelManager {
 
         const match = logContent.match(TUNNEL_URL_PATTERN);
         if (match?.[1] && typeof child.pid === 'number') {
-          this.save_tunnel_info(port, child.pid, match[1], binaryPath);
+          const info: TunnelInfo = {
+            port,
+            pid: child.pid,
+            url: match[1],
+            binary_path: binaryPath,
+          };
+          try {
+            this.save_tunnel_info(port, child.pid, match[1], binaryPath);
+          } catch (error) {
+            const cleaned = await this.cleanup_unpersisted_tunnel(info);
+            cleanupArtifactsAfterClose = cleaned;
+            return {
+              error: cleaned
+                ? `Failed to persist tunnel ownership metadata and stopped process ${child.pid}: ${(error as Error).message}`
+                : `Failed to persist tunnel ownership metadata; process ${child.pid} may still be running and is not tracked. Stop it manually: ${(error as Error).message}`,
+            };
+          }
           return { url: match[1], port };
         }
 
@@ -469,7 +516,22 @@ export class TunnelManager {
           this.is_process_alive_impl(child.pid) &&
           this.get_tunnel_process_ownership(info) !== 'not_owned'
         ) {
-          this.save_tunnel_info(port, child.pid, '', binaryPath);
+          try {
+            this.save_tunnel_info(port, child.pid, '', binaryPath);
+          } catch (error) {
+            const cleaned = await this.cleanup_unpersisted_tunnel(info);
+            if (cleaned) {
+              cleanupArtifactsAfterClose = true;
+              return {
+                error:
+                  startupFailure ??
+                  'Timed out waiting for cloudflare tunnel URL (15s)',
+              };
+            }
+            return {
+              error: `${startupFailure ?? 'Timed out waiting for cloudflare tunnel URL (15s)'}; process ${child.pid} may still be running and ownership metadata could not be saved. Stop it manually: ${(error as Error).message}`,
+            };
+          }
           return {
             error: startupFailure
               ? `${startupFailure} and could not stop process ${child.pid}; run tunnel stop ${port} to retry cleanup`
@@ -483,6 +545,13 @@ export class TunnelManager {
       };
     } finally {
       fs.closeSync(logFd);
+      if (cleanupArtifactsAfterClose) {
+        try {
+          this.remove_tunnel_state(port);
+        } catch {
+          // The process is already stopped; cleanup can be retried manually.
+        }
+      }
     }
   }
 
