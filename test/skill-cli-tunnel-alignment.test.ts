@@ -408,7 +408,7 @@ describe('skill-cli tunnel alignment', () => {
   });
 
   it.runIf(process.platform !== 'win32')(
-    'preserves executable boundaries when the tunnel path contains spaces',
+    'preserves exact executable boundaries when tunnel paths contain spaces',
     async () => {
       const tunnelDir = fs.mkdtempSync(
         path.join(os.tmpdir(), 'browser-use-tunnel-')
@@ -461,6 +461,31 @@ describe('skill-cli tunnel alignment', () => {
           child.pid,
           expect.any(Function)
         );
+        expect(fs.existsSync(infoPath)).toBe(false);
+        expect(fs.existsSync(logPath)).toBe(false);
+
+        const expectedPrefix = path.join(tunnelDir, 'cloud');
+        fs.writeFileSync(
+          infoPath,
+          JSON.stringify({
+            port: 3000,
+            pid: child.pid,
+            url: 'https://stale.trycloudflare.com',
+            binary_path: expectedPrefix,
+          }),
+          'utf8'
+        );
+        fs.writeFileSync(logPath, 'stale tunnel log', 'utf8');
+        const wrongProcessKillSpy = vi.fn(async () => true);
+        const staleManager = new TunnelManager({
+          tunnel_dir: tunnelDir,
+          kill_process: wrongProcessKillSpy,
+        });
+
+        await expect(staleManager.stop_tunnel(3000)).resolves.toEqual({
+          error: 'No tunnel running on port 3000',
+        });
+        expect(wrongProcessKillSpy).not.toHaveBeenCalled();
         expect(fs.existsSync(infoPath)).toBe(false);
         expect(fs.existsSync(logPath)).toBe(false);
       } finally {

@@ -30,7 +30,7 @@ const findSystemBinary = (binary: string) => {
   );
 };
 
-const parseCommandLineTokens = (commandLine: string) =>
+const parseCommandLine = (commandLine: string) =>
   (commandLine.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((arg) => {
     if (
       arg.length >= 2 &&
@@ -41,38 +41,6 @@ const parseCommandLineTokens = (commandLine: string) =>
     }
     return arg;
   });
-
-const parseCommandLine = (
-  commandLine: string,
-  expectedExecutablePath?: string
-) => {
-  const executablePath = expectedExecutablePath?.trim();
-  if (executablePath) {
-    const prefixes = [
-      executablePath,
-      `"${executablePath}"`,
-      `'${executablePath}'`,
-    ];
-    const comparableCommandLine =
-      process.platform === 'win32' ? commandLine.toLowerCase() : commandLine;
-    for (const prefix of prefixes) {
-      const comparablePrefix =
-        process.platform === 'win32' ? prefix.toLowerCase() : prefix;
-      if (comparableCommandLine === comparablePrefix) {
-        return [executablePath];
-      }
-      if (comparableCommandLine.startsWith(`${comparablePrefix} `)) {
-        return [
-          executablePath,
-          ...parseCommandLineTokens(
-            commandLine.slice(prefix.length).trimStart()
-          ),
-        ];
-      }
-    }
-  }
-  return parseCommandLineTokens(commandLine);
-};
 
 type TunnelInfo = {
   port: number;
@@ -159,11 +127,9 @@ export class TunnelManager {
     this.get_process_arguments_impl = options.get_process_arguments
       ? options.get_process_arguments
       : options.get_process_command_line
-        ? (pid, expectedExecutablePath) => {
+        ? (pid) => {
             const commandLine = options.get_process_command_line?.(pid);
-            return commandLine
-              ? parseCommandLine(commandLine, expectedExecutablePath)
-              : null;
+            return commandLine ? parseCommandLine(commandLine) : null;
           }
         : getProcessArguments;
   }
@@ -266,7 +232,7 @@ export class TunnelManager {
   ): TunnelProcessOwnership {
     let args: string[] | null = null;
     try {
-      args = this.get_process_arguments_impl(info.pid, info.binary_path.trim());
+      args = this.get_process_arguments_impl(info.pid);
     } catch {
       return 'unverified';
     }

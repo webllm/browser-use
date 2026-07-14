@@ -5,10 +5,7 @@ export type ProcessCommandLineReader = (
   pid: number
 ) => string | null | Promise<string | null>;
 
-export type ProcessArgumentsReader = (
-  pid: number,
-  expectedExecutablePath?: string
-) => string[] | null;
+export type ProcessArgumentsReader = (pid: number) => string[] | null;
 
 const isValidPid = (pid: number) => Number.isSafeInteger(pid) && pid > 0;
 
@@ -109,10 +106,7 @@ const argumentsAfterExecutable = (
   return [executablePath, ...parseDisplayedCommandLine(remainder)];
 };
 
-export const getProcessArguments: ProcessArgumentsReader = (
-  pid,
-  expectedExecutablePath
-) => {
+export const getProcessArguments: ProcessArgumentsReader = (pid) => {
   if (!isValidPid(pid)) {
     return null;
   }
@@ -135,13 +129,12 @@ export const getProcessArguments: ProcessArgumentsReader = (
     if (!details?.commandLine) {
       return null;
     }
-    const args =
-      argumentsAfterExecutable(
-        details.commandLine,
-        expectedExecutablePath?.trim() ?? ''
-      ) ??
-      argumentsAfterExecutable(details.commandLine, details.executablePath) ??
-      parseDisplayedCommandLine(details.commandLine);
+    const args = details.executablePath
+      ? argumentsAfterExecutable(details.commandLine, details.executablePath)
+      : parseDisplayedCommandLine(details.commandLine);
+    if (!args) {
+      return null;
+    }
     return args.length > 0 ? args : null;
   }
 
@@ -149,13 +142,14 @@ export const getProcessArguments: ProcessArgumentsReader = (
   if (!commandLine) {
     return null;
   }
-  const args =
-    argumentsAfterExecutable(
-      commandLine,
-      expectedExecutablePath?.trim() ?? ''
-    ) ??
-    argumentsAfterExecutable(commandLine, readPsField(pid, 'comm') ?? '') ??
-    parseDisplayedCommandLine(commandLine);
+  const executablePath = readPsField(pid, 'comm');
+  if (!executablePath) {
+    return null;
+  }
+  const args = argumentsAfterExecutable(commandLine, executablePath);
+  if (!args) {
+    return null;
+  }
   return args.length > 0 ? args : null;
 };
 
