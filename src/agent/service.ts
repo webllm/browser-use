@@ -401,6 +401,7 @@ const defaultAgentOptions = () => ({
 });
 
 const MAX_AGENT_TIMEOUT_SECONDS = 24 * 60 * 60;
+const MAX_AGENT_RUN_STEPS = 1_000_000;
 const MAX_AGENT_FAILURES = 10_000;
 const MAX_AGENT_ACTIONS_PER_STEP = 1_000;
 const MAX_AGENT_HISTORY_ITEMS = 100_000;
@@ -2493,6 +2494,18 @@ export class Agent<
     on_step_start: AgentHookFunc<Context, AgentStructuredOutput> | null = null,
     on_step_end: AgentHookFunc<Context, AgentStructuredOutput> | null = null
   ) {
+    max_steps = requireBoundedInteger(
+      'max_steps',
+      max_steps,
+      1,
+      MAX_AGENT_RUN_STEPS
+    );
+    requireBoundedInteger(
+      'state.n_steps',
+      this.state.n_steps,
+      1,
+      MAX_AGENT_RUN_STEPS + 1
+    );
     let agent_run_error: string | null = null;
     this._force_exit_telemetry_logged = false;
 

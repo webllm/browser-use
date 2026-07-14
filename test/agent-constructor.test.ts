@@ -258,6 +258,34 @@ describe('Agent constructor browser session alignment', () => {
     await agent.close();
   });
 
+  it.each([0, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 1_000_001])(
+    'rejects invalid run max_steps %s',
+    async (maxSteps) => {
+      const agent = new Agent({
+        task: 'invalid run budget',
+        llm: createLlm(),
+      });
+      try {
+        await expect(agent.run(maxSteps)).rejects.toThrow(/max_steps/);
+      } finally {
+        await agent.close();
+      }
+    }
+  );
+
+  it('rejects invalid resumed step counters before starting a run', async () => {
+    const agent = new Agent({
+      task: 'invalid resumed state',
+      llm: createLlm(),
+    });
+    agent.state.n_steps = Number.POSITIVE_INFINITY;
+    try {
+      await expect(agent.run()).rejects.toThrow(/state\.n_steps/);
+    } finally {
+      await agent.close();
+    }
+  });
+
   it('starts browser session for active runs (python c011 parity)', async () => {
     const agent = new Agent({
       task: 'start browser session on run',
