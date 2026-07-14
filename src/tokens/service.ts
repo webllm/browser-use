@@ -681,6 +681,9 @@ export class TokenCost {
   }
 
   public async clean_old_caches(keepCount = 3) {
+    if (!Number.isSafeInteger(keepCount) || keepCount < 0) {
+      throw new RangeError('keepCount must be a non-negative integer');
+    }
     try {
       const files = await fs.promises.readdir(this.cacheDir);
       const jsonFiles = files.filter((file) => file.endsWith('.json'));

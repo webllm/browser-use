@@ -258,6 +258,27 @@ describe('TokenCost alignment', () => {
     }
   });
 
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects unsafe cache retention count %s without deleting files',
+    async (keepCount) => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
+      const cachePath = path.join(tempDir, 'pricing.json');
+      fs.writeFileSync(cachePath, '{}');
+
+      try {
+        const tokenCost = new TokenCost(true);
+        (tokenCost as any).cacheDir = tempDir;
+
+        await expect(tokenCost.clean_old_caches(keepCount)).rejects.toThrow(
+          'keepCount must be a non-negative integer'
+        );
+        expect(fs.existsSync(cachePath)).toBe(true);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('does not follow symbolic links while reading pricing caches', async () => {
     if (process.platform === 'win32') return;
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bu-pricing-'));
