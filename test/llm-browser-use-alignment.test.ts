@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { z } from 'zod';
+import { DEFAULT_MAX_HTTP_RESPONSE_BYTES } from '../src/http-response.js';
 import { ChatBrowserUse } from '../src/llm/browser-use/chat.js';
 import {
   ModelOutputTruncatedError,
@@ -228,6 +229,45 @@ describe('ChatBrowserUse alignment', () => {
       llm.ainvoke([new UserMessage('hello')])
     ).rejects.toBeInstanceOf(ModelRateLimitError);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects oversized successful response bodies before reading them', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"completion":"never read"}', {
+        status: 200,
+        headers: {
+          'content-length': String(DEFAULT_MAX_HTTP_RESPONSE_BYTES + 1),
+        },
+      })
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      maxRetries: 1,
+    });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toThrow(
+      `maximum size of ${DEFAULT_MAX_HTTP_RESPONSE_BYTES.toLocaleString()} bytes`
+    );
+  });
+
+  it('bounds error response details while preserving the status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('never read', {
+        status: 400,
+        headers: { 'content-length': String(64 * 1024 + 1) },
+      })
+    );
+    const llm = new ChatBrowserUse({
+      fetchImplementation: fetchMock as unknown as typeof fetch,
+      maxRetries: 1,
+    });
+
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      {
+        statusCode: 400,
+        message: expect.stringContaining('maximum size'),
+      }
+    );
   });
 
   it('requires BROWSER_USE_API_KEY when apiKey is not provided', () => {

@@ -1,5 +1,9 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CONFIG } from '../../config.js';
+import {
+  readBoundedResponseJson,
+  readBoundedResponseText,
+} from '../../http-response.js';
 import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
 import {
   ModelProviderError,
@@ -13,6 +17,7 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const VALID_MODELS = new Set(['bu-latest', 'bu-1-0', 'bu-2-0']);
 const PROVIDER_PREFIXED_MODEL = /^[^/\s]+\/\S+$/;
+const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 
 class HttpStatusError extends Error {
   constructor(
@@ -320,19 +325,22 @@ export class ChatBrowserUse implements BaseChatModel {
       if (!response.ok) {
         let detail = '';
         try {
-          const errorJson = await response.json();
-          detail = getJsonErrorDetail(errorJson);
-        } catch {
+          const errorText = await readBoundedResponseText(
+            response,
+            MAX_ERROR_RESPONSE_BYTES
+          );
           try {
-            detail = await response.text();
+            detail = getJsonErrorDetail(JSON.parse(errorText));
           } catch {
-            detail = '';
+            detail = errorText;
           }
+        } catch (error) {
+          detail = error instanceof Error ? error.message : '';
         }
         throw new HttpStatusError(response.status, detail);
       }
 
-      const result = await response.json();
+      const result = await readBoundedResponseJson(response);
       return result && typeof result === 'object'
         ? (result as Record<string, unknown>)
         : {};
