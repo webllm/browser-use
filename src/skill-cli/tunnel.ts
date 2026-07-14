@@ -46,6 +46,13 @@ type TunnelInfo = {
   binary_path: string;
 };
 
+export type TunnelProcessOwnership = 'owned' | 'not_owned' | 'unverified';
+
+type LoadedTunnelInfo = {
+  info: TunnelInfo;
+  ownership: Exclude<TunnelProcessOwnership, 'not_owned'>;
+};
+
 export type TunnelStatus = {
   available: boolean;
   source: 'system' | null;
@@ -58,7 +65,11 @@ export type StartTunnelResult =
   | { error: string };
 
 export type ListTunnelsResult = {
-  tunnels: Array<{ port: number; url: string }>;
+  tunnels: Array<{
+    port: number;
+    url: string;
+    ownership: Exclude<TunnelProcessOwnership, 'not_owned'>;
+  }>;
   count: number;
 };
 
@@ -146,62 +157,83 @@ export class TunnelManager {
     }
   }
 
-  private load_tunnel_info(port: number): TunnelInfo | null {
+  private remove_tunnel_state(port: number) {
+    fs.rmSync(this.get_tunnel_file(port), { force: true });
+    fs.rmSync(this.get_tunnel_log_file(port), { force: true });
+  }
+
+  private load_tunnel_info(port: number): LoadedTunnelInfo | null {
     const filePath = this.get_tunnel_file(port);
     if (!fs.existsSync(filePath)) {
       return null;
     }
 
+    let parsed: Partial<TunnelInfo> | null;
     try {
-      const parsed = JSON.parse(
+      parsed = JSON.parse(
         fs.readFileSync(filePath, 'utf-8')
       ) as Partial<TunnelInfo> | null;
-      if (
-        !parsed ||
-        parsed.port !== port ||
-        typeof parsed.pid !== 'number' ||
-        !Number.isSafeInteger(parsed.pid) ||
-        parsed.pid <= 0 ||
-        typeof parsed.url !== 'string' ||
-        typeof parsed.binary_path !== 'string' ||
-        parsed.binary_path.trim().length === 0
-      ) {
-        fs.rmSync(filePath, { force: true });
-        return null;
-      }
-
-      const info: TunnelInfo = {
-        port: parsed.port,
-        pid: parsed.pid,
-        url: parsed.url,
-        binary_path: parsed.binary_path,
-      };
-
-      if (
-        !this.is_process_alive_impl(info.pid) ||
-        !this.is_owned_tunnel_process(info)
-      ) {
-        fs.rmSync(filePath, { force: true });
-        fs.rmSync(this.get_tunnel_log_file(port), { force: true });
-        return null;
-      }
-
-      return info;
     } catch {
       fs.rmSync(filePath, { force: true });
       return null;
     }
+
+    if (
+      !parsed ||
+      parsed.port !== port ||
+      typeof parsed.pid !== 'number' ||
+      !Number.isSafeInteger(parsed.pid) ||
+      parsed.pid <= 0 ||
+      typeof parsed.url !== 'string' ||
+      typeof parsed.binary_path !== 'string' ||
+      parsed.binary_path.trim().length === 0
+    ) {
+      this.remove_tunnel_state(port);
+      return null;
+    }
+
+    const info: TunnelInfo = {
+      port: parsed.port,
+      pid: parsed.pid,
+      url: parsed.url,
+      binary_path: parsed.binary_path,
+    };
+
+    let isAlive: boolean;
+    try {
+      isAlive = this.is_process_alive_impl(info.pid);
+    } catch {
+      return { info, ownership: 'unverified' };
+    }
+    if (!isAlive) {
+      this.remove_tunnel_state(port);
+      return null;
+    }
+
+    const ownership = this.get_tunnel_process_ownership(info);
+    if (ownership === 'not_owned') {
+      this.remove_tunnel_state(port);
+      return null;
+    }
+    return { info, ownership };
   }
 
-  private is_owned_tunnel_process(info: TunnelInfo) {
-    const commandLine = this.get_process_command_line_impl(info.pid);
+  private get_tunnel_process_ownership(
+    info: TunnelInfo
+  ): TunnelProcessOwnership {
+    let commandLine: string | null = null;
+    try {
+      commandLine = this.get_process_command_line_impl(info.pid);
+    } catch {
+      return 'unverified';
+    }
     if (!commandLine) {
-      return false;
+      return 'unverified';
     }
 
     const args = parseCommandLine(commandLine);
     if (args.length < 4) {
-      return false;
+      return 'not_owned';
     }
 
     const normalizeExecutable = (value: string) => {
@@ -214,24 +246,24 @@ export class TunnelManager {
       normalizeExecutable(args[0]!) !==
       normalizeExecutable(info.binary_path.trim())
     ) {
-      return false;
+      return 'not_owned';
     }
 
     const tunnelIndex = args.indexOf('tunnel', 1);
     if (tunnelIndex < 1) {
-      return false;
+      return 'not_owned';
     }
 
     const expectedUrl = `http://localhost:${info.port}`;
     for (let index = tunnelIndex + 1; index < args.length; index += 1) {
       if (args[index] === '--url' && args[index + 1] === expectedUrl) {
-        return true;
+        return 'owned';
       }
       if (args[index] === `--url=${expectedUrl}`) {
-        return true;
+        return 'owned';
       }
     }
-    return false;
+    return 'not_owned';
   }
 
   get_binary_path() {
@@ -276,14 +308,19 @@ export class TunnelManager {
   }
 
   async start_tunnel(port: number): Promise<StartTunnelResult> {
-    const existing = this.load_tunnel_info(port);
-    if (existing) {
-      if (!existing.url) {
+    const loaded = this.load_tunnel_info(port);
+    if (loaded) {
+      if (loaded.ownership === 'unverified') {
+        return {
+          error: `A live process is recorded for tunnel port ${port}, but its ownership could not be verified; metadata was retained and no new process was started`,
+        };
+      }
+      if (!loaded.info.url) {
         return {
           error: `A previous tunnel launch on port ${port} is still running and requires cleanup; run tunnel stop ${port}`,
         };
       }
-      return { url: existing.url, port, existing: true };
+      return { url: loaded.info.url, port, existing: true };
     }
 
     let binaryPath: string;
@@ -354,8 +391,9 @@ export class TunnelManager {
         };
         let terminated = false;
         try {
-          terminated = await this.kill_process_impl(child.pid, () =>
-            this.is_owned_tunnel_process(info)
+          terminated = await this.kill_process_impl(
+            child.pid,
+            () => this.get_tunnel_process_ownership(info) === 'owned'
           );
         } catch {
           // Preserve ownership metadata below when cleanup can be retried.
@@ -363,7 +401,7 @@ export class TunnelManager {
         if (
           !terminated &&
           this.is_process_alive_impl(child.pid) &&
-          this.is_owned_tunnel_process(info)
+          this.get_tunnel_process_ownership(info) !== 'not_owned'
         ) {
           this.save_tunnel_info(port, child.pid, '', binaryPath);
           return {
@@ -378,7 +416,7 @@ export class TunnelManager {
   }
 
   list_tunnels(): ListTunnelsResult {
-    const tunnels: Array<{ port: number; url: string }> = [];
+    const tunnels: ListTunnelsResult['tunnels'] = [];
     if (!fs.existsSync(this.tunnel_dir)) {
       return { tunnels, count: 0 };
     }
@@ -391,9 +429,13 @@ export class TunnelManager {
       if (!Number.isFinite(port)) {
         continue;
       }
-      const info = this.load_tunnel_info(port);
-      if (info) {
-        tunnels.push({ port: info.port, url: info.url });
+      const loaded = this.load_tunnel_info(port);
+      if (loaded) {
+        tunnels.push({
+          port: loaded.info.port,
+          url: loaded.info.url,
+          ownership: loaded.ownership,
+        });
       }
     }
 
@@ -401,15 +443,22 @@ export class TunnelManager {
   }
 
   async stop_tunnel(port: number): Promise<StopTunnelResult> {
-    const info = this.load_tunnel_info(port);
-    if (!info) {
+    const loaded = this.load_tunnel_info(port);
+    if (!loaded) {
       return { error: `No tunnel running on port ${port}` };
+    }
+    const { info, ownership } = loaded;
+    if (ownership === 'unverified') {
+      return {
+        error: `Cannot verify ownership of process ${info.pid} for tunnel port ${port}; process was not signaled and metadata was retained`,
+      };
     }
 
     let terminated = false;
     try {
-      terminated = await this.kill_process_impl(info.pid, () =>
-        this.is_owned_tunnel_process(info)
+      terminated = await this.kill_process_impl(
+        info.pid,
+        () => this.get_tunnel_process_ownership(info) === 'owned'
       );
     } catch {
       // Preserve metadata so a later stop attempt can retry.
@@ -419,8 +468,7 @@ export class TunnelManager {
         error: `Failed to stop tunnel on port ${port}; process ${info.pid} is still running`,
       };
     }
-    fs.rmSync(this.get_tunnel_file(port), { force: true });
-    fs.rmSync(this.get_tunnel_log_file(port), { force: true });
+    this.remove_tunnel_state(port);
     return {
       stopped: port,
       url: info.url,
@@ -468,6 +516,9 @@ const default_kill_process = async (
   is_still_owned: (() => boolean) | undefined,
   sleep_impl: (ms: number) => Promise<void>
 ) => {
+  if (is_still_owned && !is_still_owned()) {
+    return false;
+  }
   try {
     process.kill(pid, 'SIGTERM');
   } catch {

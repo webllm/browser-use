@@ -30,7 +30,13 @@ describe('skill-cli tunnel alignment', () => {
         url: 'https://demo.trycloudflare.com',
       })),
       list_tunnels: vi.fn(() => ({
-        tunnels: [{ port: 3000, url: 'https://demo.trycloudflare.com' }],
+        tunnels: [
+          {
+            port: 3000,
+            url: 'https://demo.trycloudflare.com',
+            ownership: 'owned' as const,
+          },
+        ],
         count: 1,
       })),
       stop_tunnel: vi.fn(async () => ({
@@ -125,6 +131,7 @@ describe('skill-cli tunnel alignment', () => {
         port: 3000,
         pid: 12345,
         url: 'https://stale.trycloudflare.com',
+        binary_path: '/usr/bin/cloudflared',
       }),
       'utf-8'
     );
@@ -138,6 +145,76 @@ describe('skill-cli tunnel alignment', () => {
 
       expect(result).toEqual({ tunnels: [], count: 0 });
       expect(fs.existsSync(path.join(tunnelDir, '3000.json'))).toBe(false);
+    } finally {
+      fs.rmSync(tunnelDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains live tunnel state when process ownership cannot be inspected', async () => {
+    const tunnelDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-tunnel-')
+    );
+    const infoPath = path.join(tunnelDir, '3000.json');
+    const logPath = path.join(tunnelDir, '3000.log');
+    const killProcessSpy = vi.fn(async () => true);
+    const binaryResolver = vi.fn(() => '/usr/bin/cloudflared');
+    fs.writeFileSync(
+      infoPath,
+      JSON.stringify({
+        port: 3000,
+        pid: 4321,
+        url: 'https://demo.trycloudflare.com',
+        binary_path: '/usr/bin/cloudflared',
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(logPath, 'tunnel log', 'utf8');
+
+    try {
+      const manager = new TunnelManager({
+        tunnel_dir: tunnelDir,
+        binary_resolver: binaryResolver,
+        is_process_alive: () => true,
+        get_process_command_line: () => null,
+        kill_process: killProcessSpy,
+      });
+      const stdout = createWritable();
+      const stderr = createWritable();
+
+      expect(manager.list_tunnels()).toEqual({
+        tunnels: [
+          {
+            port: 3000,
+            url: 'https://demo.trycloudflare.com',
+            ownership: 'unverified',
+          },
+        ],
+        count: 1,
+      });
+      await expect(
+        runTunnelCommand(['list'], {
+          manager,
+          stdout: stdout.stream,
+          stderr: stderr.stream,
+        })
+      ).resolves.toBe(0);
+      expect(stdout.read()).toContain(
+        '3000: https://demo.trycloudflare.com (ownership unverified; state retained)'
+      );
+      expect(stderr.read()).toBe('');
+      await expect(manager.start_tunnel(3000)).resolves.toEqual({
+        error:
+          'A live process is recorded for tunnel port 3000, but its ownership could not be verified; metadata was retained and no new process was started',
+      });
+      await expect(manager.stop_tunnel(3000)).resolves.toEqual({
+        error:
+          'Cannot verify ownership of process 4321 for tunnel port 3000; process was not signaled and metadata was retained',
+      });
+
+      expect(killProcessSpy).not.toHaveBeenCalled();
+      expect(binaryResolver).not.toHaveBeenCalled();
+      expect(fs.existsSync(infoPath)).toBe(true);
+      expect(fs.existsSync(logPath)).toBe(true);
     } finally {
       fs.rmSync(tunnelDir, { recursive: true, force: true });
     }
@@ -180,7 +257,13 @@ describe('skill-cli tunnel alignment', () => {
         binary_path: '/usr/bin/cloudflared',
       });
       expect(manager.list_tunnels()).toEqual({
-        tunnels: [{ port: 3000, url: 'https://demo.trycloudflare.com' }],
+        tunnels: [
+          {
+            port: 3000,
+            url: 'https://demo.trycloudflare.com',
+            ownership: 'owned',
+          },
+        ],
         count: 1,
       });
 
@@ -376,6 +459,9 @@ describe('skill-cli tunnel alignment', () => {
     fs.writeFileSync(logPath, 'tunnel log', 'utf8');
     const getProcessCommandLine = vi
       .fn()
+      .mockReturnValueOnce(
+        '/usr/bin/cloudflared tunnel --url http://localhost:3000'
+      )
       .mockReturnValueOnce(
         '/usr/bin/cloudflared tunnel --url http://localhost:3000'
       )

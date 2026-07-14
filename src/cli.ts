@@ -1380,7 +1380,11 @@ export const runTunnelCommand = async (
         render(result);
       } else if (result.tunnels.length > 0) {
         for (const tunnel of result.tunnels) {
-          writeLine(output, `${tunnel.port}: ${tunnel.url}`);
+          const ownershipNote =
+            tunnel.ownership === 'unverified'
+              ? ' (ownership unverified; state retained)'
+              : '';
+          writeLine(output, `${tunnel.port}: ${tunnel.url}${ownershipNote}`);
         }
       } else {
         writeLine(output, 'No active tunnels');
