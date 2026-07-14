@@ -94,6 +94,26 @@ describe('CliMCPServer', () => {
     expect(textFrom(result)).toBe('xxxxxxxxxx\n...[truncated 10 characters]');
   });
 
+  it('bounds and redacts errors thrown outside command output streams', async () => {
+    const runner = vi.fn(async () => {
+      throw new Error(`api_key=secret ${'x'.repeat(100)}`);
+    });
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxOutputChars: 20,
+    });
+
+    const result = await server.callTool('browser_exec', {
+      command: 'state',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).not.toContain('secret');
+    expect(textFrom(result)).toContain('<redacted>');
+    expect(textFrom(result)).toContain('...[truncated');
+    expect(textFrom(result).length).toBeLessThan(80);
+  });
+
   it('discards command output as soon as the collection budget is exhausted', () => {
     const budget = { remainingChars: 4, omittedChars: 0 };
     const output = createBoundedOutputCollector(budget);

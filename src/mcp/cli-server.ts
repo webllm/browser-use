@@ -63,11 +63,6 @@ const createOutputBudget = (maxChars: number): OutputBudget => ({
   omittedChars: 0,
 });
 
-const errorResult = (message: string): CallToolResult => ({
-  content: [{ type: 'text', text: `Error: ${message}` }],
-  isError: true,
-});
-
 const parsePositiveInteger = (
   value: number | undefined,
   environmentValue: string | undefined,
@@ -195,9 +190,9 @@ export class CliMCPServer {
         if (name === 'browser_screenshot') {
           return await this.captureBrowserScreenshot(args);
         }
-        return errorResult(`Unknown tool: ${name}`);
+        return this.errorResult(`Unknown tool: ${name}`);
       } catch (error) {
-        return errorResult(redactMcpLogMessage(error));
+        return this.errorResult(redactMcpLogMessage(error));
       }
     });
   }
@@ -230,22 +225,34 @@ export class CliMCPServer {
     return `${retained}\n...[truncated ${omitted} characters]`;
   }
 
+  private errorResult(message: string, preOmittedChars = 0): CallToolResult {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error: ${this.limitOutput(message, preOmittedChars)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
   private async executeBrowserCommand(
     args: CliMcpArguments
   ): Promise<CallToolResult> {
     const command = args?.command;
     const commandArgs = args?.args ?? [];
     if (typeof command !== 'string' || !command.trim()) {
-      return errorResult("'command' must be a non-empty string");
+      return this.errorResult("'command' must be a non-empty string");
     }
     if (
       !Array.isArray(commandArgs) ||
       commandArgs.some((value) => typeof value !== 'string')
     ) {
-      return errorResult("'args' must be an array of strings");
+      return this.errorResult("'args' must be an array of strings");
     }
     if (!this.validateRemote(args?.remote)) {
-      return errorResult("'remote' must be a boolean");
+      return this.errorResult("'remote' must be a boolean");
     }
 
     if (
@@ -254,7 +261,7 @@ export class CliMCPServer {
         (value) => value !== '--full' && value !== '--full-page'
       )
     ) {
-      return errorResult(
+      return this.errorResult(
         'Use browser_screenshot for screenshots without an output path'
       );
     }
@@ -296,17 +303,17 @@ export class CliMCPServer {
     args: CliMcpArguments
   ): Promise<CallToolResult> {
     if (args?.full !== undefined && typeof args.full !== 'boolean') {
-      return errorResult("'full' must be a boolean");
+      return this.errorResult("'full' must be a boolean");
     }
     if (!this.validateRemote(args?.remote)) {
-      return errorResult("'remote' must be a boolean");
+      return this.errorResult("'remote' must be a boolean");
     }
     const maxDimension = args?.max_dim;
     if (
       maxDimension !== undefined &&
       (!Number.isInteger(maxDimension) || Number(maxDimension) < 1)
     ) {
-      return errorResult("'max_dim' must be a positive integer");
+      return this.errorResult("'max_dim' must be a positive integer");
     }
 
     const maxScreenshotOutputChars =
@@ -328,22 +335,20 @@ export class CliMCPServer {
       max_screenshot_pixels: this.maxScreenshotPixels,
     });
     if (exitCode !== 0) {
-      return errorResult(
-        this.limitOutput(
-          redactMcpLogMessage(stderr.value().trim() || 'Screenshot failed'),
-          stderrBudget.omittedChars
-        )
+      return this.errorResult(
+        redactMcpLogMessage(stderr.value().trim() || 'Screenshot failed'),
+        stderrBudget.omittedChars
       );
     }
     if (stdout.truncated()) {
-      return errorResult(
+      return this.errorResult(
         `Screenshot exceeds maximum encoded size of ${this.maxScreenshotBytes} bytes`
       );
     }
 
     const payload = this.parseScreenshotPayload(stdout.value());
     if (!payload) {
-      return errorResult('Screenshot command returned an invalid payload');
+      return this.errorResult('Screenshot command returned an invalid payload');
     }
     const png = this.decodeAndValidatePng(payload);
     const data =
