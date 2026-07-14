@@ -1092,7 +1092,19 @@ const connectDirectSession = async (
       session_id: browser.id,
       active_url: null,
     };
-    save_direct_state(state, environment.state_file);
+    try {
+      save_direct_state(state, environment.state_file);
+    } catch (error) {
+      try {
+        await cloudClient.stop_browser(browser.id);
+      } catch (cleanupError) {
+        throw new Error(
+          `Failed to persist direct-mode state and could not stop cloud browser ${browser.id}: ${(cleanupError as Error).message}`,
+          { cause: error }
+        );
+      }
+      throw error;
+    }
     return {
       session: await connectWithState(state),
       state,
@@ -1113,7 +1125,23 @@ const connectDirectSession = async (
     owns_user_data_dir: localLaunch.owns_user_data_dir ?? null,
     active_url: null,
   };
-  save_direct_state(state, environment.state_file);
+  try {
+    save_direct_state(state, environment.state_file);
+  } catch (error) {
+    if (typeof state.browser_pid !== 'number' || state.browser_pid <= 0) {
+      throw new Error(
+        `Failed to persist direct-mode state and the new browser did not provide a PID; its endpoint ${state.cdp_url ?? '<unknown>'} may still be running`,
+        { cause: error }
+      );
+    }
+    if (!(await cleanupDisconnectedState(state))) {
+      throw new Error(
+        `Failed to persist direct-mode state and could not stop browser process ${state.browser_pid}; its profile was retained at ${state.user_data_dir ?? '<unknown>'}`,
+        { cause: error }
+      );
+    }
+    throw error;
+  }
   return {
     session: await connectWithState(state),
     state,

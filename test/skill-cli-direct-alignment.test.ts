@@ -232,6 +232,116 @@ describe('skill-cli direct alignment', () => {
     }
   });
 
+  it('stops a new local browser when its state cannot be persisted', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const blockedParent = path.join(tempDir, 'not-a-directory');
+    const stateFile = path.join(blockedParent, 'state.json');
+    const profileDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    fs.writeFileSync(blockedParent, 'blocked');
+    const stderr = createWritable();
+    const killProcess = vi.fn(async () => {});
+    const sessionFactory = vi.fn();
+
+    try {
+      const exitCode = await run_direct_command(['state'], {
+        state_file: stateFile,
+        stderr: stderr.stream,
+        local_launcher: async () => ({
+          cdp_url: 'http://127.0.0.1:9222',
+          browser_pid: 4321,
+          browser_launch_token: 'new-browser-token',
+          user_data_dir: profileDir,
+          owns_user_data_dir: true,
+        }),
+        kill_process: killProcess,
+        get_process_command_line: () =>
+          'chrome --browser-use-direct-token=new-browser-token',
+        session_factory: sessionFactory,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(killProcess).toHaveBeenCalledWith(4321);
+      expect(sessionFactory).not.toHaveBeenCalled();
+      expect(fs.existsSync(profileDir)).toBe(false);
+      expect(stderr.read()).toContain('Error:');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    }
+  });
+
+  it('stops a new cloud browser when its state cannot be persisted', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const blockedParent = path.join(tempDir, 'not-a-directory');
+    const stateFile = path.join(blockedParent, 'state.json');
+    fs.writeFileSync(blockedParent, 'blocked');
+    const stderr = createWritable();
+    const stopBrowser = vi.fn(async () => {});
+    const sessionFactory = vi.fn();
+
+    try {
+      const exitCode = await run_direct_command(['--remote', 'state'], {
+        state_file: stateFile,
+        stderr: stderr.stream,
+        cloud_client_factory: () =>
+          ({
+            create_browser: vi.fn(async () => ({
+              id: 'unpersisted-session',
+              cdpUrl: 'wss://cloud.example/browser/unpersisted',
+            })),
+            stop_browser: stopBrowser,
+          }) as any,
+        session_factory: sessionFactory,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stopBrowser).toHaveBeenCalledWith('unpersisted-session');
+      expect(sessionFactory).not.toHaveBeenCalled();
+      expect(stderr.read()).toContain('Error:');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an untracked cloud session when persistence and cleanup fail', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-direct-')
+    );
+    const blockedParent = path.join(tempDir, 'not-a-directory');
+    const stateFile = path.join(blockedParent, 'state.json');
+    fs.writeFileSync(blockedParent, 'blocked');
+    const stderr = createWritable();
+
+    try {
+      const exitCode = await run_direct_command(['--remote', 'state'], {
+        state_file: stateFile,
+        stderr: stderr.stream,
+        cloud_client_factory: () =>
+          ({
+            create_browser: vi.fn(async () => ({
+              id: 'manual-cleanup-session',
+              cdpUrl: 'wss://cloud.example/browser/manual',
+            })),
+            stop_browser: vi.fn(async () => {
+              throw new Error('cleanup unavailable');
+            }),
+          }) as any,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stderr.read()).toContain('manual-cleanup-session');
+      expect(stderr.read()).toContain('cleanup unavailable');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('treats non-leading --remote as command text instead of a mode switch', async () => {
     const tempDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-direct-')
