@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { CloudSkillService } from '../src/skills/service.js';
+import {
+  CloudSkillService,
+  MAX_SKILL_EXECUTION_RESPONSE_BYTES,
+} from '../src/skills/service.js';
 
 const makeSkillItem = (id: string, title = id) => ({
   id,
@@ -231,6 +234,40 @@ describe('CloudSkillService alignment', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('Failed to execute skill: Error: boom');
+  });
+
+  it('rejects oversized skill execution responses', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [makeSkillItem('skill-1')] }),
+      })
+      .mockResolvedValueOnce(
+        new Response('not-read', {
+          status: 200,
+          headers: {
+            'content-length': String(MAX_SKILL_EXECUTION_RESPONSE_BYTES + 1),
+          },
+        })
+      );
+    const service = new CloudSkillService({
+      skill_ids: ['skill-1'],
+      api_key: 'test-key',
+      base_url: 'https://api.test',
+      fetch_impl: fetchMock as any,
+    });
+
+    const result = await service.execute_skill({
+      skill_id: 'skill-1',
+      parameters: { query: 'weather' },
+      cookies: [],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(
+      `maximum size of ${MAX_SKILL_EXECUTION_RESPONSE_BYTES.toLocaleString()} bytes`
+    );
   });
 
   it('does not forward cookie parameters to a redirect target', async () => {

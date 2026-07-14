@@ -411,6 +411,15 @@ const MAX_AGENT_PLANNING_THRESHOLD = 1_000_000;
 const MAX_AGENT_URL_SHORTENING_LIMIT = 1_000_000;
 const MAX_LLM_SCREENSHOT_DIMENSION = 8_192;
 const MAX_LLM_SCREENSHOT_PIXELS = 25_000_000;
+const MAX_SKILL_ACTION_RESULT_CHARS = 256 * 1024;
+const MAX_SKILL_ACTION_MEMORY_CHARS = 60_000;
+const MAX_SKILL_ACTION_ERROR_CHARS = 64 * 1024;
+
+const truncateSkillActionText = (value: string, maxChars: number) => {
+  if (value.length <= maxChars) return value;
+  const notice = '\n... [Skill result truncated]';
+  return `${value.slice(0, Math.max(0, maxChars - notice.length))}${notice}`;
+};
 
 const requireBoundedInteger = (
   name: string,
@@ -2257,17 +2266,27 @@ export class Agent<
 
             if (!result.success) {
               return new ActionResult({
-                error: result.error ?? 'Skill execution failed',
+                error: truncateSkillActionText(
+                  result.error ?? 'Skill execution failed',
+                  MAX_SKILL_ACTION_ERROR_CHARS
+                ),
               });
             }
 
-            const rendered =
+            const rawRendered =
               typeof result.result === 'string'
                 ? result.result
-                : JSON.stringify(result.result ?? {});
+                : (JSON.stringify(result.result ?? {}) ?? '{}');
+            const rendered = truncateSkillActionText(
+              rawRendered,
+              MAX_SKILL_ACTION_RESULT_CHARS
+            );
             return new ActionResult({
               extracted_content: rendered,
-              long_term_memory: rendered,
+              long_term_memory: truncateSkillActionText(
+                rendered,
+                MAX_SKILL_ACTION_MEMORY_CHARS
+              ),
             });
           } catch (error) {
             if (error instanceof MissingCookieException) {

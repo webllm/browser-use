@@ -98,6 +98,46 @@ describe('Agent skills alignment', () => {
     await agent.close();
   });
 
+  it('bounds skill results before storing them in agent history fields', async () => {
+    const browserSession = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    vi.spyOn(browserSession, 'get_cookies').mockResolvedValue([]);
+    const skillService: SkillService = {
+      get_all_skills: vi.fn(async () => [
+        {
+          id: 'large-result',
+          title: 'Large Result',
+          description: 'Returns a large result',
+          parameters: [],
+        },
+      ]),
+      execute_skill: vi.fn(async () => ({
+        success: true,
+        result: 'x'.repeat(2 * 1024 * 1024),
+      })),
+    };
+    const agent = new Agent({
+      task: 'use large skill',
+      llm: createLlm(),
+      browser_session: browserSession,
+      skill_service: skillService,
+    });
+
+    await (agent as any)._register_skills_as_actions();
+    const result = (await agent.controller.registry.execute_action(
+      'large_result',
+      {},
+      { browser_session: browserSession }
+    )) as any;
+
+    expect(result.extracted_content.length).toBeLessThanOrEqual(256 * 1024);
+    expect(result.extracted_content).toContain('Skill result truncated');
+    expect(result.long_term_memory.length).toBeLessThanOrEqual(60_000);
+
+    await agent.close();
+  });
+
   it('filters skill cookies by BrowserSession domain policy', async () => {
     const browserSession = new BrowserSession({
       browser_profile: new BrowserProfile({

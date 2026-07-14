@@ -41,6 +41,9 @@ const MAX_SKILL_PARAMETER_DESCRIPTION_CHARS = 4 * 1024;
 const MAX_SKILL_OUTPUT_SCHEMA_DEPTH = 50;
 const MAX_SKILL_OUTPUT_SCHEMA_ENTRIES = 10_000;
 const MAX_SKILL_OUTPUT_SCHEMA_STRING_CHARS = 64 * 1024;
+const MAX_SKILL_LIST_RESPONSE_BYTES = 4 * 1024 * 1024;
+export const MAX_SKILL_EXECUTION_RESPONSE_BYTES = 1024 * 1024;
+const MAX_SKILL_EXECUTION_ERROR_CHARS = 64 * 1024;
 
 const boundedTrimmedString = (value: unknown, maxChars: number) =>
   typeof value === 'string' ? value.slice(0, maxChars).trim() : '';
@@ -207,7 +210,8 @@ export class CloudSkillService implements SkillService {
 
   private async requestJson(
     path: string,
-    init: RequestInit = {}
+    init: RequestInit = {},
+    maxResponseBytes = MAX_SKILL_LIST_RESPONSE_BYTES
   ): Promise<unknown> {
     return await runWithHttpTimeout(
       async (signal) => {
@@ -224,7 +228,7 @@ export class CloudSkillService implements SkillService {
 
         let payload: unknown;
         try {
-          payload = await readBoundedResponseJson(response);
+          payload = await readBoundedResponseJson(response, maxResponseBytes);
         } catch (error) {
           if (error instanceof HttpResponseTooLargeError) throw error;
           payload = null;
@@ -433,15 +437,23 @@ export class CloudSkillService implements SkillService {
         {
           method: 'POST',
           body: JSON.stringify({ parameters: validated.data }),
-        }
+        },
+        MAX_SKILL_EXECUTION_RESPONSE_BYTES
       )) as Record<string, unknown>;
 
       const success = response.success === true;
       const result =
         response.result ?? response.output ?? response.data ?? null;
-      const error = typeof response.error === 'string' ? response.error : null;
+      const error =
+        typeof response.error === 'string'
+          ? response.error.slice(0, MAX_SKILL_EXECUTION_ERROR_CHARS)
+          : null;
       const latency_ms =
-        typeof response.latency_ms === 'number' ? response.latency_ms : null;
+        typeof response.latency_ms === 'number' &&
+        Number.isFinite(response.latency_ms) &&
+        response.latency_ms >= 0
+          ? response.latency_ms
+          : null;
 
       return {
         success,
