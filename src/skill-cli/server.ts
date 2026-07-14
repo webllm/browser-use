@@ -9,8 +9,8 @@ import {
 } from '../browser/page-content.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
-  assertBoundedCookieImportFile,
   parseBoundedCookieImport,
+  readBoundedCookieImportFile,
 } from './cookie-import.js';
 import {
   evaluateBoundedCliScript,
@@ -760,8 +760,7 @@ export class SkillCliServer {
         throw new Error('Browser context does not support importing cookies');
       }
       const filePath = path.resolve(file);
-      assertBoundedCookieImportFile(await fsp.stat(filePath), filePath);
-      const raw = await fsp.readFile(filePath, 'utf8');
+      const raw = await readBoundedCookieImportFile(filePath);
       const cookies = parseBoundedCookieImport(raw);
       const importedCookies = cookies.map((cookie) => {
         if (!cookie || typeof cookie !== 'object') {
