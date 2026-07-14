@@ -1,5 +1,8 @@
 import fs from 'node:fs';
-import { readBoundedResponseJson } from '../http-response.js';
+import {
+  readBoundedResponseJson,
+  runWithHttpTimeout,
+} from '../http-response.js';
 
 const MAX_CDP_VERSION_RESPONSE_BYTES = 64 * 1024;
 const DEFAULT_CDP_PROBE_TIMEOUT_MS = 1_000;
@@ -120,37 +123,42 @@ export const discoverLocalCdpWebSocketUrl = async (options: {
   const timeoutMs = Number.isFinite(requestedTimeout)
     ? Math.max(1, Math.floor(requestedTimeout))
     : DEFAULT_CDP_PROBE_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response | null = null;
+  const responseHolder: { current: Response | null } = { current: null };
   try {
-    response = await (options.fetchImplementation ?? fetch)(
-      `http://${host}:${port}/json/version`,
-      {
-        signal: controller.signal,
-        redirect: 'error',
+    return await runWithHttpTimeout(async (signal) => {
+      const response = await (options.fetchImplementation ?? fetch)(
+        `http://${host}:${port}/json/version`,
+        {
+          signal,
+          redirect: 'error',
+        }
+      );
+      responseHolder.current = response;
+      if (!response.ok) {
+        return null;
       }
-    );
-    if (!response.ok) {
-      return null;
-    }
-    const payload = await readBoundedResponseJson(
-      response,
-      MAX_CDP_VERSION_RESPONSE_BYTES
-    );
-    const webSocketDebuggerUrl =
-      payload && typeof payload === 'object'
-        ? (payload as { webSocketDebuggerUrl?: unknown }).webSocketDebuggerUrl
+      const payload = await readBoundedResponseJson(
+        response,
+        MAX_CDP_VERSION_RESPONSE_BYTES
+      );
+      const webSocketDebuggerUrl =
+        payload && typeof payload === 'object'
+          ? (payload as { webSocketDebuggerUrl?: unknown }).webSocketDebuggerUrl
+          : null;
+      return isExpectedLocalWebSocketUrl(webSocketDebuggerUrl, port)
+        ? (webSocketDebuggerUrl as string)
         : null;
-    return isExpectedLocalWebSocketUrl(webSocketDebuggerUrl, port)
-      ? (webSocketDebuggerUrl as string)
-      : null;
+    }, timeoutMs);
   } catch {
     return null;
   } finally {
+    const response = responseHolder.current;
     if (response?.body && !response.bodyUsed) {
-      await response.body.cancel().catch(() => undefined);
+      try {
+        void response.body.cancel().catch(() => undefined);
+      } catch {
+        // The bounded probe has already completed or timed out.
+      }
     }
-    clearTimeout(timeout);
   }
 };

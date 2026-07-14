@@ -151,4 +151,40 @@ describe('local CDP discovery', () => {
       })
     ).resolves.toBeNull();
   });
+
+  it('times out when a fetch adapter ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () => await new Promise<Response>(() => undefined)
+    );
+
+    await expect(
+      discoverLocalCdpWebSocketUrl({
+        port: 9222,
+        timeoutMs: 10,
+        fetchImplementation: fetchMock as typeof fetch,
+      })
+    ).resolves.toBeNull();
+  });
+
+  it('times out when a response stream ignores abort signals', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start() {
+              // Intentionally never enqueue or close.
+            },
+          }),
+          { status: 200 }
+        )
+    );
+
+    await expect(
+      discoverLocalCdpWebSocketUrl({
+        port: 9222,
+        timeoutMs: 10,
+        fetchImplementation: fetchMock as typeof fetch,
+      })
+    ).resolves.toBeNull();
+  });
 });
