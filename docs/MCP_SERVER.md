@@ -29,14 +29,22 @@ This mode exposes exactly two tools:
 
 | Tool                 | Purpose                                                        |
 | -------------------- | -------------------------------------------------------------- |
-| `browser_exec`       | Run one `browser-use-direct` command with an argument array     |
-| `browser_screenshot` | Return a viewport or full-page PNG, optionally using `max_dim`  |
+| `browser_exec`       | Run one `browser-use-direct` command with an argument array    |
+| `browser_screenshot` | Return a viewport or full-page PNG, optionally using `max_dim` |
 
 `browser_exec` MUST NOT invoke a shell; `command` and `args` are passed to the
 in-process direct-command runner. Calls are serialized so they cannot race the
 persistent browser state. Text output is capped at 100,000 characters by
 default; set `BROWSER_USE_CLI_MCP_MAX_OUTPUT_CHARS` to a positive integer to
-change the cap.
+change the cap. The collector stops retaining data as soon as this shared
+stdout/stderr budget is exhausted.
+
+PNG screenshots are limited to 32 MiB of encoded image data and 33,554,432
+pixels before image decoding. Set
+`BROWSER_USE_CLI_MCP_MAX_SCREENSHOT_BYTES` or
+`BROWSER_USE_CLI_MCP_MAX_SCREENSHOT_PIXELS` to positive integers when a
+different ceiling is required. Use `browser_screenshot` for in-memory images;
+`browser_exec screenshot` is accepted only when an output path is supplied.
 
 Example MCP client configuration:
 

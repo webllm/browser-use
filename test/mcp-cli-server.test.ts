@@ -1,6 +1,9 @@
 import { createCanvas, loadImage } from 'canvas';
 import { describe, expect, it, vi } from 'vitest';
-import { CliMCPServer } from '../src/mcp/cli-server.js';
+import {
+  CliMCPServer,
+  createBoundedOutputCollector,
+} from '../src/mcp/cli-server.js';
 
 const textFrom = (result: Awaited<ReturnType<CliMCPServer['callTool']>>) => {
   const content = result.content[0];
@@ -89,6 +92,34 @@ describe('CliMCPServer', () => {
     expect(textFrom(result)).toBe('xxxxxxxxxx\n...[truncated 10 characters]');
   });
 
+  it('discards command output as soon as the collection budget is exhausted', () => {
+    const budget = { remainingChars: 4, omittedChars: 0 };
+    const output = createBoundedOutputCollector(budget);
+
+    output.stream.write('abcdef');
+    output.stream.write('gh');
+
+    expect(output.value()).toBe('abcd');
+    expect(output.truncated()).toBe(true);
+    expect(budget).toEqual({ remainingChars: 0, omittedChars: 4 });
+  });
+
+  it('shares the text collection budget across stdout and stderr', async () => {
+    const runner = vi.fn(async (_argv: string[], options: any) => {
+      options.stdout.write('x'.repeat(8));
+      options.stderr.write('y'.repeat(8));
+      return 0;
+    });
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxOutputChars: 10,
+    });
+
+    const result = await server.callTool('browser_exec', { command: 'html' });
+
+    expect(textFrom(result)).toBe('xxxxxxxx\ny\n...[truncated 7 characters]');
+  });
+
   it('serializes concurrent browser commands', async () => {
     let active = 0;
     let maxActive = 0;
@@ -137,6 +168,59 @@ describe('CliMCPServer', () => {
     }
     const resized = await loadImage(Buffer.from(content.data, 'base64'));
     expect([resized.width, resized.height]).toEqual([2, 1]);
+  });
+
+  it('rejects screenshots before decoding when their encoded size is too large', async () => {
+    const source = createCanvas(4, 2);
+    const screenshot = source.toBuffer('image/png').toString('base64');
+    const runner = vi.fn(async (_argv: string[], options: any) => {
+      options.stdout.write(JSON.stringify({ screenshot }));
+      return 0;
+    });
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxScreenshotBytes: 8,
+    });
+
+    const result = await server.callTool('browser_screenshot', {});
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).toContain('maximum encoded size of 8 bytes');
+  });
+
+  it('rejects oversized PNG dimensions before loading the image', async () => {
+    const source = createCanvas(4, 2);
+    const screenshot = source.toBuffer('image/png').toString('base64');
+    const runner = vi.fn(async (_argv: string[], options: any) => {
+      options.stdout.write(JSON.stringify({ screenshot }));
+      return 0;
+    });
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+      maxScreenshotBytes: 1024,
+      maxScreenshotPixels: 4,
+    });
+
+    const result = await server.callTool('browser_screenshot', {});
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).toContain('maximum pixel count of 4');
+  });
+
+  it('routes in-memory screenshot requests to the bounded screenshot tool', async () => {
+    const runner = vi.fn(async () => 0);
+    const server = new CliMCPServer('test', '1.0.0', {
+      runDirectCommand: runner,
+    });
+
+    const result = await server.callTool('browser_exec', {
+      command: 'screenshot',
+      args: ['--full'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textFrom(result)).toContain('Use browser_screenshot');
+    expect(runner).not.toHaveBeenCalled();
   });
 
   it('rejects invalid screenshot dimensions and unknown tools', async () => {
