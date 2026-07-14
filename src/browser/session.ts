@@ -3877,11 +3877,13 @@ export class BrowserSession {
           ({
             xpath,
             maxOptions,
+            maxScanNodes,
             maxFieldChars,
             maxPayloadChars,
           }: {
             xpath: string;
             maxOptions: number;
+            maxScanNodes: number;
             maxFieldChars: number;
             maxPayloadChars: number;
           }) => {
@@ -3957,18 +3959,36 @@ export class BrowserSession {
             const ariaRoles = new Set(['menu', 'listbox', 'combobox']);
             const role = element.getAttribute('role');
             if (role && ariaRoles.has(role)) {
-              const nodes = element.querySelectorAll(
-                '[role="menuitem"],[role="option"]'
+              const walker = document.createTreeWalker(
+                element,
+                NodeFilter.SHOW_ELEMENT
               );
-              const count = Math.min(nodes.length, maxOptions);
-              for (let index = 0; index < count; index += 1) {
-                const text = nodes.item(index)?.textContent ?? '';
-                if (!pushOption(text, text, index)) break;
+              let candidate = walker.nextNode() as Element | null;
+              let scannedNodes = 0;
+              let optionIndex = 0;
+              while (
+                candidate &&
+                scannedNodes < maxScanNodes &&
+                options.length < maxOptions
+              ) {
+                const current = candidate;
+                candidate = walker.nextNode() as Element | null;
+                scannedNodes += 1;
+                const candidateRole = current.getAttribute('role');
+                if (
+                  candidateRole !== 'menuitem' &&
+                  candidateRole !== 'option'
+                ) {
+                  continue;
+                }
+                const text = current.textContent ?? '';
+                if (!pushOption(text, text, optionIndex)) break;
+                optionIndex += 1;
               }
               return {
                 type: 'aria',
                 options,
-                truncated: contentTruncated || nodes.length > options.length,
+                truncated: contentTruncated || Boolean(candidate),
               };
             }
 
@@ -3977,6 +3997,7 @@ export class BrowserSession {
           {
             xpath: element_node.xpath,
             maxOptions: MAX_DROPDOWN_OPTIONS,
+            maxScanNodes: MAX_DROPDOWN_SCANNED_OPTIONS,
             maxFieldChars: MAX_DROPDOWN_FIELD_CHARS,
             maxPayloadChars: MAX_DROPDOWN_PAYLOAD_CHARS,
           }
@@ -4312,8 +4333,9 @@ export class BrowserSession {
                   null
                 ).singleNodeValue as HTMLElement | null;
                 if (!root) return false;
-                const nodes = root.querySelectorAll(
-                  '[role="menuitem"],[role="option"]'
+                const walker = document.createTreeWalker(
+                  root,
+                  NodeFilter.SHOW_ELEMENT
                 );
                 const targetRaw = optionText.trim();
                 const targetLower = optionText.trim().toLowerCase();
@@ -4324,8 +4346,16 @@ export class BrowserSession {
                 }> = [];
                 let remainingChars = Math.max(0, maxPayloadChars);
                 let contentTruncated = false;
-                let exactMatch = -1;
-                let caseInsensitiveMatch = -1;
+                let exactMatch: {
+                  index: number;
+                  node: HTMLElement;
+                  text: string;
+                } | null = null;
+                let caseInsensitiveMatch: {
+                  index: number;
+                  node: HTMLElement;
+                  text: string;
+                } | null = null;
                 const [scanText] = [
                   (value: string) => {
                     if (value.length > maxFieldChars) contentTruncated = true;
@@ -4344,18 +4374,33 @@ export class BrowserSession {
                     return bounded;
                   },
                 ];
-                const scanCount = Math.min(nodes.length, maxScanOptions);
-                for (let index = 0; index < scanCount; index += 1) {
-                  const optionTextValue = scanText(
-                    nodes.item(index)?.textContent ?? ''
-                  );
+                let candidate = walker.nextNode() as HTMLElement | null;
+                let scannedNodes = 0;
+                let optionIndex = 0;
+                while (candidate && scannedNodes < maxScanOptions) {
+                  const current = candidate;
+                  candidate = walker.nextNode() as HTMLElement | null;
+                  scannedNodes += 1;
+                  const role = current.getAttribute('role');
+                  if (role !== 'menuitem' && role !== 'option') continue;
+                  const index = optionIndex;
+                  optionIndex += 1;
+                  const optionTextValue = scanText(current.textContent ?? '');
                   if (optionTextValue === targetRaw) {
-                    exactMatch = index;
+                    exactMatch = {
+                      index,
+                      node: current,
+                      text: optionTextValue,
+                    };
                   } else if (
-                    caseInsensitiveMatch < 0 &&
+                    !caseInsensitiveMatch &&
                     optionTextValue.toLowerCase() === targetLower
                   ) {
-                    caseInsensitiveMatch = index;
+                    caseInsensitiveMatch = {
+                      index,
+                      node: current,
+                      text: optionTextValue,
+                    };
                   }
                   if (
                     options.length < maxReturnedOptions &&
@@ -4369,33 +4414,25 @@ export class BrowserSession {
                   } else {
                     contentTruncated = true;
                   }
-                  if (exactMatch >= 0) break;
+                  if (exactMatch) break;
                 }
-                const matchedIndex =
-                  exactMatch >= 0 ? exactMatch : caseInsensitiveMatch;
-                if (matchedIndex < 0) {
+                const matched = exactMatch ?? caseInsensitiveMatch;
+                if (!matched) {
                   return {
                     found: true,
                     success: false,
                     options,
-                    truncated:
-                      contentTruncated ||
-                      nodes.length > scanCount ||
-                      nodes.length > options.length,
+                    truncated: contentTruncated || Boolean(candidate),
                   };
                 }
-                (nodes[matchedIndex] as HTMLElement).click();
+                matched.node.click();
                 return {
                   found: true,
                   success: true,
                   matched: {
-                    index: matchedIndex,
-                    text: scanText(
-                      nodes.item(matchedIndex)?.textContent ?? ''
-                    ).slice(0, maxFieldChars),
-                    value: scanText(
-                      nodes.item(matchedIndex)?.textContent ?? ''
-                    ).slice(0, maxFieldChars),
+                    index: matched.index,
+                    text: matched.text.slice(0, maxFieldChars),
+                    value: matched.text.slice(0, maxFieldChars),
                   },
                 };
               },

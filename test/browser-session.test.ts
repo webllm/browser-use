@@ -4663,6 +4663,49 @@ describe('Direct Playwright Operations', () => {
     }
   });
 
+  it('walks ARIA dropdowns without materializing every matching node', async () => {
+    const ariaPage = await context.newPage();
+    try {
+      await ariaPage.setContent(`
+        <div id="country" role="listbox">
+          <div role="option">United States</div>
+          <div role="option" onclick="document.body.dataset.selected = 'ca'">Canada</div>
+        </div>
+      `);
+      await ariaPage.evaluate(() => {
+        const root = document.querySelector('#country') as HTMLElement;
+        Object.defineProperty(root, 'querySelectorAll', {
+          value: () => {
+            throw new Error('querySelectorAll must not be used');
+          },
+        });
+      });
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({}),
+      });
+      vi.spyOn(session, 'get_current_page').mockResolvedValue(ariaPage as any);
+      vi.spyOn(session, 'validate_page_after_action').mockResolvedValue();
+      const elementNode = {
+        xpath: '//*[@id="country"]',
+        highlight_index: 1,
+      } as DOMElementNode;
+
+      const options = await session.get_dropdown_options(elementNode);
+      const selection = await session.select_dropdown_option(
+        elementNode,
+        'Canada'
+      );
+
+      expect(options.formatted_options).toContain('United States');
+      expect(selection.matched_text).toBe('Canada');
+      await expect(
+        ariaPage.locator('body').getAttribute('data-selected')
+      ).resolves.toBe('ca');
+    } finally {
+      await ariaPage.close();
+    }
+  });
+
   it('inputs text after a click replaces the field in the same document', async () => {
     await page.setContent(`
       <input

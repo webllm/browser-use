@@ -1143,6 +1143,53 @@ describe('Controller Integration Tests', () => {
       }
     });
 
+    it('walks ARIA dropdown fallbacks without querySelectorAll', async () => {
+      const ariaPage = await browser.newPage();
+      try {
+        await ariaPage.setContent(`
+          <div id="country" role="listbox">
+            <div role="option">United States</div>
+            <div role="option" onclick="document.body.dataset.selected = 'ca'">Canada</div>
+          </div>
+        `);
+        await ariaPage.evaluate(() => {
+          const root = document.querySelector('#country') as HTMLElement;
+          Object.defineProperty(root, 'querySelectorAll', {
+            value: () => {
+              throw new Error('querySelectorAll must not be used');
+            },
+          });
+        });
+        const controller = new Controller();
+        const browserSession = {
+          get_current_page: vi.fn(async () => ariaPage),
+          get_dom_element_by_index: vi.fn(async () => ({
+            xpath: '//*[@id="country"]',
+          })),
+          validate_page_after_action: vi.fn(async () => undefined),
+        };
+
+        const optionsResult = await controller.registry.execute_action(
+          'get_dropdown_options',
+          { index: 1 },
+          { browser_session: browserSession as any }
+        );
+        const selectResult = await controller.registry.execute_action(
+          'select_dropdown_option',
+          { index: 1, text: 'Canada' },
+          { browser_session: browserSession as any }
+        );
+
+        expect(optionsResult.extracted_content).toContain('United States');
+        expect(selectResult.extracted_content).toContain('Canada');
+        await expect(
+          ariaPage.locator('body').getAttribute('data-selected')
+        ).resolves.toBe('ca');
+      } finally {
+        await ariaPage.close();
+      }
+    });
+
     it('caps find_elements text-node traversal across all matched elements', async () => {
       await page.setContent(`<main>${'<div></div>'.repeat(100)}</main>`);
       await page.evaluate(() => {
