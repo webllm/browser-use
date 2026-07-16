@@ -18,7 +18,7 @@
 
 ---
 
-> **TypeScript port** of the popular Python [browser-use](https://github.com/browser-use/browser-use) library — with a native Node.js experience, full type safety, and first-class support for all major LLM providers.
+> **Production-capable TypeScript port**, inspired by and behavior-aligned with Python [browser-use](https://github.com/browser-use/browser-use) — with a native Node.js experience, full type safety, and first-class support for all major LLM providers.
 
 ## ✨ Features
 
