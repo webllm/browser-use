@@ -1,6 +1,6 @@
 {
   "name": "browser-use",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "description": "A TypeScript-first library for programmatic browser control, designed for building AI-powered web agents.",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
