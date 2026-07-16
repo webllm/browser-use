@@ -125,7 +125,10 @@ jobs:
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       - name: Security audit (high+)
-        run: pnpm audit --audit-level high
+        # pnpm 10 still calls npm's retired audit endpoints. pnpm 11 uses the
+        # bulk advisories API; --pm-on-fail prevents the packageManager field
+        # from switching this one command back to pnpm 10.
+        run: pnpm dlx pnpm@11.13.1 --pm-on-fail=ignore audit --audit-level high
 
   coverage:
     name: coverage (22.x)
