@@ -803,6 +803,156 @@ describe('DomService', () => {
     });
   });
 
+  describe('Shadow DOM Form Elements (offsetWidth/Height = 0)', () => {
+    // Regression test for fix(dom): include shadow-DOM form elements when
+    // offsetWidth/Height === 0. Auth0-style login widgets render <input>s
+    // inside a shadow root that frequently report offsetWidth/Height = 0
+    // even though they're visually interactable. Before the fix,
+    // isElementVisible short-circuited to false and the inputs never made
+    // it into selector_map.
+    //
+    // Note: we navigate via data: URL rather than setContent() because
+    // DomService short-circuits to an empty selector_map for about:blank
+    // (which is what setContent leaves the URL as).
+    // Build the shadow tree imperatively (rather than via innerHTML with a
+    // backtick-template) so the data: URL stays simple and we don't have to
+    // escape nested template literals.
+    const SHADOW_FORM_HTML = `<!doctype html>
+<html>
+  <body>
+    <button id="light-btn">Visible Light DOM Button</button>
+    <div id="shadow-host"></div>
+    <script>
+      const host = document.getElementById('shadow-host');
+      const shadow = host.attachShadow({ mode: 'open' });
+      const style = document.createElement('style');
+      // Force offsetWidth/offsetHeight to 0 while keeping the element rendered
+      // (display !== none, visibility !== hidden). This reproduces the
+      // shadow-DOM layout-reporting quirk where form elements inside a shadow
+      // root can show 0/0 offset dimensions despite being functional.
+      style.textContent =
+        'input, button, select, textarea {' +
+        '  width: 0;' +
+        '  height: 0;' +
+        '  padding: 0;' +
+        '  border: 0;' +
+        '  margin: 0;' +
+        '  display: block;' +
+        '}';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'shadow-input';
+      input.name = 'username';
+      input.placeholder = 'username';
+      const btn = document.createElement('button');
+      btn.type = 'submit';
+      btn.id = 'shadow-button';
+      btn.textContent = 'Submit';
+      shadow.appendChild(style);
+      shadow.appendChild(input);
+      shadow.appendChild(btn);
+    </script>
+  </body>
+</html>`;
+
+    it('discovers shadow-DOM input with offsetWidth/Height = 0', async () => {
+      await page.goto(
+        'data:text/html;charset=utf-8,' + encodeURIComponent(SHADOW_FORM_HTML)
+      );
+
+      // Sanity check: confirm the shadow input really does report
+      // offsetWidth/Height = 0 under the chosen CSS. If this ever stops
+      // being true the test no longer exercises the bug.
+      const shadowInputDims = await page.evaluate(() => {
+        const host = document.getElementById('shadow-host');
+        const input = host?.shadowRoot?.getElementById('shadow-input') as
+          | HTMLInputElement
+          | null;
+        if (!input) return null;
+        return {
+          offsetWidth: input.offsetWidth,
+          offsetHeight: input.offsetHeight,
+          display: getComputedStyle(input).display,
+          visibility: getComputedStyle(input).visibility,
+        };
+      });
+      expect(shadowInputDims).not.toBeNull();
+      expect(shadowInputDims!.offsetWidth).toBe(0);
+      expect(shadowInputDims!.offsetHeight).toBe(0);
+      // The element is still rendered (not display:none / visibility:hidden);
+      // it's the offsetWidth/Height = 0 short-circuit that loses it
+      // without the fix.
+      expect(shadowInputDims!.display).not.toBe('none');
+      expect(shadowInputDims!.visibility).not.toBe('hidden');
+
+      const domService = new DomService(page);
+      // viewport_expansion=-1 ensures elements are picked regardless of
+      // viewport intersection — the bug under test is about visibility
+      // detection inside the shadow root, not viewport intersection.
+      const state = await domService.get_clickable_elements(true, -1, -1);
+
+      const selectorEntries = Object.values(state.selector_map);
+
+      // The actual regression assertion: the shadow-DOM input must reach
+      // selector_map. Without the SHADOW_DOM_FORM_TAGS exception this is
+      // dropped because isElementVisible returns false (offsetWidth/Height = 0).
+      const shadowInputEntries = selectorEntries.filter(
+        (node) =>
+          node.tag_name === 'input' &&
+          (node.attributes?.id === 'shadow-input' ||
+            node.attributes?.name === 'username')
+      );
+      expect(shadowInputEntries.length).toBeGreaterThan(0);
+
+      // The submit button inside the shadow root should also be discovered.
+      const shadowSubmitEntries = selectorEntries.filter(
+        (node) =>
+          node.tag_name === 'button' && node.attributes?.id === 'shadow-button'
+      );
+      expect(shadowSubmitEntries.length).toBeGreaterThan(0);
+    });
+
+    it('still skips non-form shadow-DOM elements with offsetWidth/Height = 0', async () => {
+      // Guard: the SHADOW_DOM_FORM_TAGS whitelist must remain a *whitelist*.
+      // A <div> inside a shadow root with width=0/height=0 should not be
+      // promoted to selector_map by this code path. (It can still appear
+      // via other interactivity heuristics, so we assert via highlight_index
+      // not being assigned through the shadow-DOM exception.)
+      const DIV_HTML = `<!doctype html>
+<html>
+  <body>
+    <div id="shadow-host"></div>
+    <script>
+      const host = document.getElementById('shadow-host');
+      const shadow = host.attachShadow({ mode: 'open' });
+      const inner = document.createElement('div');
+      inner.id = 'plain-div';
+      inner.style.width = '0';
+      inner.style.height = '0';
+      inner.style.display = 'block';
+      inner.textContent = 'plain non-form div';
+      shadow.appendChild(inner);
+    </script>
+  </body>
+</html>`;
+      await page.goto(
+        'data:text/html;charset=utf-8,' + encodeURIComponent(DIV_HTML)
+      );
+
+      const domService = new DomService(page);
+      const state = await domService.get_clickable_elements(true, -1, -1);
+
+      // A plain <div> inside the shadow root with no interactive cursor /
+      // event handlers must not land in selector_map via the form-tag
+      // exception. This guards against widening the whitelist accidentally.
+      const plainDiv = Object.values(state.selector_map).filter(
+        (node) =>
+          node.tag_name === 'div' && node.attributes?.id === 'plain-div'
+      );
+      expect(plainDiv.length).toBe(0);
+    });
+  });
+
   describe('Cross-Origin Iframes', () => {
     it('detects cross-origin iframes', async () => {
       await page.setContent(`

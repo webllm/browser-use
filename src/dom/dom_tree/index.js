@@ -1053,6 +1053,17 @@
     return hasQuickInteractiveAttr;
   }
 
+  // Tags that should remain interactive even when offsetWidth/Height report 0
+  // when they live inside a shadow root. Matches the upstream Python fix where
+  // shadow-DOM form elements lacking CDP DOMSnapshot layout still go into the
+  // selector_map (e.g. auth0-style login widgets).
+  const SHADOW_DOM_FORM_TAGS = new Set(['input', 'button', 'select', 'textarea', 'a']);
+
+  function isInsideShadowDom(element) {
+    let root = element.getRootNode && element.getRootNode();
+    return Boolean(root && root instanceof ShadowRoot);
+  }
+
   // --- Define constants for distinct interaction check ---
   const DISTINCT_INTERACTIVE_TAGS = new Set([
     'a', 'button', 'input', 'select', 'textarea', 'summary', 'details', 'label', 'option'
@@ -1440,13 +1451,25 @@
     // Perform visibility, interactivity, and highlighting checks
     if (node.nodeType === Node.ELEMENT_NODE) {
       nodeData.isVisible = isElementVisible(node); // isElementVisible uses offsetWidth/Height, which is fine
+
+      // Shadow-DOM exception: form tags inside a shadow root that report
+      // offsetWidth/Height = 0 are still functional. Treating them as visible
+      // here lets isInteractiveElement run and the element reach selector_map.
+      const isShadowDomFormElement =
+        !nodeData.isVisible &&
+        SHADOW_DOM_FORM_TAGS.has(node.tagName.toLowerCase()) &&
+        isInsideShadowDom(node);
+      if (isShadowDomFormElement) {
+        nodeData.isVisible = true;
+      }
+
       if (nodeData.isVisible) {
-        nodeData.isTopElement = isTopElement(node);
-        
+        nodeData.isTopElement = isShadowDomFormElement ? true : isTopElement(node);
+
         // Special handling for ARIA menu containers - check interactivity even if not top element
         const role = node.getAttribute('role');
         const isMenuContainer = role === 'menu' || role === 'menubar' || role === 'listbox';
-        
+
         if (nodeData.isTopElement || isMenuContainer) {
           nodeData.isInteractive = isInteractiveElement(node);
           // Call the dedicated highlighting function
