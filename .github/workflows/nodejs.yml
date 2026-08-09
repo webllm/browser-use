@@ -18,7 +18,7 @@ jobs:
     name: static (22.x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -47,7 +47,7 @@ jobs:
         node-version: [20.x, 22.x]
         suite: [unit, integration]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -67,7 +67,7 @@ jobs:
     name: e2e (22.x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -87,7 +87,7 @@ jobs:
     name: pack smoke (22.x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -111,7 +111,7 @@ jobs:
     name: audit (22.x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -134,7 +134,7 @@ jobs:
     name: coverage (22.x)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
