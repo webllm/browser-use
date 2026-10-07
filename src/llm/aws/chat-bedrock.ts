@@ -52,7 +52,7 @@ export class ChatBedrockConverse implements BaseChatModel {
         ? ({ model: modelOrOptions, region } as ChatBedrockConverseOptions)
         : modelOrOptions;
     const {
-      model = 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+      model = 'global.anthropic.claude-opus-4-6-v1',
       region: bedrockRegion = process.env.AWS_REGION || 'us-east-1',
       awsAccessKeyId,
       awsSecretAccessKey,

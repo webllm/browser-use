@@ -61,7 +61,7 @@ export class ChatAnthropic implements BaseChatModel {
     const normalizedOptions =
       typeof options === 'string' ? { model: options } : options;
     const {
-      model = 'claude-sonnet-4-20250514',
+      model = 'claude-opus-5',
       apiKey = process.env.ANTHROPIC_API_KEY,
       authToken = process.env.ANTHROPIC_AUTH_TOKEN,
       baseURL,

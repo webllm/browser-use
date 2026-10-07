@@ -30,6 +30,11 @@ export interface ChatDeepSeekOptions {
   topP?: number | null;
   seed?: number | null;
   maxRetries?: number;
+  /**
+   * DeepSeek V4 models think by default. Keep it off unless requested so the
+   * output shape and latency match the retired deepseek-chat default.
+   */
+  thinking?: boolean;
 }
 
 export class ChatDeepSeek implements BaseChatModel {
@@ -41,12 +46,13 @@ export class ChatDeepSeek implements BaseChatModel {
   private maxTokens: number | null;
   private topP: number | null;
   private seed: number | null;
+  private thinking: boolean;
 
   constructor(options: string | ChatDeepSeekOptions = {}) {
     const normalizedOptions =
       typeof options === 'string' ? { model: options } : options;
     const {
-      model = 'deepseek-chat',
+      model = 'deepseek-v4-flash',
       apiKey,
       baseURL = 'https://api.deepseek.com/v1',
       timeout = null,
@@ -56,9 +62,11 @@ export class ChatDeepSeek implements BaseChatModel {
       topP = null,
       seed = null,
       maxRetries = 10,
+      thinking = false,
     } = normalizedOptions;
 
     this.model = model;
+    this.thinking = thinking;
     this.temperature = temperature;
     this.maxTokens = maxTokens;
     this.topP = topP;
@@ -86,6 +94,10 @@ export class ChatDeepSeek implements BaseChatModel {
 
   get name(): string {
     return this.model;
+  }
+
+  private supportsThinking(): boolean {
+    return this.model.toLowerCase().includes('deepseek-v4');
   }
 
   get model_name(): string {
@@ -147,6 +159,9 @@ export class ChatDeepSeek implements BaseChatModel {
     }
     if (this.seed !== null) {
       modelParams.seed = this.seed;
+    }
+    if (this.supportsThinking()) {
+      modelParams.thinking = { type: this.thinking ? 'enabled' : 'disabled' };
     }
 
     const zodSchemaCandidate = (() => {

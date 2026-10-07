@@ -483,9 +483,9 @@ const llm = new ChatOpenAI({
 import { ChatAnthropic } from 'browser-use/llm/anthropic';
 
 const llm = new ChatAnthropic({
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-opus-5',
   apiKey: 'sk-ant-...',
-  temperature: 0.7,
+  // Claude Opus 4.7 and later reject sampling parameters such as temperature.
 });
 ```
 
@@ -513,7 +513,7 @@ const llm = new ChatAzure('gpt-4o');
 import { ChatAnthropicBedrock } from 'browser-use/llm/aws';
 
 const llm = new ChatAnthropicBedrock({
-  model: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+  model: 'global.anthropic.claude-opus-4-6-v1',
   region: 'us-east-1',
   max_tokens: 4096,
 });
@@ -540,7 +540,7 @@ const llm = new ChatOllama('llama3', 'http://localhost:11434');
 ```typescript
 import { ChatDeepSeek } from 'browser-use/llm/deepseek';
 
-const llm = new ChatDeepSeek('deepseek-chat');
+const llm = new ChatDeepSeek('deepseek-v4-flash');
 ```
 
 ### OpenRouter

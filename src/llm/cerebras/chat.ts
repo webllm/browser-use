@@ -53,7 +53,7 @@ export class ChatCerebras implements BaseChatModel {
     const normalizedOptions =
       typeof options === 'string' ? { model: options } : options;
     const {
-      model = 'llama3.1-8b',
+      model = 'gpt-oss-120b',
       apiKey,
       baseURL = process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
       timeout = null,

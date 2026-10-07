@@ -142,6 +142,19 @@ describe('LLM models factory alignment', () => {
     expect(llm.model).toBe('llama3.1-8b');
   });
 
+  it('resolves current Cerebras catalog aliases', () => {
+    expect(getLlmByName('cerebras_gpt_oss_120b').model).toBe('gpt-oss-120b');
+    expect(getLlmByName('cerebras_zai_glm_4_7').model).toBe('zai-glm-4.7');
+    expect(getLlmByName('cerebras_gemma_4_31b').model).toBe('gemma-4-31b');
+    expect(getLlmByName('zai-glm-4.7').provider).toBe('cerebras');
+  });
+
+  it('remaps the retired Pixtral Large alias to Mistral Medium', () => {
+    const llm = getLlmByName('pixtral_large');
+    expect(llm.provider).toBe('mistral');
+    expect(llm.model).toBe('mistral-medium-latest');
+  });
+
   it('supports provider-prefixed Vercel model aliases', () => {
     const llm = getLlmByName('vercel:openai/gpt-5-mini');
     expect(llm.provider).toBe('vercel');

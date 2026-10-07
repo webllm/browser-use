@@ -94,7 +94,7 @@ npx browser-use "Go to example.com and extract the page title"
 npx browser-use -p "Go to example.com and extract the page title"
 
 # Select model/provider by model name prefix
-npx browser-use --model claude-sonnet-4-20250514 -p "Search for AI news"
+npx browser-use --model claude-opus-5 -p "Search for AI news"
 
 # Select provider explicitly (uses provider default model)
 npx browser-use --provider anthropic -p "Search for AI news"

@@ -253,7 +253,7 @@ describe('ChatAnthropic alignment', () => {
     ).rejects.toMatchObject({
       name: 'ModelOutputTruncatedError',
       statusCode: 400,
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-5',
       message: expect.stringContaining('max_tokens=128'),
     } satisfies Partial<ModelOutputTruncatedError>);
   });

@@ -136,7 +136,7 @@ The configuration file is located at `~/.config/browseruse/config.json`.
     },
     "anthropic-claude": {
       "id": "anthropic-claude",
-      "model": "claude-sonnet-4-20250514",
+      "model": "claude-opus-5",
       "api_key": "sk-ant-...",
       "temperature": 0.7
     }

@@ -48,7 +48,7 @@ export class ChatGroq implements BaseChatModel {
     const normalizedOptions =
       typeof options === 'string' ? { model: options } : options;
     const {
-      model = 'llama-3.1-70b-versatile',
+      model = 'openai/gpt-oss-120b',
       apiKey = process.env.GROQ_API_KEY,
       baseURL,
       temperature = null,

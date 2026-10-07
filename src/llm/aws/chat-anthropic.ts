@@ -11,7 +11,7 @@
  * import { ChatAnthropicBedrock } from './llm/aws/chat-anthropic.js';
  *
  * const llm = new ChatAnthropicBedrock({
- *   model: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+ *   model: 'global.anthropic.claude-opus-4-6-v1',
  *   region: 'us-east-1'
  * });
  *
@@ -79,7 +79,7 @@ export class ChatAnthropicBedrock implements BaseChatModel {
 
   constructor(config: ChatAnthropicBedrockConfig = {}) {
     // Anthropic Claude specific defaults
-    this.model = config.model || 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+    this.model = config.model || 'global.anthropic.claude-opus-4-6-v1';
     this.max_tokens = config.max_tokens || 8192;
     this.temperature =
       config.temperature === undefined ? null : config.temperature;

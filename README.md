@@ -82,7 +82,7 @@ npx browser-use
 npx browser-use "Go to example.com and extract the page title"
 
 # With specific model
-npx browser-use --model claude-sonnet-4-20250514 -p "Search for AI news"
+npx browser-use --model claude-opus-5 -p "Search for AI news"
 
 # Headless mode
 npx browser-use --headless -p "Check the weather"
@@ -170,7 +170,7 @@ const llm = new ChatOpenAI({
 // Anthropic
 import { ChatAnthropic } from 'browser-use/llm/anthropic';
 const llm = new ChatAnthropic({
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-opus-5',
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 

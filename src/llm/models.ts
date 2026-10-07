@@ -55,8 +55,9 @@ const MISTRAL_ALIAS_MAP: Record<string, string> = {
   medium: 'mistral-medium-latest',
   small: 'mistral-small-latest',
   codestral: 'codestral-latest',
-  'pixtral-large': 'pixtral-large-latest',
-  pixtral_large: 'pixtral-large-latest',
+  // Pixtral Large was retired; Mistral names Mistral Medium as its replacement.
+  'pixtral-large': 'mistral-medium-latest',
+  pixtral_large: 'mistral-medium-latest',
 };
 
 const convertPythonModelPart = (modelPart: string): string => {
@@ -93,6 +94,9 @@ const convertPythonModelPart = (modelPart: string): string => {
   }
   if (modelPart.includes('gpt_oss_120b')) {
     return modelPart.replace('gpt_oss_120b', 'gpt-oss-120b');
+  }
+  if (modelPart.includes('zai_glm_4_7')) {
+    return modelPart.replace('zai_glm_4_7', 'zai-glm-4.7');
   }
   if (modelPart.includes('qwen_3_32b')) {
     return modelPart.replace('qwen_3_32b', 'qwen-3-32b');
@@ -190,7 +194,8 @@ const inferProviderFromModel = (model: string): ResolvedProvider | null => {
     lower.startsWith('llama3.') ||
     lower.startsWith('llama-4-') ||
     lower.startsWith('gpt-oss-') ||
-    lower.startsWith('qwen-3-')
+    lower.startsWith('qwen-3-') ||
+    lower.startsWith('zai-glm-')
   ) {
     return 'cerebras';
   }
@@ -372,7 +377,7 @@ export const getLlmByName = (modelName: string): BaseChatModel => {
     return buildProviderModel('mistral', 'codestral-latest');
   }
   if (normalizedName === 'pixtral_large') {
-    return buildProviderModel('mistral', 'pixtral-large-latest');
+    return buildProviderModel('mistral', 'mistral-medium-latest');
   }
 
   const separator = normalizedName.indexOf('_');

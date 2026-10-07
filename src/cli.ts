@@ -662,13 +662,13 @@ const getDefaultModelForProvider = (
     case 'openai':
       return 'gpt-5-mini';
     case 'anthropic':
-      return 'claude-4-sonnet';
+      return 'claude-opus-5';
     case 'google':
       return 'gemini-2.5-pro';
     case 'deepseek':
-      return 'deepseek-chat';
+      return 'deepseek-v4-flash';
     case 'groq':
-      return 'llama-3.1-70b-versatile';
+      return 'openai/gpt-oss-120b';
     case 'openrouter':
       return 'openai/gpt-5-mini';
     case 'azure':
@@ -678,13 +678,13 @@ const getDefaultModelForProvider = (
     case 'mistral':
       return 'mistral-large-latest';
     case 'cerebras':
-      return 'llama3.1-8b';
+      return 'gpt-oss-120b';
     case 'vercel':
       return 'openai/gpt-5-mini';
     case 'oci':
       return null;
     case 'aws-anthropic':
-      return 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+      return 'global.anthropic.claude-opus-4-6-v1';
     case 'ollama':
       return process.env.OLLAMA_MODEL || 'qwen2.5:latest';
     case 'browser-use':
@@ -816,7 +816,7 @@ export const getLlmFromCliArgs = (args: ParsedCliArgs): BaseChatModel => {
   }
   if (process.env.ANTHROPIC_API_KEY) {
     return new ChatAnthropic({
-      model: 'claude-4-sonnet',
+      model: 'claude-opus-5',
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
   }
@@ -824,10 +824,10 @@ export const getLlmFromCliArgs = (args: ParsedCliArgs): BaseChatModel => {
     return new ChatGoogle('gemini-2.5-pro');
   }
   if (process.env.DEEPSEEK_API_KEY) {
-    return new ChatDeepSeek('deepseek-chat');
+    return new ChatDeepSeek('deepseek-v4-flash');
   }
   if (process.env.GROQ_API_KEY) {
-    return new ChatGroq('llama-3.1-70b-versatile');
+    return new ChatGroq('openai/gpt-oss-120b');
   }
   if (process.env.OPENROUTER_API_KEY) {
     return new ChatOpenRouter('openai/gpt-5-mini');
@@ -844,7 +844,7 @@ export const getLlmFromCliArgs = (args: ParsedCliArgs): BaseChatModel => {
   }
   if (process.env.CEREBRAS_API_KEY) {
     return new ChatCerebras({
-      model: 'llama3.1-8b',
+      model: 'gpt-oss-120b',
       apiKey: process.env.CEREBRAS_API_KEY,
       baseURL: process.env.CEREBRAS_BASE_URL,
     });
@@ -859,7 +859,7 @@ export const getLlmFromCliArgs = (args: ParsedCliArgs): BaseChatModel => {
   }
   if (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE) {
     return new ChatAnthropicBedrock({
-      model: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+      model: 'global.anthropic.claude-opus-4-6-v1',
       region: process.env.AWS_REGION || 'us-east-1',
     });
   }

@@ -164,7 +164,7 @@
       "type": "string",
       "title": "LLM Model",
       "description": "Which AI model to use for browser agent tasks",
-      "enum": ["gpt-4o", "gpt-4o-mini", "claude-3-opus-20240229", "claude-3-sonnet-20240229"],
+      "enum": ["gpt-4o", "gpt-4o-mini", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
       "default": "gpt-4o-mini",
       "required": false
     },

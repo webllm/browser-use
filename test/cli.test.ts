@@ -590,7 +590,7 @@ describe('CLI model routing', () => {
     const args = parseCliArgs(['--provider', 'anthropic', '-p', 'x']);
     const llm = getLlmFromCliArgs(args);
     expect(llm.provider).toBe('anthropic');
-    expect(llm.model).toBe('claude-4-sonnet');
+    expect(llm.model).toBe('claude-opus-5');
   });
 
   it('supports browser-use provider defaults when api key is configured', () => {

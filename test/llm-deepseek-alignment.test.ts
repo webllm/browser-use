@@ -139,4 +139,35 @@ describe('ChatDeepSeek alignment', () => {
       ModelRateLimitError
     );
   });
+
+  it('defaults to DeepSeek V4 Flash with server-side thinking disabled', async () => {
+    const llm = new ChatDeepSeek();
+    await llm.ainvoke([new UserMessage('hello')]);
+
+    const request = deepseekCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(llm.model).toBe('deepseek-v4-flash');
+    expect(request.model).toBe('deepseek-v4-flash');
+    expect(request.thinking).toEqual({ type: 'disabled' });
+  });
+
+  it('enables DeepSeek V4 thinking only when requested', async () => {
+    const llm = new ChatDeepSeek({
+      model: 'deepseek-v4-flash',
+      thinking: true,
+    });
+    await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(deepseekCreateMock.mock.calls[0]?.[0]?.thinking).toEqual({
+      type: 'enabled',
+    });
+  });
+
+  it('does not send the V4 thinking switch to other DeepSeek models', async () => {
+    const llm = new ChatDeepSeek({ model: 'deepseek-chat' });
+    await llm.ainvoke([new UserMessage('hello')]);
+
+    expect(deepseekCreateMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      'thinking'
+    );
+  });
 });

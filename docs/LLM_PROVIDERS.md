@@ -199,17 +199,18 @@ export ANTHROPIC_API_KEY=sk-ant-your-api-key
 import { ChatAnthropic } from 'browser-use/llm/anthropic';
 
 const llm = new ChatAnthropic({
-  model: 'claude-sonnet-4-20250514',
+  model: 'claude-opus-5',
   apiKey: process.env.ANTHROPIC_API_KEY,
-  temperature: 0.7,
 });
 ```
 
 ### Example Models
 
-Model identifiers are passed through to Anthropic. Current examples mirrored
-by the compatibility layer include `claude-sonnet-4-6`, `claude-opus-4-6`, and
-`claude-fable-5`; consult Anthropic's model catalog before choosing one.
+Model identifiers are passed through to Anthropic. `ChatAnthropic` defaults to
+`claude-opus-5`; other current examples include `claude-sonnet-5`,
+`claude-haiku-4-5`, and `claude-fable-5-1`. Claude Opus 4.7 and later reject
+sampling parameters such as `temperature`, so leave them unset for those
+models. Consult Anthropic's model catalog before choosing one.
 
 ### Cache Control
 
@@ -350,7 +351,7 @@ export AWS_PROFILE=your-profile
 import { ChatAnthropicBedrock } from 'browser-use/llm/aws';
 
 const llm = new ChatAnthropicBedrock({
-  model: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+  model: 'global.anthropic.claude-opus-4-6-v1',
   region: 'us-east-1',
   max_tokens: 4096,
 });
@@ -361,18 +362,22 @@ const llm = new ChatAnthropicBedrock({
 ```typescript
 // Credentials are resolved from the AWS SDK environment/profile chain.
 const llm = new ChatAnthropicBedrock({
-  model: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+  model: 'global.anthropic.claude-opus-4-6-v1',
   region: 'us-east-1',
 });
 ```
 
 ### Available Models
 
-| Model ID                                  | Description     |
-| ----------------------------------------- | --------------- |
-| `anthropic.claude-3-opus-20240229-v1:0`   | Claude 3 Opus   |
-| `anthropic.claude-3-sonnet-20240229-v1:0` | Claude 3 Sonnet |
-| `anthropic.claude-3-haiku-20240307-v1:0`  | Claude 3 Haiku  |
+The Bedrock adapters use the Converse API. Newer Claude models are served
+through cross-region inference profiles, so pass the profile ID (for example
+with a `global.` or `us.` prefix) rather than the base model ID.
+
+| Model ID                                          | Description       |
+| ------------------------------------------------- | ----------------- |
+| `global.anthropic.claude-opus-4-6-v1`             | Claude Opus 4.6   |
+| `global.anthropic.claude-sonnet-4-6`              | Claude Sonnet 4.6 |
+| `global.anthropic.claude-haiku-4-5-20251001-v1:0` | Claude Haiku 4.5  |
 
 ---
 
@@ -391,17 +396,17 @@ export GROQ_API_KEY=your-api-key
 ```typescript
 import { ChatGroq } from 'browser-use/llm/groq';
 
-const llm = new ChatGroq('llama-3.3-70b-versatile');
+const llm = new ChatGroq('openai/gpt-oss-120b');
 ```
 
 ### Available Models
 
-| Model                     | Speed   | Best For      |
-| ------------------------- | ------- | ------------- |
-| `llama-3.3-70b-versatile` | Fast    | General tasks |
-| `llama-3.1-70b-versatile` | Fast    | General tasks |
-| `llama-3.1-8b-instant`    | Fastest | Quick tasks   |
-| `mixtral-8x7b-32768`      | Fast    | Long context  |
+| Model                                           | Structured output |
+| ----------------------------------------------- | ----------------- |
+| `openai/gpt-oss-120b` (default)                 | JSON schema       |
+| `openai/gpt-oss-20b`                            | JSON schema       |
+| `meta-llama/llama-4-maverick-17b-128e-instruct` | JSON schema       |
+| `meta-llama/llama-4-scout-17b-16e-instruct`     | JSON schema       |
 
 **Note:** Groq currently doesn't support vision. Use with `use_vision: false`.
 
@@ -455,15 +460,18 @@ export DEEPSEEK_API_KEY=your-api-key
 ```typescript
 import { ChatDeepSeek } from 'browser-use/llm/deepseek';
 
-const llm = new ChatDeepSeek('deepseek-chat');
+const llm = new ChatDeepSeek('deepseek-v4-flash');
 ```
+
+DeepSeek retired `deepseek-chat` and `deepseek-reasoner` on 2026-07-24.
+`ChatDeepSeek` defaults to `deepseek-v4-flash` and disables V4 server-side
+thinking unless you pass `thinking: true`.
 
 ### Available Models
 
-| Model            | Best For             |
-| ---------------- | -------------------- |
-| `deepseek-chat`  | General conversation |
-| `deepseek-coder` | Code generation      |
+| Model               | Best For                |
+| ------------------- | ----------------------- |
+| `deepseek-v4-flash` | Fast general agent work |
 
 **Note:** DeepSeek doesn't support vision yet. Use with `use_vision: false`.
 
@@ -525,7 +533,8 @@ export CEREBRAS_API_KEY=your-api-key
 ```typescript
 import { ChatCerebras } from 'browser-use/llm/cerebras';
 
-const llm = new ChatCerebras('llama3.1-8b');
+const llm = new ChatCerebras('gpt-oss-120b');
+// Other current catalog models: 'zai-glm-4.7', 'gemma-4-31b'
 ```
 
 ### Browser Use
@@ -620,7 +629,7 @@ const llm = new ChatGroq('llama-3.3-70b-versatile');
 // Best quality
 const llm = new ChatOpenAI({ model: 'gpt-4o' });
 // or
-const llm = new ChatAnthropic({ model: 'claude-sonnet-4-20250514' });
+const llm = new ChatAnthropic({ model: 'claude-opus-5' });
 ```
 
 **For Complex Reasoning:**
