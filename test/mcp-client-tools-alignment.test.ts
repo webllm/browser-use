@@ -29,9 +29,9 @@ describe('MCPClient tools alignment', () => {
       ],
     ]);
 
-    const callToolSpy = vi
-      .spyOn(client, 'callTool')
-      .mockResolvedValue([{ type: 'text', text: 'Echoed from MCP' }]);
+    const callToolSpy = vi.spyOn(client, 'callToolResult').mockResolvedValue({
+      content: [{ type: 'text', text: 'Echoed from MCP' }],
+    });
     const tools = new Tools();
 
     await client.registerToTools(tools, ['echo'], 'mcp_');
@@ -47,6 +47,51 @@ describe('MCPClient tools alignment', () => {
 
     expect(callToolSpy).toHaveBeenCalledWith('echo', { value: 'hello' });
     expect(actionResult.extracted_content).toContain('Echoed from MCP');
+  });
+
+  it('reports MCP tool results flagged with isError as failed actions', async () => {
+    const client = new MCPClient('test-server', 'node', ['-e', '']);
+    (client as any)._connected = true;
+    (client as any)._tools = new Map([
+      [
+        'lookup',
+        {
+          name: 'lookup',
+          description: 'Looks something up',
+          inputSchema: { type: 'object', properties: {} },
+        },
+      ],
+    ]);
+    vi.spyOn(client, 'callToolResult').mockResolvedValue({
+      isError: true,
+      content: [{ type: 'text', text: 'record not found' }],
+    });
+    const tools = new Tools();
+    await client.registerToTools(tools, ['lookup']);
+
+    const actionResult = (await tools.registry.execute_action(
+      'lookup',
+      {},
+      {}
+    )) as any;
+
+    expect(actionResult.success).toBe(false);
+    expect(actionResult.error).toBe(
+      "MCP tool 'lookup' reported an error: record not found"
+    );
+    expect(actionResult.extracted_content).toBeNull();
+  });
+
+  it('keeps callTool returning only the content blocks', async () => {
+    const client = new MCPClient('test-server', 'node', ['-e', '']);
+    vi.spyOn(client, 'callToolResult').mockResolvedValue({
+      isError: false,
+      content: [{ type: 'text', text: 'ok' }],
+    });
+
+    await expect(client.callTool('echo', {})).resolves.toEqual([
+      { type: 'text', text: 'ok' },
+    ]);
   });
 
   it('keeps registerToController as alias to registerToTools', async () => {

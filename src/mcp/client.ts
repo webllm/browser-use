@@ -304,9 +304,18 @@ export class MCPClient {
   }
 
   /**
-   * Call a tool on the MCP server
+   * Call a tool on the MCP server and return its content blocks.
    */
   async callTool(name: string, args: any): Promise<any> {
+    const result = await this.callToolResult(name, args);
+    return result?.content;
+  }
+
+  /**
+   * Call a tool on the MCP server and return the full CallToolResult,
+   * including the isError flag that tool-level failures set.
+   */
+  async callToolResult(name: string, args: any): Promise<any> {
     if (!this._connected) {
       throw new Error(`MCP server '${this.serverName}' not connected`);
     }
@@ -329,7 +338,7 @@ export class MCPClient {
         } as any
       );
 
-      return (result as any).content;
+      return result;
     } catch (error) {
       this._errorCount++;
       errorMsg = redactMcpLogMessage(error);
@@ -432,10 +441,20 @@ export class MCPClient {
 
       try {
         // Call the MCP tool
-        const result = await this.callTool(tool.name, params || {});
+        const result = await this.callToolResult(tool.name, params || {});
 
         // Convert MCP result to ActionResult
-        const extractedContent = this._formatMcpResult(result);
+        const extractedContent = this._formatMcpResult(
+          result?.content ?? result
+        );
+
+        // A tool-level failure arrives as a successful call with isError set.
+        if (result?.isError === true) {
+          return new ActionResult({
+            error: `MCP tool '${tool.name}' reported an error: ${extractedContent}`,
+            success: false,
+          });
+        }
 
         return new ActionResult({
           extracted_content: extractedContent,
