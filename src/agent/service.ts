@@ -948,11 +948,10 @@ export class Agent<
     }
 
     this.output_model_schema = resolvedOutputModelSchema;
+    // Per-page extraction uses a schema only when the caller asks for one.
+    // output_model_schema describes the final task result, which is the wrong
+    // shape for extracting a single page.
     this.extraction_schema = extraction_schema ?? null;
-    if (!this.extraction_schema && this.output_model_schema) {
-      this.extraction_schema =
-        this._getOutputModelSchemaPayload(this.output_model_schema) ?? null;
-    }
     this.task = this._enhanceTaskWithSchema(
       validatedTask,
       this.output_model_schema

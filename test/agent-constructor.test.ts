@@ -2162,7 +2162,7 @@ describe('Agent constructor browser session alignment', () => {
     await agent.close();
   });
 
-  it('bridges extraction_schema from output_model_schema when not provided', async () => {
+  it('does not reuse output_model_schema for page extraction', async () => {
     const outputSchema = {
       parse: (input: string) => JSON.parse(input),
       model_json_schema: () => ({
@@ -2190,14 +2190,12 @@ describe('Agent constructor browser session alignment', () => {
     const executeContext = executeActionSpy.mock.calls[0]?.[2] as
       | { extraction_schema?: unknown }
       | undefined;
-    expect(executeContext?.extraction_schema).toEqual(
-      outputSchema.model_json_schema()
-    );
+    expect(executeContext?.extraction_schema ?? null).toBeNull();
 
     await agent.close();
   });
 
-  it('bridges extraction_schema from zod output_model_schema when not provided', async () => {
+  it('does not reuse a zod output_model_schema for page extraction', async () => {
     const outputSchema = z.object({
       answer: z.string(),
     });
@@ -2219,13 +2217,7 @@ describe('Agent constructor browser session alignment', () => {
     const executeContext = executeActionSpy.mock.calls[0]?.[2] as
       | { extraction_schema?: unknown }
       | undefined;
-    expect(executeContext?.extraction_schema).toMatchObject({
-      type: 'object',
-      properties: {
-        answer: { type: 'string' },
-      },
-      required: ['answer'],
-    });
+    expect(executeContext?.extraction_schema ?? null).toBeNull();
 
     await agent.close();
   });
