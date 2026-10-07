@@ -570,7 +570,8 @@ const llm = new ChatOCIRaw({ model: 'cohere.command-r-plus' });
 ### Vercel
 
 ```bash
-export VERCEL_API_KEY=your-api-key
+export AI_GATEWAY_API_KEY=your-api-key
+# VERCEL_OIDC_TOKEN and the legacy VERCEL_API_KEY are also accepted
 ```
 
 ```typescript

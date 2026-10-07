@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const openaiCreateMock = vi.fn();
@@ -28,7 +28,11 @@ import { ChatOpenRouter } from '../src/llm/openrouter/chat.js';
 import { ChatMistral } from '../src/llm/mistral/chat.js';
 import { ChatCerebras } from '../src/llm/cerebras/chat.js';
 import { ChatVercel } from '../src/llm/vercel/chat.js';
-import { ModelOutputTruncatedError } from '../src/llm/exceptions.js';
+import {
+  ModelOutputTruncatedError,
+  ModelProviderError,
+} from '../src/llm/exceptions.js';
+import { MISSING_PROVIDER_API_KEY } from '../src/llm/api-key.js';
 
 const buildResponse = (content: string | null, finishReason?: string) => ({
   choices: [{ message: { content }, finish_reason: finishReason }],
@@ -58,11 +62,26 @@ const buildToolResponse = (argumentsJson: string) => ({
   },
 });
 
+const PROVIDER_KEY_ENV = {
+  DEEPSEEK_API_KEY: 'test-deepseek-key',
+  CEREBRAS_API_KEY: 'test-cerebras-key',
+  MISTRAL_API_KEY: 'test-mistral-key',
+  OPENROUTER_API_KEY: 'test-openrouter-key',
+  AI_GATEWAY_API_KEY: 'test-vercel-key',
+} as const;
+
 describe('OpenAI-compatible providers alignment', () => {
   beforeEach(() => {
     openaiCreateMock.mockReset();
     openaiCtorMock.mockReset();
     openaiCreateMock.mockResolvedValue(buildResponse('ok'));
+    for (const [name, value] of Object.entries(PROVIDER_KEY_ENV)) {
+      vi.stubEnv(name, value);
+    }
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('rejects retry counts that can make SDK retries unbounded', () => {
@@ -411,5 +430,74 @@ describe('OpenAI-compatible providers alignment', () => {
 
     expect(response.completion).toBe('partial');
     expect(response.stop_reason).toBe('length');
+  });
+
+  it.each([
+    [
+      'DeepSeek',
+      'DEEPSEEK_API_KEY',
+      () => new ChatDeepSeek({ model: 'deepseek-v4-flash' }),
+    ],
+    [
+      'Cerebras',
+      'CEREBRAS_API_KEY',
+      () => new ChatCerebras({ model: 'gpt-oss-120b' }),
+    ],
+    [
+      'Mistral',
+      'MISTRAL_API_KEY',
+      () => new ChatMistral({ model: 'mistral-medium-latest' }),
+    ],
+    [
+      'OpenRouter',
+      'OPENROUTER_API_KEY',
+      () => new ChatOpenRouter({ model: 'openai/gpt-4o' }),
+    ],
+    [
+      'Vercel AI Gateway',
+      'AI_GATEWAY_API_KEY',
+      () => new ChatVercel({ model: 'openai/gpt-4o' }),
+    ],
+  ])(
+    'never sends OPENAI_API_KEY to %s when its own key is missing',
+    async (label, envName, createLlm) => {
+      for (const name of [
+        ...Object.keys(PROVIDER_KEY_ENV),
+        'VERCEL_OIDC_TOKEN',
+        'VERCEL_API_KEY',
+      ]) {
+        vi.stubEnv(name, undefined);
+      }
+      vi.stubEnv('OPENAI_API_KEY', 'sk-openai-must-not-leak');
+
+      const llm = createLlm();
+      const ctorOptions = openaiCtorMock.mock.calls[0]?.[0] as {
+        apiKey?: string;
+      };
+      expect(ctorOptions.apiKey).toBe(MISSING_PROVIDER_API_KEY);
+
+      const failure = llm.ainvoke([new UserMessage('hello')]);
+      await expect(failure).rejects.toBeInstanceOf(ModelProviderError);
+      await expect(failure).rejects.toMatchObject({
+        statusCode: 401,
+        message: expect.stringContaining(`Missing ${label} API key`),
+      });
+      await expect(failure).rejects.toThrow(envName);
+      expect(openaiCreateMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('resolves provider keys from their own environment variables', () => {
+    vi.stubEnv('AI_GATEWAY_API_KEY', undefined);
+    vi.stubEnv('VERCEL_API_KEY', 'legacy-vercel-key');
+    new ChatVercel({ model: 'openai/gpt-4o' });
+    new ChatDeepSeek({ model: 'deepseek-v4-flash' });
+
+    expect(openaiCtorMock.mock.calls[0]?.[0]).toMatchObject({
+      apiKey: 'legacy-vercel-key',
+    });
+    expect(openaiCtorMock.mock.calls[1]?.[0]).toMatchObject({
+      apiKey: 'test-deepseek-key',
+    });
   });
 });

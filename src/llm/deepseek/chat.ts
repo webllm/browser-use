@@ -11,6 +11,13 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { DeepSeekMessageSerializer } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
+import {
+  MISSING_PROVIDER_API_KEY,
+  createMissingApiKeyError,
+  resolveProviderApiKey,
+} from '../api-key.js';
+
+const DEEPSEEK_API_KEY_ENV = ['DEEPSEEK_API_KEY'] as const;
 
 export interface ChatDeepSeekOptions {
   model?: string;
@@ -29,6 +36,7 @@ export class ChatDeepSeek implements BaseChatModel {
   public model: string;
   public provider = 'deepseek';
   private client: OpenAI;
+  private hasApiKey: boolean;
   private temperature: number | null;
   private maxTokens: number | null;
   private topP: number | null;
@@ -39,7 +47,7 @@ export class ChatDeepSeek implements BaseChatModel {
       typeof options === 'string' ? { model: options } : options;
     const {
       model = 'deepseek-chat',
-      apiKey = process.env.DEEPSEEK_API_KEY,
+      apiKey,
       baseURL = 'https://api.deepseek.com/v1',
       timeout = null,
       clientParams = null,
@@ -58,12 +66,17 @@ export class ChatDeepSeek implements BaseChatModel {
 
     const configuredMaxRetries =
       (clientParams as any)?.maxRetries ?? maxRetries;
+    const resolvedApiKey = resolveProviderApiKey(
+      (clientParams as any)?.apiKey ?? apiKey,
+      DEEPSEEK_API_KEY_ENV
+    );
+    this.hasApiKey = resolvedApiKey !== null;
 
     this.client = new OpenAI({
-      apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
       ...(clientParams ?? {}),
+      apiKey: resolvedApiKey ?? MISSING_PROVIDER_API_KEY,
       maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(
         (clientParams as any)?.fetchOptions as RequestInit | undefined
@@ -112,6 +125,13 @@ export class ChatDeepSeek implements BaseChatModel {
     output_format?: { parse: (input: string) => T } | undefined,
     options: ChatInvokeOptions = {}
   ): Promise<ChatInvokeCompletion<T | string>> {
+    if (!this.hasApiKey) {
+      throw createMissingApiKeyError(
+        'DeepSeek',
+        DEEPSEEK_API_KEY_ENV,
+        this.model
+      );
+    }
     const serializer = new DeepSeekMessageSerializer();
     const deepseekMessages = serializer.serialize(messages);
 

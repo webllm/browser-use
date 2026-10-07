@@ -12,6 +12,13 @@ import { OpenAIMessageSerializer } from '../openai/serializer.js';
 import { MistralSchemaOptimizer } from './schema.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
+import {
+  MISSING_PROVIDER_API_KEY,
+  createMissingApiKeyError,
+  resolveProviderApiKey,
+} from '../api-key.js';
+
+const MISTRAL_API_KEY_ENV = ['MISTRAL_API_KEY'] as const;
 
 export interface ChatMistralOptions {
   model?: string;
@@ -37,6 +44,7 @@ export class ChatMistral implements BaseChatModel {
   public model: string;
   public provider = 'mistral';
   private client: OpenAI;
+  private hasApiKey: boolean;
   private temperature: number | null;
   private maxTokens: number | null;
   private topP: number | null;
@@ -50,7 +58,7 @@ export class ChatMistral implements BaseChatModel {
       typeof options === 'string' ? { model: options } : options;
     const {
       model = 'mistral-medium-latest',
-      apiKey = process.env.MISTRAL_API_KEY,
+      apiKey,
       baseURL = process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
       timeout = null,
       defaultHeaders = null,
@@ -80,14 +88,20 @@ export class ChatMistral implements BaseChatModel {
     const configuredMaxRetries =
       (clientParams as any)?.maxRetries ?? maxRetries;
 
+    const resolvedApiKey = resolveProviderApiKey(
+      (clientParams as any)?.apiKey ?? apiKey,
+      MISTRAL_API_KEY_ENV
+    );
+    this.hasApiKey = resolvedApiKey !== null;
+
     this.client = new OpenAI({
-      apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
       defaultHeaders: defaultHeaders ?? undefined,
       defaultQuery: defaultQuery ?? undefined,
       fetch: fetchImplementation,
       ...(clientParams ?? {}),
+      apiKey: resolvedApiKey ?? MISSING_PROVIDER_API_KEY,
       maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(fetchOptions) as any,
     });
@@ -156,6 +170,13 @@ export class ChatMistral implements BaseChatModel {
     output_format?: { parse: (input: string) => T } | undefined,
     options: ChatInvokeOptions = {}
   ): Promise<ChatInvokeCompletion<T | string>> {
+    if (!this.hasApiKey) {
+      throw createMissingApiKeyError(
+        'Mistral',
+        MISTRAL_API_KEY_ENV,
+        this.model
+      );
+    }
     const serializer = new OpenAIMessageSerializer();
     const mistralMessages = serializer.serialize(messages);
 

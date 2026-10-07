@@ -42,6 +42,8 @@ const MANAGED_ENV_KEYS = [
   'CEREBRAS_API_KEY',
   'CEREBRAS_BASE_URL',
   'VERCEL_API_KEY',
+  'AI_GATEWAY_API_KEY',
+  'VERCEL_OIDC_TOKEN',
   'VERCEL_BASE_URL',
   'AWS_ACCESS_KEY_ID',
   'AWS_PROFILE',
@@ -624,6 +626,13 @@ describe('CLI model routing', () => {
     const llm = getLlmFromCliArgs(args);
     expect(llm.provider).toBe('vercel');
     expect(llm.model).toBe('openai/gpt-5-mini');
+  });
+
+  it('accepts the Vercel AI Gateway key environment variable', () => {
+    process.env.AI_GATEWAY_API_KEY = 'test-gateway';
+    const args = parseCliArgs(['--provider', 'vercel', '-p', 'x']);
+    const llm = getLlmFromCliArgs(args);
+    expect(llm.provider).toBe('vercel');
   });
 
   it('rejects conflicting --provider and --model combinations', () => {

@@ -10,6 +10,13 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { OpenRouterMessageSerializer } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
+import {
+  MISSING_PROVIDER_API_KEY,
+  createMissingApiKeyError,
+  resolveProviderApiKey,
+} from '../api-key.js';
+
+const OPENROUTER_API_KEY_ENV = ['OPENROUTER_API_KEY'] as const;
 
 export interface ChatOpenRouterOptions {
   model?: string;
@@ -34,6 +41,7 @@ export class ChatOpenRouter implements BaseChatModel {
   public model: string;
   public provider = 'openrouter';
   private client: OpenAI;
+  private hasApiKey: boolean;
   private temperature: number | null;
   private topP: number | null;
   private seed: number | null;
@@ -47,7 +55,7 @@ export class ChatOpenRouter implements BaseChatModel {
       typeof options === 'string' ? { model: options } : options;
     const {
       model = 'openai/gpt-4o',
-      apiKey = process.env.OPENROUTER_API_KEY,
+      apiKey,
       baseURL = 'https://openrouter.ai/api/v1',
       timeout = null,
       temperature = null,
@@ -73,8 +81,14 @@ export class ChatOpenRouter implements BaseChatModel {
     this.removeMinItemsFromSchema = removeMinItemsFromSchema;
     this.removeDefaultsFromSchema = removeDefaultsFromSchema;
 
-    this.client = new OpenAI({
+    const resolvedApiKey = resolveProviderApiKey(
       apiKey,
+      OPENROUTER_API_KEY_ENV
+    );
+    this.hasApiKey = resolvedApiKey !== null;
+
+    this.client = new OpenAI({
+      apiKey: resolvedApiKey ?? MISSING_PROVIDER_API_KEY,
       baseURL,
       timeout: timeout ?? undefined,
       maxRetries: validateMaxRetries(maxRetries),
@@ -126,6 +140,13 @@ export class ChatOpenRouter implements BaseChatModel {
     output_format?: { parse: (input: string) => T } | undefined,
     options: ChatInvokeOptions = {}
   ): Promise<ChatInvokeCompletion<T | string>> {
+    if (!this.hasApiKey) {
+      throw createMissingApiKeyError(
+        'OpenRouter',
+        OPENROUTER_API_KEY_ENV,
+        this.model
+      );
+    }
     const serializer = new OpenRouterMessageSerializer();
     const openRouterMessages = serializer.serialize(messages);
 

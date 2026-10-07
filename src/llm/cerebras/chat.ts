@@ -14,6 +14,13 @@ import {
 } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
+import {
+  MISSING_PROVIDER_API_KEY,
+  createMissingApiKeyError,
+  resolveProviderApiKey,
+} from '../api-key.js';
+
+const CEREBRAS_API_KEY_ENV = ['CEREBRAS_API_KEY'] as const;
 
 export interface ChatCerebrasOptions {
   model?: string;
@@ -34,6 +41,7 @@ export class ChatCerebras implements BaseChatModel {
   public model: string;
   public provider = 'cerebras';
   private client: OpenAI;
+  private hasApiKey: boolean;
   private temperature: number | null;
   private maxTokens: number | null;
   private topP: number | null;
@@ -46,7 +54,7 @@ export class ChatCerebras implements BaseChatModel {
       typeof options === 'string' ? { model: options } : options;
     const {
       model = 'llama3.1-8b',
-      apiKey = process.env.CEREBRAS_API_KEY,
+      apiKey,
       baseURL = process.env.CEREBRAS_BASE_URL || 'https://api.cerebras.ai/v1',
       timeout = null,
       clientParams = null,
@@ -70,11 +78,17 @@ export class ChatCerebras implements BaseChatModel {
     const configuredMaxRetries =
       (clientParams as any)?.maxRetries ?? maxRetries;
 
+    const resolvedApiKey = resolveProviderApiKey(
+      (clientParams as any)?.apiKey ?? apiKey,
+      CEREBRAS_API_KEY_ENV
+    );
+    this.hasApiKey = resolvedApiKey !== null;
+
     this.client = new OpenAI({
-      apiKey,
       baseURL,
       ...(timeout !== null ? { timeout } : {}),
       ...(clientParams ?? {}),
+      apiKey: resolvedApiKey ?? MISSING_PROVIDER_API_KEY,
       maxRetries: validateMaxRetries(configuredMaxRetries),
       fetchOptions: rejectRedirectsInFetchOptions(
         (clientParams as any)?.fetchOptions as RequestInit | undefined
@@ -199,6 +213,13 @@ export class ChatCerebras implements BaseChatModel {
     output_format?: { parse: (input: string) => T } | undefined,
     options: ChatInvokeOptions = {}
   ): Promise<ChatInvokeCompletion<T | string>> {
+    if (!this.hasApiKey) {
+      throw createMissingApiKeyError(
+        'Cerebras',
+        CEREBRAS_API_KEY_ENV,
+        this.model
+      );
+    }
     const serializer = new CerebrasMessageSerializer();
     const cerebrasMessages = serializer.serialize(messages);
 

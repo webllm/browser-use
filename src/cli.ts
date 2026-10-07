@@ -479,6 +479,27 @@ const requireEnv = (name: string) => {
   return value;
 };
 
+const VERCEL_API_KEY_ENV_NAMES = [
+  'AI_GATEWAY_API_KEY',
+  'VERCEL_OIDC_TOKEN',
+  'VERCEL_API_KEY',
+] as const;
+
+const readVercelApiKey = () =>
+  VERCEL_API_KEY_ENV_NAMES.map((name) => process.env[name]).find(
+    (value): value is string => Boolean(value)
+  ) ?? null;
+
+const requireVercelApiKey = () => {
+  const value = readVercelApiKey();
+  if (!value) {
+    throw new Error(
+      `Missing environment variable: ${VERCEL_API_KEY_ENV_NAMES.join(' or ')}`
+    );
+  }
+  return value;
+};
+
 const inferProviderFromModel = (model: string): CliModelProvider | null => {
   const lower = model.toLowerCase();
 
@@ -723,7 +744,7 @@ const createLlmForProvider = (
     case 'vercel':
       return new ChatVercel({
         model,
-        apiKey: requireEnv('VERCEL_API_KEY'),
+        apiKey: requireVercelApiKey(),
         baseURL: process.env.VERCEL_BASE_URL,
       });
     case 'oci':
@@ -828,10 +849,11 @@ export const getLlmFromCliArgs = (args: ParsedCliArgs): BaseChatModel => {
       baseURL: process.env.CEREBRAS_BASE_URL,
     });
   }
-  if (process.env.VERCEL_API_KEY) {
+  const vercelApiKey = readVercelApiKey();
+  if (vercelApiKey) {
     return new ChatVercel({
       model: 'openai/gpt-5-mini',
-      apiKey: process.env.VERCEL_API_KEY,
+      apiKey: vercelApiKey,
       baseURL: process.env.VERCEL_BASE_URL,
     });
   }

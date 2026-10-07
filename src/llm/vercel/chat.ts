@@ -11,6 +11,17 @@ import { ChatInvokeCompletion, type ChatInvokeUsage } from '../views.js';
 import { VercelMessageSerializer } from './serializer.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
+import {
+  MISSING_PROVIDER_API_KEY,
+  createMissingApiKeyError,
+  resolveProviderApiKey,
+} from '../api-key.js';
+
+const VERCEL_API_KEY_ENV = [
+  'AI_GATEWAY_API_KEY',
+  'VERCEL_OIDC_TOKEN',
+  'VERCEL_API_KEY',
+] as const;
 
 const DEFAULT_REASONING_MODELS = [
   'o1',
@@ -46,6 +57,7 @@ export class ChatVercel implements BaseChatModel {
   public model: string;
   public provider = 'vercel';
   private client: OpenAI;
+  private hasApiKey: boolean;
   private temperature: number | null;
   private maxTokens: number | null;
   private topP: number | null;
@@ -61,7 +73,7 @@ export class ChatVercel implements BaseChatModel {
       typeof options === 'string' ? { model: options } : options;
     const {
       model = 'openai/gpt-4o',
-      apiKey = process.env.VERCEL_API_KEY,
+      apiKey,
       baseURL = process.env.VERCEL_BASE_URL ||
         'https://ai-gateway.vercel.sh/v1',
       timeout = null,
@@ -92,8 +104,11 @@ export class ChatVercel implements BaseChatModel {
     this.removeMinItemsFromSchema = removeMinItemsFromSchema;
     this.removeDefaultsFromSchema = removeDefaultsFromSchema;
 
+    const resolvedApiKey = resolveProviderApiKey(apiKey, VERCEL_API_KEY_ENV);
+    this.hasApiKey = resolvedApiKey !== null;
+
     this.client = new OpenAI({
-      apiKey,
+      apiKey: resolvedApiKey ?? MISSING_PROVIDER_API_KEY,
       baseURL,
       timeout: timeout ?? undefined,
       maxRetries: validateMaxRetries(maxRetries),
@@ -239,6 +254,13 @@ export class ChatVercel implements BaseChatModel {
     output_format?: { parse: (input: string) => T } | undefined,
     options: ChatInvokeOptions = {}
   ): Promise<ChatInvokeCompletion<T | string>> {
+    if (!this.hasApiKey) {
+      throw createMissingApiKeyError(
+        'Vercel AI Gateway',
+        VERCEL_API_KEY_ENV,
+        this.model
+      );
+    }
     const serializer = new VercelMessageSerializer();
     const vercelMessages = serializer.serialize(messages);
 

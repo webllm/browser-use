@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const deepseekCtorMock = vi.fn();
@@ -60,6 +60,11 @@ describe('ChatDeepSeek alignment', () => {
     deepseekCtorMock.mockReset();
     deepseekCreateMock.mockReset();
     deepseekCreateMock.mockResolvedValue(buildTextResponse('{"value":"ok"}'));
+    vi.stubEnv('DEEPSEEK_API_KEY', 'test-deepseek-key');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('passes timeout and client params into OpenAI client', async () => {
