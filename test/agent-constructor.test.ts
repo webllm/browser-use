@@ -1590,8 +1590,40 @@ describe('Agent constructor browser session alignment', () => {
 
     expect(extracted).toBeNull();
     expect(debugSpy).toHaveBeenCalledWith(
-      'Multiple URLs found (4), skipping directly_open_url to avoid ambiguity'
+      'Multiple URLs found (2), skipping directly_open_url to avoid ambiguity'
     );
+
+    await agent.close();
+  });
+
+  it.each([
+    [
+      'Open https://en.wikipedia.org/wiki/Python_(programming_language) and summarize',
+      'https://en.wikipedia.org/wiki/Python_(programming_language)',
+    ],
+    ['Go to http://example.com and read the title', 'http://example.com'],
+    [
+      'Open file:///tmp/report.html and check the table',
+      'file:///tmp/report.html',
+    ],
+    [
+      'Find another listing on https://example.com/listings',
+      'https://example.com/listings',
+    ],
+    [
+      'Search https://example.com/search.\\n2. Then summarize',
+      'https://example.com/search',
+    ],
+    ['Do not open https://blocked.example today', null],
+    ["Don't visit www.blocked.example", null],
+    ['Log in at https://XXX.XX with the test account', null],
+  ])('extracts the start URL from %j', async (task, expected) => {
+    const agent = new Agent({
+      task: 'placeholder',
+      llm: createLlm(),
+    });
+
+    expect((agent as any)._extract_start_url(task)).toBe(expected);
 
     await agent.close();
   });

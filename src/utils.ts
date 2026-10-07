@@ -744,6 +744,97 @@ export function is_new_tab_page(url: string): boolean {
   );
 }
 
+const URL_NEGATION_PATTERN = /\b(?:never|not|don['\u2019]?t)\b/i;
+const TRAILING_PROSE_PUNCTUATION = new Set([
+  '.',
+  ',',
+  ';',
+  ':',
+  '!',
+  '?',
+  '(',
+  '[',
+]);
+const CLOSING_TO_OPENING_BRACKET: Record<string, string> = {
+  ')': '(',
+  ']': '[',
+};
+
+/**
+ * Return true for mock placeholder hostnames such as https://XXX.XX.
+ */
+export function is_placeholder_url(url: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(url.includes('://') ? url : `https://${url}`).hostname;
+  } catch {
+    return false;
+  }
+  hostname = hostname.replace(/^\.+|\.+$/g, '').toLowerCase();
+  if (!hostname) {
+    return false;
+  }
+  let labels = hostname.split('.').filter(Boolean);
+  if (labels[0] === 'www') {
+    labels = labels.slice(1);
+  }
+  return labels.length >= 2 && labels.every((label) => /^x+$/.test(label));
+}
+
+/**
+ * Normalize a URL candidate captured from prose before auto-navigation.
+ */
+export function sanitize_url_candidate(url: string): string {
+  // Tasks sometimes contain escaped newlines in prose, such as
+  // "https://example.com/search.\\n2. Next step"; those belong to the task text.
+  const candidate = url.trim().split(/\\[nrt]/, 1)[0] ?? '';
+
+  // Strip trailing prose punctuation, but keep a closing bracket the URL opened
+  // itself, e.g. /wiki/Python_(programming_language). A closing bracket is only
+  // prose when it has no opener inside the candidate, as in "(see https://x.com/a)".
+  const bracketCounts: Record<string, number> = {
+    '(': 0,
+    ')': 0,
+    '[': 0,
+    ']': 0,
+  };
+  for (const char of candidate) {
+    if (char in bracketCounts) {
+      bracketCounts[char] = (bracketCounts[char] ?? 0) + 1;
+    }
+  }
+
+  let end = candidate.length;
+  while (end > 0) {
+    const lastChar = candidate[end - 1] ?? '';
+    if (TRAILING_PROSE_PUNCTUATION.has(lastChar)) {
+      if (lastChar in bracketCounts) {
+        bracketCounts[lastChar] = (bracketCounts[lastChar] ?? 0) - 1;
+      }
+      end -= 1;
+      continue;
+    }
+    const openingBracket = CLOSING_TO_OPENING_BRACKET[lastChar];
+    if (
+      openingBracket !== undefined &&
+      (bracketCounts[lastChar] ?? 0) > (bracketCounts[openingBracket] ?? 0)
+    ) {
+      bracketCounts[lastChar] = (bracketCounts[lastChar] ?? 0) - 1;
+      end -= 1;
+      continue;
+    }
+    break;
+  }
+  return candidate.slice(0, end);
+}
+
+/**
+ * Return whether nearby prose explicitly negates navigation to a URL.
+ */
+export function has_url_negation(context: string): boolean {
+  return URL_NEGATION_PATTERN.test(context);
+}
+
 /**
  * Check if a URL matches a domain pattern. SECURITY CRITICAL.
  *

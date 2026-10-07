@@ -13,7 +13,10 @@ import {
   SignalHandler,
   get_browser_use_version,
   check_latest_browser_use_version,
+  has_url_negation,
+  is_placeholder_url,
   sanitize_surrogates,
+  sanitize_url_candidate,
 } from '../utils.js';
 import type { Controller } from '../controller/service.js';
 import { Controller as DefaultController } from '../controller/service.js';
@@ -1990,7 +1993,7 @@ export class Agent<
       ''
     );
     const urlPatterns = [
-      /https?:\/\/[^\s<>"']+/g,
+      /(?:https?|file):\/\/[^\s<>"']+/g,
       /(?:www\.)?[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}(?:\/[^\s<>"']*)?/g,
     ];
 
@@ -2055,21 +2058,47 @@ export class Agent<
       'iso',
       'polynomial',
     ]);
-    const excludedWords = ['never', 'dont', "don't", 'not'];
-
     const foundUrls: string[] = [];
+    const matchedSpans: Array<[number, number]> = [];
     for (const pattern of urlPatterns) {
       for (const match of taskWithoutEmails.matchAll(pattern)) {
-        const original = match[0];
         const startIndex = match.index ?? 0;
-        let url = original.replace(/[.,;:!?()[\]]+$/g, '');
-        const lowerUrl = url.toLowerCase();
+        const endIndex = startIndex + match[0].length;
 
+        // Skip fragments of URLs already matched by an earlier pattern.
+        if (
+          matchedSpans.some(
+            ([spanStart, spanEnd]) =>
+              startIndex < spanEnd && endIndex > spanStart
+          )
+        ) {
+          continue;
+        }
+        matchedSpans.push([startIndex, endIndex]);
+
+        let url = sanitize_url_candidate(match[0]);
+        if (!url) {
+          continue;
+        }
+        if (is_placeholder_url(url)) {
+          this.logger.debug(
+            `Excluding placeholder URL from auto-navigation: ${this._redactSensitiveText(url)}`
+          );
+          continue;
+        }
+
+        const lowerUrl = url.toLowerCase();
+        const hasScheme = /^(?:https?|file):\/\//.test(lowerUrl);
         let shouldExclude = false;
-        for (const ext of excludedExtensions) {
-          if (lowerUrl.includes(`.${ext}`)) {
+        if (!lowerUrl.startsWith('file://')) {
+          for (const ext of excludedExtensions) {
+            if (lowerUrl.includes(`.${ext}`)) {
+              shouldExclude = true;
+              break;
+            }
+          }
+          if (!hasScheme && lowerUrl.includes('.htm')) {
             shouldExclude = true;
-            break;
           }
         }
         if (shouldExclude) {
@@ -2079,18 +2108,17 @@ export class Agent<
           continue;
         }
 
+        // Skip URLs explicitly negated by nearby prose, such as "Never go to this URL".
         const contextStart = Math.max(0, startIndex - 20);
-        const contextText = taskWithoutEmails
-          .slice(contextStart, startIndex)
-          .toLowerCase();
-        if (excludedWords.some((word) => contextText.includes(word))) {
+        const contextText = taskWithoutEmails.slice(contextStart, startIndex);
+        if (has_url_negation(contextText)) {
           this.logger.debug(
-            `Excluding URL with word in excluded words from auto-navigation: ${this._redactSensitiveText(url)} (context: "${this._redactSensitiveText(contextText.trim())}")`
+            `Excluding negated URL from auto-navigation: ${this._redactSensitiveText(url)} (context: "${this._redactSensitiveText(contextText.trim())}")`
           );
           continue;
         }
 
-        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        if (!hasScheme) {
           url = `https://${url}`;
         }
         foundUrls.push(url);
