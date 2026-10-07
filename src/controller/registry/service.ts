@@ -49,6 +49,8 @@ export interface ActionOptions {
   allowed_domains?: string[] | null;
   page_filter?: ((page: Page) => boolean) | null;
   terminates_sequence?: boolean;
+  /** Keep the action callable by name but out of the model's action schema. */
+  hidden_from_model?: boolean;
 }
 
 const SPECIAL_PARAM_NAMES = new Set([
@@ -324,6 +326,7 @@ export class Registry<Context = unknown> {
     const domains = options.allowed_domains ?? options.domains ?? null;
     const pageFilter = options.page_filter ?? null;
     const terminatesSequence = options.terminates_sequence ?? false;
+    const hiddenFromModel = options.hidden_from_model ?? false;
 
     return <Params = any>(handler: RegistryActionHandler<Params, Context>) => {
       const actionName = actionNameOverride ?? handler.name;
@@ -398,7 +401,8 @@ export class Registry<Context = unknown> {
         schema,
         domains,
         pageFilter,
-        terminatesSequence
+        terminatesSequence,
+        hiddenFromModel
       );
       this.registry.register(action);
       return normalizedHandler as any;

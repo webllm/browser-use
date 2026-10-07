@@ -6096,6 +6096,7 @@ export class Agent<
       dropdown_options: 'get_dropdown_options',
       select_dropdown: 'select_dropdown_option',
       replace_file: 'replace_file_str',
+      replace_file_str: 'replace_file',
     };
 
     const availableNames = new Set<string>();

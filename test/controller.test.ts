@@ -1724,6 +1724,28 @@ describe('Regression Coverage', () => {
     expect(result.include_in_memory).toBe(false);
   });
 
+  it('offers replace_file to the model without the duplicate replace_file_str', async () => {
+    const controller = new Controller();
+
+    const promptDescription = controller.registry.get_prompt_description();
+    const actionModel = controller.registry.create_action_model() as any;
+
+    expect(promptDescription).toContain('replace_file');
+    expect(promptDescription).not.toContain('replace_file_str');
+    expect(actionModel.available_actions).toContain('replace_file');
+    expect(actionModel.available_actions).not.toContain('replace_file_str');
+
+    const fileSystem = {
+      replace_file_str: vi.fn(async () => 'Replaced 1 occurrence in notes.md'),
+    };
+    const result = await controller.registry.execute_action(
+      'replace_file_str',
+      { file_name: 'notes.md', old_str: 'a', new_str: 'b' },
+      { file_system: fileSystem as any }
+    );
+    expect(result.extracted_content).toContain('Replaced 1 occurrence');
+  });
+
   it('find_text alias delegates to scroll_to_text behavior', async () => {
     const controller = new Controller();
     const page = {

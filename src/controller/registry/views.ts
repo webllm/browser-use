@@ -72,7 +72,10 @@ export class RegisteredAction {
     public readonly paramSchema: ZodTypeAny,
     public readonly domains: string[] | null = null,
     public readonly pageFilter: ((page: Page) => boolean) | null = null,
-    public readonly terminates_sequence = false
+    public readonly terminates_sequence = false,
+    // Callable by name (for example from older histories) but never offered
+    // to the model, so aliases do not duplicate an action in the prompt.
+    public readonly hidden_from_model = false
   ) {}
 
   // Returns the JSON Schema rendered for the LLM prompt, with the same
@@ -228,6 +231,9 @@ export class ActionRegistry {
     const include = includeActions ? new Set(includeActions) : null;
 
     return this.actionEntries.filter((action) => {
+      if (action.hidden_from_model) {
+        return false;
+      }
       if (include && !include.has(action.name)) {
         return false;
       }

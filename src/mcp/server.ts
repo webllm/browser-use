@@ -1210,6 +1210,10 @@ export class MCPServer {
     const actions = controller.registry.get_all_actions();
 
     for (const [actionName, actionInfo] of actions.entries()) {
+      // Aliases hidden from models are not exposed as duplicate MCP tools.
+      if ((actionInfo as { hidden_from_model?: boolean }).hidden_from_model) {
+        continue;
+      }
       // Create a wrapper for the action
       const handler = async (args: any) => {
         return this.executeControllerAction(actionName, args || {});

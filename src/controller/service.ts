@@ -3389,10 +3389,13 @@ You will be given a query and the markdown of a webpage that has been filtered t
     });
 
     type ReplaceAction = z.infer<typeof ReplaceFileStrActionSchema>;
+    // replace_file is the model-facing name; replace_file_str stays callable
+    // for older histories but is not offered as a duplicate action.
     this.registry.action(
       'Replace specific text within a file by searching for old_str and replacing with new_str. Use this for targeted edits like updating todo checkboxes or modifying specific lines without rewriting the entire file.',
       {
         param_model: ReplaceFileStrActionSchema,
+        hidden_from_model: true,
       }
     )(async function replace_file_str(params: ReplaceAction, { file_system }) {
       const fsInstance = file_system ?? new FileSystem(process.cwd(), false);
