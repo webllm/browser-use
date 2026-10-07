@@ -9,6 +9,7 @@ import {
 import {
   CloudBrowserAuthError,
   CloudBrowserError,
+  CloudBrowserMissingScopeError,
   CloudBrowserResponse,
   type CloudBrowserResponsePayload,
   type CreateBrowserRequest,
@@ -16,6 +17,18 @@ import {
 } from './views.js';
 
 const logger = createLogger('browser_use.browser.cloud');
+
+// The standalone-browser router is mounted under each version, and scoped API
+// keys are granted per version.
+const BROWSER_API_VERSIONS = ['v2', 'v3', 'v4'] as const;
+const MISSING_SCOPE_PREFIX = 'API key is missing required scope:';
+
+const isMissingVersionScope = (status: number, payload: unknown) =>
+  status === 403 &&
+  Boolean(payload) &&
+  typeof payload === 'object' &&
+  typeof (payload as { detail?: unknown }).detail === 'string' &&
+  (payload as { detail: string }).detail.startsWith(MISSING_SCOPE_PREFIX);
 
 const stripTrailingSlash = (input: string) => input.replace(/\/+$/, '');
 
@@ -44,6 +57,8 @@ export class CloudBrowserClient {
   private readonly request_timeout_ms: number;
 
   public current_session_id: string | null = null;
+  /** API version that created the current session; cleanup reuses it. */
+  public current_api_version: string | null = null;
 
   constructor(options: CloudBrowserClientOptions = {}) {
     this.api_base_url = stripTrailingSlash(
@@ -148,6 +163,11 @@ export class CloudBrowserClient {
             payload && typeof payload === 'object'
               ? JSON.stringify(payload)
               : String(payload ?? '');
+          if (isMissingVersionScope(response.status, payload)) {
+            throw new CloudBrowserMissingScopeError(
+              String((payload as { detail: string }).detail).slice(0, 1024)
+            );
+          }
           if (response.status === 401 || response.status === 403) {
             throw new CloudBrowserAuthError(
               `Cloud browser authentication failed (${response.status})`
@@ -165,23 +185,69 @@ export class CloudBrowserClient {
     );
   }
 
+  /**
+   * Use the session's API version, or find the first version granted to this
+   * key. Existing keys keep using v2; later versions are only tried after the
+   * backend's explicit missing-scope response.
+   */
+  private async _request_browser_api(
+    path: string,
+    init: RequestInit,
+    extra_headers: Record<string, string>,
+    pinned_version: string | null
+  ): Promise<{ payload: CloudBrowserResponsePayload; version: string }> {
+    const versions = pinned_version ? [pinned_version] : BROWSER_API_VERSIONS;
+    let lastError: unknown = null;
+    for (const version of versions) {
+      try {
+        const payload = await this._request_json<CloudBrowserResponsePayload>(
+          `/api/${version}/browsers${path}`,
+          init,
+          extra_headers
+        );
+        return { payload, version };
+      } catch (error) {
+        if (!(error instanceof CloudBrowserMissingScopeError)) {
+          throw error;
+        }
+        lastError = error;
+      }
+    }
+    throw lastError;
+  }
+
   async create_browser(
     request: CreateBrowserRequest,
     extra_headers: Record<string, string> = {}
   ) {
     logger.info('🌤️ Creating cloud browser instance...');
 
-    const payload = await this._request_json<CloudBrowserResponsePayload>(
-      '/api/v2/browsers',
+    // A new session may use a different scoped key, so creation always negotiates.
+    const { payload, version } = await this._request_browser_api(
+      '',
       {
         method: 'POST',
         body: JSON.stringify(this._create_request_body(request)),
       },
-      extra_headers
+      extra_headers,
+      null
     );
 
     const browser_response = new CloudBrowserResponse(payload);
     this.current_session_id = browser_response.id;
+    this.current_api_version = version;
+    if (!browser_response.cdpUrl) {
+      try {
+        await this.stop_browser(browser_response.id, extra_headers);
+      } catch (error) {
+        logger.debug(
+          `Failed to stop cloud browser without a CDP URL: ${(error as Error).message}`
+        );
+      }
+      throw new CloudBrowserError(
+        'Cloud browser response did not include a CDP URL'
+      );
+    }
     logger.info(`🌤️ Cloud browser created: ${browser_response.id}`);
     return browser_response;
   }
@@ -197,18 +263,22 @@ export class CloudBrowserClient {
       );
     }
 
-    const payload = await this._request_json<CloudBrowserResponsePayload>(
-      `/api/v2/browsers/${encodeURIComponent(target_session_id)}`,
+    const { payload } = await this._request_browser_api(
+      `/${encodeURIComponent(target_session_id)}`,
       {
         method: 'PATCH',
         body: JSON.stringify({ action: 'stop' }),
       },
-      extra_headers
+      extra_headers,
+      target_session_id === this.current_session_id
+        ? this.current_api_version
+        : null
     );
 
     const browser_response = new CloudBrowserResponse(payload);
     if (browser_response.id === this.current_session_id) {
       this.current_session_id = null;
+      this.current_api_version = null;
     }
     logger.info(`🌤️ Cloud browser stopped: ${browser_response.id}`);
     return browser_response;

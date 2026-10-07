@@ -108,7 +108,11 @@ describe('browser cloud alignment', () => {
     const fetchImpl = vi.fn(
       async (_url?: string, _init?: RequestInit) =>
         new Response(
-          JSON.stringify({ id: 'browser-proxy', status: 'running' }),
+          JSON.stringify({
+            id: 'browser-proxy',
+            status: 'running',
+            cdpUrl: 'wss://cdp.browser-use.test/proxy',
+          }),
           { status: 200 }
         )
     );
@@ -122,6 +126,94 @@ describe('browser cloud alignment', () => {
 
     const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual(expectedBody);
+  });
+
+  it('falls through API versions when a scoped key lacks the v2 scope', async () => {
+    const calls: Array<[string, string]> = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push([init?.method ?? 'GET', url]);
+      if (url.includes('/api/v4/')) {
+        return new Response(
+          JSON.stringify({
+            id: 'browser-v4',
+            status: init?.method === 'PATCH' ? 'stopped' : 'running',
+            cdpUrl: 'wss://cdp.browser-use.test/v4',
+          }),
+          { status: 200 }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          detail: 'API key is missing required scope: browsers:v2',
+        }),
+        { status: 403 }
+      );
+    });
+    const client = new CloudBrowserClient({
+      api_base_url: 'https://api.browser-use.test',
+      api_key: 'scoped-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+    });
+
+    const created = await client.create_browser({});
+    expect(created.id).toBe('browser-v4');
+    expect(client.current_api_version).toBe('v4');
+
+    await client.stop_browser();
+
+    expect(calls).toEqual([
+      ['POST', 'https://api.browser-use.test/api/v2/browsers'],
+      ['POST', 'https://api.browser-use.test/api/v3/browsers'],
+      ['POST', 'https://api.browser-use.test/api/v4/browsers'],
+      ['PATCH', 'https://api.browser-use.test/api/v4/browsers/browser-v4'],
+    ]);
+    expect(client.current_api_version).toBeNull();
+  });
+
+  it('does not fall through on ordinary authentication failures', async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detail: 'Invalid API key' }), {
+          status: 403,
+        })
+    );
+    const client = new CloudBrowserClient({
+      api_base_url: 'https://api.browser-use.test',
+      api_key: 'bad-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await expect(client.create_browser({})).rejects.toBeInstanceOf(
+      CloudBrowserAuthError
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects created browsers without a CDP URL and stops them', async () => {
+    const fetchImpl = vi.fn(
+      async (_url: string, init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            id: 'browser-no-cdp',
+            status: init?.method === 'PATCH' ? 'stopped' : 'running',
+          }),
+          { status: 200 }
+        )
+    );
+    const client = new CloudBrowserClient({
+      api_base_url: 'https://api.browser-use.test',
+      api_key: 'test-api-key',
+      fetch_impl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await expect(client.create_browser({})).rejects.toThrow(
+      'Cloud browser response did not include a CDP URL'
+    );
+    expect(fetchImpl.mock.calls.map(([, init]) => init?.method)).toEqual([
+      'POST',
+      'PATCH',
+    ]);
+    expect(client.current_session_id).toBeNull();
   });
 
   it('stops browser session and clears current session id', async () => {

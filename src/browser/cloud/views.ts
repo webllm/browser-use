@@ -77,3 +77,13 @@ export class CloudBrowserAuthError extends CloudBrowserError {
     this.name = 'CloudBrowserAuthError';
   }
 }
+
+/**
+ * The API key is valid but not scoped for the requested API version.
+ */
+export class CloudBrowserMissingScopeError extends CloudBrowserAuthError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CloudBrowserMissingScopeError';
+  }
+}
