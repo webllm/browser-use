@@ -366,7 +366,13 @@ const CLICKABLE_ELEMENTS_TO_STRING_IMPL = time_execution_sync(
         return;
       }
 
-      if (node.parent?.is_visible && node.parent.is_top_element) {
+      // Text must itself be visible (rendered and within the requested
+      // viewport) and sit in an element that is not painted over.
+      if (
+        node.is_visible &&
+        node.parent?.is_visible &&
+        node.parent.is_top_element
+      ) {
         formatted_text.push(`${depth_str}${node.text}`);
       }
     }
