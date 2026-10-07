@@ -53,6 +53,62 @@
     return result;
   }
 
+  // Live values never leave the page for these fields: they would otherwise be
+  // serialized into the model prompt and logs.
+  const SENSITIVE_INPUT_TYPES = new Set(["password", "file", "hidden"]);
+
+  function isSensitiveFormField(element) {
+    const typeAttribute = (element.getAttribute("type") || "").trim().toLowerCase();
+    const typeProperty = typeof element.type === "string" ? element.type.toLowerCase() : "";
+    if (SENSITIVE_INPUT_TYPES.has(typeAttribute) || SENSITIVE_INPUT_TYPES.has(typeProperty)) {
+      return true;
+    }
+    const autocompleteTokens = (element.getAttribute("autocomplete") || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return autocompleteTokens.some(
+      (token) => token.startsWith("cc-") || token === "one-time-code",
+    );
+  }
+
+  /**
+   * Show the value a field currently holds, not only its static attribute.
+   * Scripts, autofill, and framework bindings set the property without touching
+   * the attribute, so pre-filled fields would otherwise look empty.
+   */
+  function applyLiveFormState(element, attributes) {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName !== "input" && tagName !== "textarea") return;
+
+    const inputType = tagName === "input" ? String(element.type || "").toLowerCase() : "";
+    if (inputType === "checkbox" || inputType === "radio") {
+      if (element.checked) {
+        attributes.checked = "true";
+      } else {
+        delete attributes.checked;
+      }
+      return;
+    }
+
+    if (isSensitiveFormField(element)) {
+      delete attributes.value;
+      return;
+    }
+    let liveValue;
+    try {
+      liveValue = element.value;
+    } catch (e) {
+      return;
+    }
+    if (typeof liveValue !== "string") return;
+    if (liveValue) {
+      attributes.value = boundedString(liveValue, MAX_ATTRIBUTE_VALUE_LENGTH);
+    } else {
+      delete attributes.value;
+    }
+  }
+
   // Add caching mechanisms at the top level
   const DOM_CACHE = {
     boundingRects: new WeakMap(),
@@ -1434,6 +1490,7 @@
         );
         nodeData.attributes[name] = value;
       }
+      applyLiveFormState(node, nodeData.attributes);
     }
 
     let nodeWasHighlighted = false;

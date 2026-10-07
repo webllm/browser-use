@@ -743,6 +743,57 @@ describe('DomService', () => {
       expect(username?.attributes.value).toBe('alice@example.com');
     });
 
+    it('shows live form values and checked state set by scripts', async () => {
+      const html = `
+        <style>input, textarea { display: block; width: 200px; height: 40px; }</style>
+        <input id="email" type="text" value="stale@example.com" />
+        <input id="cleared" type="text" value="was-here" />
+        <textarea id="notes"></textarea>
+        <input id="agree" type="checkbox" checked />
+        <input id="newsletter" type="checkbox" />
+        <input id="card" type="text" autocomplete="billing cc-number" value="4111111111111111" />
+        <input id="otp" type="text" autocomplete="one-time-code" />
+        <input id="secret" type="password" />
+      `;
+      await page.goto(`data:text/html,${encodeURIComponent(html)}`);
+      await page.evaluate(() => {
+        const byId = (id: string) =>
+          document.getElementById(id) as HTMLInputElement;
+        byId('email').value = 'live-value';
+        byId('cleared').value = '';
+        (document.getElementById('notes') as HTMLTextAreaElement).value =
+          'typed notes';
+        byId('agree').checked = false;
+        byId('newsletter').checked = true;
+        byId('card').value = '5555555555554444';
+        byId('otp').value = '123456';
+        byId('secret').value = 'hunter2';
+      });
+
+      const state = await new DomService(page).get_clickable_elements();
+      const byId = (id: string) =>
+        Object.values(state.selector_map).find(
+          (node) => node.attributes.id === id
+        );
+
+      expect(byId('email')?.attributes.value).toBe('live-value');
+      expect(byId('cleared')?.attributes).not.toHaveProperty('value');
+      expect(byId('notes')?.attributes.value).toBe('typed notes');
+      expect(byId('agree')?.attributes).not.toHaveProperty('checked');
+      expect(byId('newsletter')?.attributes.checked).toBe('true');
+      expect(byId('card')?.attributes).not.toHaveProperty('value');
+      expect(byId('otp')?.attributes).not.toHaveProperty('value');
+      expect(byId('secret')?.attributes).not.toHaveProperty('value');
+
+      const llmRepresentation = state.llm_representation();
+      expect(llmRepresentation).toContain('value=live-value');
+      expect(llmRepresentation).not.toContain('stale@example.com');
+      expect(llmRepresentation).not.toContain('5555555555554444');
+      expect(llmRepresentation).not.toContain('4111111111111111');
+      expect(llmRepresentation).not.toContain('123456');
+      expect(llmRepresentation).not.toContain('hunter2');
+    });
+
     it('handles empty page', async () => {
       await page.setContent('<html><body></body></html>');
 
