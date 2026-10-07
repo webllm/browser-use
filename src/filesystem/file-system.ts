@@ -9,6 +9,7 @@ import extract from 'extract-zip';
 import PDFDocument from 'pdfkit';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { parseMarkdownForPdf, renderPdfBlocks } from './markdown-pdf.js';
 
 const require = createRequire(import.meta.url);
 
@@ -678,7 +679,7 @@ class PdfFile extends BaseFile {
       const doc = new PDFDocument({ autoFirstPage: true });
       const stream = fsSync.createWriteStream(filePath, { mode: 0o600 });
       doc.pipe(stream);
-      doc.fontSize(12).text(this.content || '', { width: 500, align: 'left' });
+      renderPdfBlocks(doc, parseMarkdownForPdf(this.content || ''));
       doc.end();
       stream.on('finish', resolve);
       stream.on('error', reject);
@@ -692,11 +693,12 @@ class PdfFile extends BaseFile {
 const { createWriteStream } = require('fs');
 const PDFDocument = require(${JSON.stringify(require.resolve('pdfkit'))});
 const filePath = ${JSON.stringify(filePath)};
-const content = ${JSON.stringify(this.content ?? '')};
+const blocks = ${JSON.stringify(parseMarkdownForPdf(this.content ?? ''))};
+const renderPdfBlocks = ${renderPdfBlocks.toString()};
 const doc = new PDFDocument({ autoFirstPage: true });
 const stream = createWriteStream(filePath, { mode: 0o600 });
 doc.pipe(stream);
-doc.fontSize(12).text(content || '', { width: 500, align: 'left' });
+renderPdfBlocks(doc, blocks);
 doc.end();
 stream.on('finish', () => process.exit(0));
 stream.on('error', (err) => {
