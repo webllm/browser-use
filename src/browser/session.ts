@@ -101,7 +101,7 @@ import {
 } from './events.js';
 import { DOMElementNode, DOMState, type SelectorMap } from '../dom/views.js';
 import { normalize_url } from './utils.js';
-import { DomService } from '../dom/service.js';
+import { DomService, type DomServiceOptions } from '../dom/service.js';
 import {
   showDVDScreensaver,
   showSpinner,
@@ -3080,7 +3080,11 @@ export class BrowserSession {
     // actionable indices instead of selectors from an earlier capture.
     let stateError: string | null = null;
     const extractDomState = async (label: string) => {
-      const domService = new DomService(page!, this.logger);
+      const domService = new DomService(
+        page!,
+        this.logger,
+        this._domServiceOptions()
+      );
       try {
         return await this._withAbort(
           this._withStateCaptureTimeout(
@@ -4968,6 +4972,12 @@ export class BrowserSession {
     return null;
   }
 
+  private _domServiceOptions(): DomServiceOptions {
+    return {
+      is_frame_url_allowed: (url: string) => this._is_url_allowed(url),
+    };
+  }
+
   async get_locate_element(node: DOMElementNode): Promise<Locator | null> {
     const page = await this.get_current_page();
     if (!page || !node?.xpath) {
@@ -4975,7 +4985,23 @@ export class BrowserSession {
     }
     await this.validate_page_after_action(page);
     try {
-      const locator = page.locator(`xpath=${node.xpath}`);
+      // XPaths are relative to the element's own document, so elements inside
+      // iframes are located through the chain of enclosing frame elements.
+      const frameChain: DOMElementNode[] = [];
+      for (let current = node.parent; current; current = current.parent) {
+        const tag = current.tag_name?.toLowerCase();
+        if (tag === 'iframe' || tag === 'frame') {
+          frameChain.unshift(current);
+        }
+      }
+      let scope: any = page;
+      for (const frameNode of frameChain) {
+        if (!frameNode.xpath || typeof scope.frameLocator !== 'function') {
+          return null;
+        }
+        scope = scope.frameLocator(`xpath=${frameNode.xpath}`);
+      }
+      const locator: Locator = scope.locator(`xpath=${node.xpath}`);
       const count = await locator.count();
       if (count === 0) {
         return null;
@@ -6613,7 +6639,11 @@ export class BrowserSession {
 
     // DOM processing
     this.logger.debug('🌳 Starting DOM processing...');
-    const dom_service = new DomService(page, this.logger);
+    const dom_service = new DomService(
+      page,
+      this.logger,
+      this._domServiceOptions()
+    );
 
     let content: DOMState;
     try {
@@ -7885,48 +7915,63 @@ export class BrowserSession {
       return;
     }
 
-    try {
-      await page.evaluate(() => {
-        const pageWindow = window as Window & {
-          _highlightCleanupFunctions?: Array<() => void>;
-        };
+    const cleanupHighlights = () => {
+      const pageWindow = window as Window & {
+        _highlightCleanupFunctions?: Array<() => void>;
+      };
 
-        const cleanupFunctions = Array.isArray(
-          pageWindow._highlightCleanupFunctions
-        )
-          ? pageWindow._highlightCleanupFunctions
-          : [];
+      const cleanupFunctions = Array.isArray(
+        pageWindow._highlightCleanupFunctions
+      )
+        ? pageWindow._highlightCleanupFunctions
+        : [];
 
-        for (const cleanupFn of cleanupFunctions) {
-          try {
-            if (typeof cleanupFn === 'function') {
-              cleanupFn();
-            }
-          } catch {
-            // Ignore callback cleanup failures.
+      for (const cleanupFn of cleanupFunctions) {
+        try {
+          if (typeof cleanupFn === 'function') {
+            cleanupFn();
           }
+        } catch {
+          // Ignore callback cleanup failures.
         }
-        pageWindow._highlightCleanupFunctions = [];
+      }
+      pageWindow._highlightCleanupFunctions = [];
 
-        const containers = document.querySelectorAll(
-          '#playwright-highlight-container'
-        );
-        containers.forEach((element) => element.remove());
+      const containers = document.querySelectorAll(
+        '#playwright-highlight-container'
+      );
+      containers.forEach((element) => element.remove());
 
-        const labels = document.querySelectorAll('.playwright-highlight-label');
-        labels.forEach((element) => element.remove());
+      const labels = document.querySelectorAll('.playwright-highlight-label');
+      labels.forEach((element) => element.remove());
 
-        // Backward compatibility with legacy selectors.
-        const highlights = document.querySelectorAll('.browser-use-highlight');
-        highlights.forEach((element) => element.remove());
-        const styled = document.querySelectorAll('[style*="browser-use"]');
-        styled.forEach((element: any) => {
-          if (element.style) {
-            element.style.outline = '';
-            element.style.border = '';
-          }
-        });
+      // Backward compatibility with legacy selectors.
+      const highlights = document.querySelectorAll('.browser-use-highlight');
+      highlights.forEach((element) => element.remove());
+      const styled = document.querySelectorAll('[style*="browser-use"]');
+      styled.forEach((element: any) => {
+        if (element.style) {
+          element.style.outline = '';
+          element.style.border = '';
+        }
       });
+    };
+    try {
+      await page.evaluate(cleanupHighlights);
+      // Elements in cross-origin frames are highlighted inside those frames.
+      const framesAccessor = (page as any).frames;
+      const mainFrame =
+        typeof (page as any).mainFrame === 'function'
+          ? (page as any).mainFrame()
+          : null;
+      const frames: any[] =
+        typeof framesAccessor === 'function' ? framesAccessor.call(page) : [];
+      for (const frame of frames) {
+        if (frame === mainFrame || typeof frame?.evaluate !== 'function') {
+          continue;
+        }
+        await frame.evaluate(cleanupHighlights).catch(() => {});
+      }
     } catch (error) {
       this.logger.debug(
         `Failed to remove highlights: ${(error as Error).message}`

@@ -22,7 +22,11 @@
     domLimits.maxSerializedStringLength,
     8 * 1024 * 1024,
   );
-  let highlightIndex = 0; // Reset highlight index
+  // Frames extracted separately continue numbering after the parent document.
+  let highlightIndex =
+    Number.isSafeInteger(args.highlightIndexStart) && args.highlightIndexStart > 0
+      ? args.highlightIndexStart
+      : 0;
   let visitedNodeCount = 0;
   let reservedSerializedNodeCount = 0;
   let serializedStringLength = 0;
@@ -1592,18 +1596,27 @@
       const tagName = node.tagName.toLowerCase();
 
       // Handle iframes
-      if (tagName === "iframe") {
+      if (tagName === "iframe" || tagName === "frame") {
+        let iframeDoc = null;
         try {
-          const iframeDoc = node.contentDocument || node.contentWindow?.document;
-          if (iframeDoc) {
-            for (const child of iframeDoc.childNodes) {
-              if (traversalLimitReached) break;
-              const domElement = buildDomTree(child, node, false, depth + 1);
-              if (domElement) nodeData.children.push(domElement);
-            }
-          }
+          iframeDoc = node.contentDocument || node.contentWindow?.document || null;
         } catch (e) {
-          console.warn("Unable to access iframe:", e);
+          iframeDoc = null;
+        }
+        if (iframeDoc) {
+          for (const child of iframeDoc.childNodes) {
+            if (traversalLimitReached) break;
+            const domElement = buildDomTree(child, node, false, depth + 1);
+            if (domElement) nodeData.children.push(domElement);
+          }
+        } else {
+          // Cross-origin documents cannot be read from here. Report the frame so
+          // the caller can extract it separately inside its own browsing context.
+          const frameRect = getCachedBoundingRect(node);
+          nodeData.crossOriginFrame = {
+            width: frameRect ? Math.round(frameRect.width) : 0,
+            height: frameRect ? Math.round(frameRect.height) : 0,
+          };
         }
       }
       // Handle rich text editors and contenteditable elements

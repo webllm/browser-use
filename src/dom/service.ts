@@ -32,6 +32,7 @@ type SerializedDOMNode = {
   viewportInfo?: unknown;
   isNew?: boolean | null;
   imageContext?: string;
+  crossOriginFrame?: { width?: number; height?: number };
 };
 
 type SerializedDOMTree = {
@@ -64,16 +65,74 @@ const DOM_EXTRACTION_LIMITS = {
   maxSerializedStringLength: 8 * 1024 * 1024,
 } as const;
 
+export interface DomServiceOptions {
+  /** Return false for frame URLs whose contents must not be extracted. */
+  is_frame_url_allowed?: (url: string) => boolean;
+  /** Maximum number of cross-origin frames extracted in one capture. */
+  max_cross_origin_frames?: number;
+  /** Maximum nesting depth of cross-origin frames inside other frames. */
+  max_cross_origin_frame_depth?: number;
+  /** Budget for extracting a single cross-origin frame. */
+  cross_origin_frame_timeout_ms?: number;
+}
+
+// Frames smaller than this in either dimension are tracking pixels or spacers.
+const MIN_CROSS_ORIGIN_FRAME_EDGE = 10;
+const DEFAULT_MAX_CROSS_ORIGIN_FRAMES = 20;
+const DEFAULT_MAX_CROSS_ORIGIN_FRAME_DEPTH = 3;
+const DEFAULT_CROSS_ORIGIN_FRAME_TIMEOUT_MS = 5_000;
+
+const positiveIntegerOption = (value: unknown, fallback: number) =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : fallback;
+
+const nextHighlightIndex = (selectorMap: SelectorMap) => {
+  let next = 0;
+  for (const key of Object.keys(selectorMap)) {
+    const index = Number(key);
+    if (Number.isSafeInteger(index) && index >= next) {
+      next = index + 1;
+    }
+  }
+  return next;
+};
+
+const isFrameElement = (node: DOMElementNode) => {
+  const tag = node.tag_name.toLowerCase();
+  return tag === 'iframe' || tag === 'frame';
+};
+
+const collectCrossOriginFrameNodes = (root: DOMElementNode) => {
+  const frames: DOMElementNode[] = [];
+  const stack: DOMBaseNode[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!(current instanceof DOMElementNode)) continue;
+    if (current.cross_origin_frame) {
+      frames.push(current);
+      continue;
+    }
+    for (let index = current.children.length - 1; index >= 0; index -= 1) {
+      stack.push(current.children[index]!);
+    }
+  }
+  return frames;
+};
+
 export class DomService {
   private readonly logger;
   private readonly jsCode: string;
+  private readonly options: DomServiceOptions;
 
   constructor(
     private readonly page: Page,
-    logger = createLogger('browser_use.dom.service')
+    logger = createLogger('browser_use.dom.service'),
+    options: DomServiceOptions = {}
   ) {
     this.logger = logger;
     this.jsCode = DOM_TREE_SCRIPT;
+    this.options = options;
   }
 
   // @ts-ignore - Decorator type mismatch with TypeScript strict mode
@@ -208,7 +267,147 @@ export class DomService {
     this.logger.debug('🔄 Starting DOM tree construction...');
     const result = await this._construct_dom_tree(eval_page);
     this.logger.debug('✅ DOM tree construction completed');
+    await this._extract_cross_origin_frames(result[0], result[1], args);
     return result;
+  }
+
+  /**
+   * Cross-origin documents are invisible to the page script, so each eligible
+   * frame is extracted inside its own browsing context. Its elements continue
+   * the parent's index numbering and hang below the iframe element.
+   */
+  private async _extract_cross_origin_frames(
+    root: DOMElementNode,
+    selector_map: SelectorMap,
+    args: Record<string, unknown>
+  ) {
+    const pending = collectCrossOriginFrameNodes(root).map((node) => ({
+      node,
+      depth: 1,
+    }));
+    if (pending.length === 0) {
+      return;
+    }
+
+    const maxFrames = positiveIntegerOption(
+      this.options.max_cross_origin_frames,
+      DEFAULT_MAX_CROSS_ORIGIN_FRAMES
+    );
+    const maxDepth = positiveIntegerOption(
+      this.options.max_cross_origin_frame_depth,
+      DEFAULT_MAX_CROSS_ORIGIN_FRAME_DEPTH
+    );
+    const frameTimeoutMs = positiveIntegerOption(
+      this.options.cross_origin_frame_timeout_ms,
+      DEFAULT_CROSS_ORIGIN_FRAME_TIMEOUT_MS
+    );
+    let nextIndex = nextHighlightIndex(selector_map);
+    let extractedFrames = 0;
+
+    while (pending.length > 0 && extractedFrames < maxFrames) {
+      const { node, depth } = pending.shift()!;
+      const size = node.cross_origin_frame;
+      if (
+        !size ||
+        depth > maxDepth ||
+        !node.is_visible ||
+        size.width < MIN_CROSS_ORIGIN_FRAME_EDGE ||
+        size.height < MIN_CROSS_ORIGIN_FRAME_EDGE
+      ) {
+        continue;
+      }
+
+      try {
+        const frame = await this._resolve_frame_for_node(node);
+        if (!frame) continue;
+        const frameUrl = this.getFrameUrl(frame);
+        if (
+          !frameUrl ||
+          this.isAdUrl(frameUrl) ||
+          (this.options.is_frame_url_allowed &&
+            !this.options.is_frame_url_allowed(frameUrl))
+        ) {
+          continue;
+        }
+
+        const frameEval = await this._with_frame_timeout(
+          frame.evaluate(
+            ({ script, evaluateArgs }: { script: any; evaluateArgs: any }) => {
+              const fn = eval(script);
+              return fn(evaluateArgs);
+            },
+            {
+              script: this.jsCode,
+              evaluateArgs: { ...args, highlightIndexStart: nextIndex },
+            }
+          ) as Promise<SerializedDOMTree>,
+          frameTimeoutMs
+        );
+        const [frameRoot, frameSelectorMap] =
+          await this._construct_dom_tree(frameEval);
+        frameRoot.parent = node;
+        node.children.push(frameRoot);
+        Object.assign(selector_map, frameSelectorMap);
+        nextIndex = Math.max(nextIndex, nextHighlightIndex(frameSelectorMap));
+        extractedFrames += 1;
+
+        for (const nested of collectCrossOriginFrameNodes(frameRoot)) {
+          pending.push({ node: nested, depth: depth + 1 });
+        }
+      } catch (error) {
+        this.logger.debug(
+          `Skipping cross-origin frame ${node.xpath}: ${(error as Error).message}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Resolve the browsing context of an iframe element by walking its chain of
+   * enclosing frames from the main frame.
+   */
+  private async _resolve_frame_for_node(node: DOMElementNode) {
+    const chain: DOMElementNode[] = [node];
+    for (let current = node.parent; current; current = current.parent) {
+      if (isFrameElement(current)) {
+        chain.unshift(current);
+      }
+    }
+
+    const mainFrame = (this.page as any).mainFrame;
+    let frame: any =
+      typeof mainFrame === 'function' ? mainFrame.call(this.page) : null;
+    for (const frameNode of chain) {
+      if (!frame || typeof frame.$ !== 'function' || !frameNode.xpath) {
+        return null;
+      }
+      const handle = await frame.$(`xpath=${frameNode.xpath}`);
+      if (!handle) {
+        return null;
+      }
+      try {
+        frame = await handle.contentFrame();
+      } finally {
+        await handle.dispose().catch(() => {});
+      }
+    }
+    return frame;
+  }
+
+  private async _with_frame_timeout<T>(promise: Promise<T>, timeoutMs: number) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(new Error(`frame extraction timed out after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   // @ts-ignore - Decorator type mismatch with TypeScript strict mode
@@ -302,6 +501,12 @@ export class DomService {
       typeof node_data.imageContext === 'string' && node_data.imageContext
         ? node_data.imageContext
         : null;
+    element.cross_origin_frame = node_data.crossOriginFrame
+      ? {
+          width: Number(node_data.crossOriginFrame.width) || 0,
+          height: Number(node_data.crossOriginFrame.height) || 0,
+        }
+      : null;
 
     return [element, children];
   }

@@ -159,6 +159,8 @@ export class DOMElementNode extends DOMBaseNode {
   is_new: boolean | null = null;
   /** Images shown by an interactive element, e.g. `image_alt=Logo image_src=logo.svg`. */
   image_context: string | null = null;
+  /** Size of an iframe whose cross-origin document must be extracted separately. */
+  cross_origin_frame: { width: number; height: number } | null = null;
   private cached_hash: HashedDomElement | null = null;
   public attributes: Record<string, string>;
 
