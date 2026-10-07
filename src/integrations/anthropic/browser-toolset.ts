@@ -742,10 +742,12 @@ export class BrowserUseToolset {
         errors.push(error);
       }
     }
+    const timer = new AbortController();
     await Promise.race([
       Promise.allSettled([...this._background]),
-      sleep(2000),
+      sleep(2000, undefined, { signal: timer.signal }).catch(() => undefined),
     ]);
+    timer.abort();
     if (this._context && this._onContextPage) {
       this._context.off('page', this._onContextPage);
     }
@@ -1057,13 +1059,18 @@ export class BrowserUseToolset {
   }
 
   private async _title(page: Page, fallback: string) {
+    // Abort the fallback timer once the race settles so it cannot keep the
+    // process alive.
+    const timer = new AbortController();
     try {
       return await Promise.race([
         page.title(),
-        sleep(TITLE_TIMEOUT_MS).then(() => fallback),
+        sleep(TITLE_TIMEOUT_MS, fallback, { signal: timer.signal }),
       ]);
     } catch {
       return fallback;
+    } finally {
+      timer.abort();
     }
   }
 
