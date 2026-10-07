@@ -794,6 +794,33 @@ describe('DomService', () => {
       expect(llmRepresentation).not.toContain('hunter2');
     });
 
+    it('describes the images shown by icon-only interactive elements', async () => {
+      const html = `
+        <style>a, button, img { display: inline-block; width: 40px; height: 40px; }</style>
+        <a id="home" href="/home"><span><img alt="Company logo" src="/static/img/logo.svg?v=2#top" /></span></a>
+        <button id="inline"><img src="data:image/png;base64,AAAA" alt="" /></button>
+        <img id="avatar" src="/u/42/avatar.png" title="Open profile" onclick="void 0" style="cursor:pointer" />
+      `;
+      await page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+      const state = await new DomService(page).get_clickable_elements();
+      const byId = (id: string) =>
+        Object.values(state.selector_map).find(
+          (node) => node.attributes.id === id
+        );
+
+      expect(byId('home')?.image_context).toBe(
+        'image_alt=Company logo image_src=logo.svg'
+      );
+      expect(byId('inline')?.image_context).toBeNull();
+      expect(byId('avatar')?.image_context).toBe(
+        'image_title=Open profile image_src=avatar.png'
+      );
+      expect(state.llm_representation()).toContain(
+        'image_alt=Company logo image_src=logo.svg'
+      );
+    });
+
     it('handles empty page', async () => {
       await page.setContent('<html><body></body></html>');
 

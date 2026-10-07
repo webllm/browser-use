@@ -31,6 +31,7 @@ type SerializedDOMNode = {
   viewportCoordinates?: unknown;
   viewportInfo?: unknown;
   isNew?: boolean | null;
+  imageContext?: string;
 };
 
 type SerializedDOMTree = {
@@ -297,6 +298,10 @@ export class DomService {
       (node_data.viewportCoordinates as any) ?? null;
     element.viewport_info = (node_data.viewportInfo as any) ?? null;
     element.is_new = node_data.isNew ?? null;
+    element.image_context =
+      typeof node_data.imageContext === 'string' && node_data.imageContext
+        ? node_data.imageContext
+        : null;
 
     return [element, children];
   }

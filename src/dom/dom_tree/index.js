@@ -109,6 +109,77 @@
     }
   }
 
+  const MAX_CHILD_IMAGE_CONTEXTS = 3;
+  const MAX_CHILD_IMAGE_DESCENDANTS = 100;
+  const MAX_IMAGE_CONTEXT_ATTRIBUTE_LENGTH = 4096;
+  const MAX_IMAGE_CONTEXT_PART_LENGTH = 100;
+  const MAX_IMAGE_CONTEXT_LENGTH = 1024;
+
+  function capImageContextText(text) {
+    return text.length > MAX_IMAGE_CONTEXT_PART_LENGTH
+      ? `${text.slice(0, MAX_IMAGE_CONTEXT_PART_LENGTH)}...`
+      : text;
+  }
+
+  function imageSourceName(src) {
+    if (!src || src.length > MAX_IMAGE_CONTEXT_ATTRIBUTE_LENGTH) return "";
+    const cleanSource = src.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, "").replace(/[\t\n\r]/g, "");
+    if (cleanSource.toLowerCase().startsWith("data:")) return "";
+    const pathWithoutQuery = cleanSource.split("?", 1)[0].split("#", 1)[0].replace(/\/+$/, "");
+    const segments = pathWithoutQuery.split("/");
+    return segments[segments.length - 1] || "";
+  }
+
+  function describeImage(image) {
+    const parts = [];
+    for (const [attributeName, outputName] of [
+      ["alt", "image_alt"],
+      ["title", "image_title"],
+      ["aria-label", "image_label"],
+    ]) {
+      const rawValue = image.getAttribute(attributeName) || "";
+      if (rawValue.length > MAX_IMAGE_CONTEXT_ATTRIBUTE_LENGTH) continue;
+      const value = rawValue.trim();
+      if (value) parts.push(`${outputName}=${capImageContextText(value)}`);
+    }
+    const sourceName = imageSourceName(image.getAttribute("src") || "");
+    if (sourceName) parts.push(`image_src=${capImageContextText(sourceName)}`);
+    return parts.join(" ");
+  }
+
+  /**
+   * Describe an interactive element by the images it shows, so icon-only links
+   * and buttons are not anonymous to the model. Bounded in both the number of
+   * descendants visited and the number of images described.
+   */
+  function getImageContext(element) {
+    const contexts = [];
+    const addImage = (candidate) => {
+      if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === "img") {
+        const description = describeImage(candidate);
+        if (description) contexts.push(description);
+      }
+    };
+
+    addImage(element);
+    const stack = Array.from(element.children || []).reverse();
+    let visitedDescendants = 0;
+    while (
+      stack.length > 0 &&
+      visitedDescendants < MAX_CHILD_IMAGE_DESCENDANTS &&
+      contexts.length < MAX_CHILD_IMAGE_CONTEXTS
+    ) {
+      const current = stack.pop();
+      visitedDescendants += 1;
+      addImage(current);
+      const children = current.children ? Array.from(current.children) : [];
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push(children[index]);
+      }
+    }
+    return contexts.join(" ");
+  }
+
   // Add caching mechanisms at the top level
   const DOM_CACHE = {
     boundingRects: new WeakMap(),
@@ -1291,6 +1362,10 @@
       // regardless of viewport status
       if (nodeData.isInViewport || viewportExpansion === -1) {
         nodeData.highlightIndex = highlightIndex++;
+        const imageContext = getImageContext(node);
+        if (imageContext) {
+          nodeData.imageContext = boundedString(imageContext, MAX_IMAGE_CONTEXT_LENGTH);
+        }
 
         if (doHighlightElements) {
           if (focusHighlightIndex >= 0) {

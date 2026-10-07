@@ -157,6 +157,8 @@ export class DOMElementNode extends DOMBaseNode {
   page_coordinates: CoordinateSet | null = null;
   viewport_info: ViewportInfo | null = null;
   is_new: boolean | null = null;
+  /** Images shown by an interactive element, e.g. `image_alt=Logo image_src=logo.svg`. */
+  image_context: string | null = null;
   private cached_hash: HashedDomElement | null = null;
   public attributes: Record<string, string>;
 
@@ -323,6 +325,11 @@ const CLICKABLE_ELEMENTS_TO_STRING_IMPL = time_execution_sync(
               .map(([key, value]) => `${key}=${cap_text_length(value, 15)}`)
               .join(' ');
           }
+        }
+        if (node.image_context) {
+          attributes_html_str = attributes_html_str
+            ? `${attributes_html_str} ${node.image_context}`
+            : node.image_context;
         }
 
         const highlight_indicator = node.is_new
