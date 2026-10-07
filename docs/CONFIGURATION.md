@@ -19,7 +19,8 @@ Configuration values are resolved in this order (highest priority first):
 | ----------------------------- | --------- | ---------------------- | ---------------------------------------------------------- |
 | `BROWSER_USE_LOGGING_LEVEL`   | `string`  | `'info'`               | Log level: `debug`, `info`, `warning`, `error`             |
 | `BROWSER_USE_CONFIG_DIR`      | `string`  | `~/.config/browseruse` | Configuration directory path                               |
-| `BROWSER_USE_HEADLESS`        | `boolean` | `false`                | Run browser in headless mode                               |
+| `BROWSER_USE_HEADLESS`        | `boolean` | display detection      | Default `headless` for profiles that do not set it         |
+| `BROWSER_USE_DISABLE_SECURITY` | `boolean` | unset (secure)        | Opt-in: disable browser web security for config/MCP profiles |
 | `IN_DOCKER`                   | `boolean` | auto-detect            | Force Docker mode behavior (sandbox defaults, launch args) |
 | `BROWSER_USE_ALLOWED_DOMAINS` | `string`  | -                      | Comma-separated allowed domains                            |
 

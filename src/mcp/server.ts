@@ -34,6 +34,7 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
   type Tool,
+  type ToolAnnotations,
   type Prompt,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
@@ -598,6 +599,7 @@ export class MCPServer {
           name,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          ...(tool.annotations ? { annotations: tool.annotations } : {}),
         })),
       };
     });
@@ -889,7 +891,8 @@ export class MCPServer {
             state.element_tree.clickable_elements_to_string(),
           interactive_count: Object.keys(state.selector_map ?? {}).length,
         };
-      }
+      },
+      { readOnly: true }
     );
 
     this.registerTool(
@@ -935,7 +938,8 @@ export class MCPServer {
       async () => {
         const browserSession = await this.ensureBrowserSession();
         return browserSession.get_tabs_info();
-      }
+      },
+      { readOnly: true }
     );
 
     this.registerTool(
@@ -1012,7 +1016,8 @@ export class MCPServer {
       z.object({}).strict(),
       async () => {
         return this.serializeTrackedSessions();
-      }
+      },
+      { readOnly: true }
     );
 
     this.registerTool(
@@ -1176,7 +1181,8 @@ export class MCPServer {
     name: string,
     description: string,
     inputSchema: z.ZodType | Record<string, any>,
-    handler: (args: any) => Promise<any>
+    handler: (args: any) => Promise<any>,
+    options: { readOnly?: boolean } = {}
   ) {
     this.tools[name] = {
       description,
@@ -1185,6 +1191,9 @@ export class MCPServer {
           ? zodSchemaToJsonSchema(inputSchema as any)
           : inputSchema,
       handler,
+      ...(options.readOnly
+        ? { annotations: { readOnlyHint: true } as ToolAnnotations }
+        : {}),
     };
     logger.debug(`Registered tool: ${name}`);
   }

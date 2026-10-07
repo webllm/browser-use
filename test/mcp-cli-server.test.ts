@@ -27,6 +27,8 @@ describe('CliMCPServer', () => {
       'browser_screenshot',
     ]);
     expect((tools[1]?.inputSchema.properties as any).max_dim.minimum).toBe(1);
+    expect(tools[0]?.annotations).toBeUndefined();
+    expect(tools[1]?.annotations).toEqual({ readOnlyHint: true });
   });
 
   it('executes direct commands without shell parsing', async () => {

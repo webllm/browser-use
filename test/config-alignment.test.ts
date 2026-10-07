@@ -12,6 +12,7 @@ const ENV_KEYS = [
   'BROWSER_USE_PROXY_PASSWORD',
   'BROWSER_USE_DISABLE_EXTENSIONS',
   'BROWSER_USE_HEADLESS',
+  'BROWSER_USE_DISABLE_SECURITY',
   'BROWSER_USE_ALLOWED_DOMAINS',
   'BROWSER_USE_LLM_MODEL',
   'DEFAULT_LLM',
@@ -442,6 +443,33 @@ describe('Config alignment with latest py-browser-use defaults', () => {
           });
         }
       );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('maps BROWSER_USE_DISABLE_SECURITY only when it is explicitly set', async () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-config-')
+    );
+    try {
+      for (const [value, expected] of [
+        [undefined, undefined],
+        ['true', true],
+        ['false', false],
+      ] as const) {
+        await withEnv(
+          {
+            BROWSER_USE_CONFIG_DIR: tempDir,
+            BROWSER_USE_DISABLE_SECURITY: value,
+          },
+          async () => {
+            const { load_browser_use_config } = await importConfigModule();
+            const config = load_browser_use_config();
+            expect(config.browser_profile.disable_security).toBe(expected);
+          }
+        );
+      }
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }

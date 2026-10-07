@@ -194,6 +194,7 @@ export class CliMCPServer {
         name: 'browser_screenshot',
         description:
           'Capture the current page and return a PNG image. Prefer this over the screenshot direct command.',
+        annotations: { readOnlyHint: true },
         inputSchema: {
           type: 'object',
           properties: {

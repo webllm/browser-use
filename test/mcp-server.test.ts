@@ -107,6 +107,36 @@ describe('MCPServer browser_click new_tab', () => {
     expect(console.log).toBe(originalConsoleLog);
   });
 
+  it('marks read-only tools with readOnlyHint annotations', async () => {
+    const server = new MCPServer('test-mcp', '1.0.0');
+    const tools = (server as any).tools as Record<string, any>;
+
+    for (const name of [
+      'browser_get_state',
+      'browser_list_tabs',
+      'browser_list_sessions',
+    ]) {
+      expect(tools[name]?.annotations).toEqual({ readOnlyHint: true });
+    }
+    for (const name of ['browser_navigate', 'browser_click', 'browser_type']) {
+      expect(tools[name]?.annotations).toBeUndefined();
+    }
+
+    const listHandler = (server as any).server?._requestHandlers?.get(
+      'tools/list'
+    );
+    if (listHandler) {
+      const listed = await listHandler(
+        { method: 'tools/list', params: {} },
+        {}
+      );
+      const getState = listed.tools.find(
+        (tool: any) => tool.name === 'browser_get_state'
+      );
+      expect(getState.annotations).toEqual({ readOnlyHint: true });
+    }
+  });
+
   it('opens href targets in a new tab and reports tab index', async () => {
     const server = new MCPServer('test-mcp', '1.0.0');
     const createNewTab = vi.fn(async () => ({}));

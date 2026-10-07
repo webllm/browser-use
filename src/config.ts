@@ -510,6 +510,11 @@ class FlatEnvConfig {
     return value === undefined ? null : string_to_bool(value);
   }
 
+  get BROWSER_USE_DISABLE_SECURITY() {
+    const value = process.env.BROWSER_USE_DISABLE_SECURITY;
+    return value === undefined ? null : string_to_bool(value);
+  }
+
   get BROWSER_USE_ALLOWED_DOMAINS() {
     return process.env.BROWSER_USE_ALLOWED_DOMAINS ?? null;
   }
@@ -750,6 +755,12 @@ class ConfigCore {
 
     if (env.BROWSER_USE_HEADLESS !== null) {
       config.browser_profile.headless = env.BROWSER_USE_HEADLESS;
+    }
+
+    // Opt-in only: an unset variable keeps the stored (secure) profile value.
+    if (env.BROWSER_USE_DISABLE_SECURITY !== null) {
+      config.browser_profile.disable_security =
+        env.BROWSER_USE_DISABLE_SECURITY;
     }
 
     if (env.BROWSER_USE_ALLOWED_DOMAINS) {
