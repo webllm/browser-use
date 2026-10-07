@@ -269,6 +269,26 @@ describe('Google LLM alignment', () => {
     expect(response.usage?.prompt_image_tokens).toBe(5);
   });
 
+  it('omits the default temperature for Gemini 3 models only', async () => {
+    await new ChatGoogle({ model: 'gemini-3-pro-preview' }).ainvoke([
+      new UserMessage('hello'),
+    ]);
+    await new ChatGoogle({ model: 'gemini-2.5-flash' }).ainvoke([
+      new UserMessage('hello'),
+    ]);
+    await new ChatGoogle({
+      model: 'gemini-3-flash-preview',
+      temperature: 0.2,
+    }).ainvoke([new UserMessage('hello')]);
+
+    const [gemini3, gemini25, explicit] = generateContentMock.mock.calls.map(
+      ([request]) => request
+    );
+    expect(gemini3.config).not.toHaveProperty('temperature');
+    expect(gemini25.config.temperature).toBe(0.5);
+    expect(explicit.config.temperature).toBe(0.2);
+  });
+
   it('applies Gemini 3 thinking-level defaults and safeguards for pro models', async () => {
     const llmDefault = new ChatGoogle({
       model: 'gemini-3-pro-preview',

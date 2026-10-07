@@ -163,7 +163,7 @@ export class ChatGoogle implements BaseChatModel {
       googleAuthOptions,
       credentials,
       fetchImplementation,
-      temperature = 0.5,
+      temperature = null,
       topP = null,
       seed = null,
       thinkingBudget = null,
@@ -454,6 +454,13 @@ export class ChatGoogle implements BaseChatModel {
       : {};
     if (this.temperature !== null) {
       requestConfig.temperature = this.temperature;
+    } else if (
+      requestConfig.temperature === undefined &&
+      !this.model.includes('gemini-3')
+    ) {
+      // Gemini 3 models are tuned for their own default temperature, so only
+      // older models get the library default.
+      requestConfig.temperature = 0.5;
     }
     if (this.topP !== null) {
       requestConfig.topP = this.topP;
