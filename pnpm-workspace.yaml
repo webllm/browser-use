@@ -1,0 +1,8 @@
+# Settings read by pnpm 11 (the CI dependency audit). Install-time settings
+# such as overrides still live in package.json for pnpm 10.
+auditConfig:
+  ignoreGhsas:
+    # braces <=3.0.3 has no patched release. It is only reachable through the
+    # dev-only commitizen toolchain (`pnpm commit`), which expands fixed
+    # patterns, never untrusted input.
+    - GHSA-vfj7-8cjw-p6xm

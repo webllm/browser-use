@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import AdmZip from 'adm-zip';
-import extract from 'extract-zip';
+import { extractZipArchive } from './zip-extract.js';
 import PDFDocument from 'pdfkit';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
@@ -391,7 +391,7 @@ const readDocxText = async (archive: Buffer): Promise<string> => {
   try {
     await fsp.mkdir(extractDir, { recursive: true, mode: 0o700 });
     await writePrivateBufferFileAsync(archivePath, archive);
-    await extract(archivePath, {
+    await extractZipArchive(archivePath, {
       dir: extractDir,
       onEntry(entry) {
         entryCount += 1;

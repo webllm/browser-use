@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import extract from 'extract-zip';
+import { extractZipArchive } from '../filesystem/zip-extract.js';
 
 export const MAX_EXTENSION_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 export const MAX_EXTENSION_ARCHIVE_ENTRIES = 10_000;
@@ -387,7 +387,7 @@ export const extractExtensionArchive = async (
     }
 
     const budget = new ExtensionArchiveBudget();
-    await extract(zipPath, {
+    await extractZipArchive(zipPath, {
       dir: path.resolve(stagingDir),
       onEntry(entry) {
         budget.addEntry({
