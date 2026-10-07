@@ -17,6 +17,11 @@ import { SchemaOptimizer, zodSchemaToJsonSchema } from '../schema.js';
 import { rejectRedirectsInFetchOptions } from '../http.js';
 import { validateMaxRetries } from '../retry.js';
 
+// `<parameter name="x">value</parameter>`, tolerating the mismatched `</x>`
+// closing tag the model sometimes emits instead of `</parameter>`.
+const TEXT_TOOL_CALL_PARAMETER =
+  /<parameter name="([^"]+)">([\s\S]*?)(?:<\/parameter>|<\/\1>)/g;
+
 export interface ChatAnthropicOptions {
   model?: string;
   apiKey?: string;
@@ -370,6 +375,102 @@ export class ChatAnthropic implements BaseChatModel {
     return undefined;
   }
 
+  /**
+   * Decode fields the model double-serialized as JSON strings.
+   */
+  private repairSerializedFields(
+    values: Record<string, unknown>
+  ): Record<string, unknown> {
+    const repaired = { ...values };
+    for (const [key, value] of Object.entries(repaired)) {
+      if (
+        typeof value === 'string' &&
+        (value.startsWith('[') || value.startsWith('{'))
+      ) {
+        try {
+          repaired[key] = JSON.parse(value);
+        } catch {
+          const cleaned = value
+            .replaceAll('\n', '\\n')
+            .replaceAll('\r', '\\r')
+            .replaceAll('\t', '\\t');
+          try {
+            repaired[key] = JSON.parse(cleaned);
+          } catch {
+            // Leave genuinely textual fields unchanged.
+          }
+        }
+      }
+    }
+    return repaired;
+  }
+
+  /**
+   * Parse arguments out of a tool call the model rendered as text.
+   */
+  private toolCallFromText(text: string): Record<string, unknown> | null {
+    const values: Record<string, unknown> = {};
+    for (const match of text.matchAll(TEXT_TOOL_CALL_PARAMETER)) {
+      const [, name, value] = match;
+      if (name) {
+        values[name] = (value ?? '').trim();
+      }
+    }
+    return Object.keys(values).length > 0
+      ? this.repairSerializedFields(values)
+      : null;
+  }
+
+  /**
+   * Claude sometimes calls the tool but writes the whole call as text into the
+   * schema's `thinking` argument, either as `<parameter name=...>` markup or as
+   * a JSON object. That text still carries every field, so parse it instead of
+   * discarding the step. Other fields are never promoted.
+   */
+  private recoverSerializedToolInput<T>(
+    outputFormat: { parse: (input: string) => T },
+    toolInput: unknown
+  ): { value: T } | null {
+    if (
+      !toolInput ||
+      typeof toolInput !== 'object' ||
+      Array.isArray(toolInput)
+    ) {
+      return null;
+    }
+    const thinking = (toolInput as Record<string, unknown>).thinking;
+    if (typeof thinking !== 'string') {
+      return null;
+    }
+
+    const candidates: unknown[] = [];
+    const toolCall = this.toolCallFromText(thinking);
+    if (toolCall) {
+      candidates.push(toolCall);
+    }
+    for (const textCandidate of this.getJsonCandidates(thinking)) {
+      try {
+        const parsed: unknown = JSON.parse(textCandidate);
+        candidates.push(
+          parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? this.repairSerializedFields(parsed as Record<string, unknown>)
+            : parsed
+        );
+      } catch {
+        // Try the next candidate extracted from the serialized call.
+      }
+    }
+
+    for (const candidate of candidates) {
+      try {
+        return { value: this.parseOutput(outputFormat, candidate) };
+      } catch {
+        // Keep looking for a candidate that satisfies the schema.
+      }
+    }
+    return null;
+  }
+
   private parseToolInput<T>(
     outputFormat: { parse: (input: string) => T },
     input: unknown
@@ -385,34 +486,26 @@ export class ChatAnthropic implements BaseChatModel {
         typeof normalized === 'object' &&
         !Array.isArray(normalized)
       ) {
-        normalized = { ...(normalized as Record<string, unknown>) };
-        for (const [key, value] of Object.entries(
+        normalized = this.repairSerializedFields(
           normalized as Record<string, unknown>
-        )) {
-          if (
-            typeof value === 'string' &&
-            (value.startsWith('[') || value.startsWith('{'))
-          ) {
-            try {
-              (normalized as Record<string, unknown>)[key] = JSON.parse(value);
-            } catch {
-              const cleaned = value
-                .replaceAll('\n', '\\n')
-                .replaceAll('\r', '\\r')
-                .replaceAll('\t', '\\t');
-              try {
-                (normalized as Record<string, unknown>)[key] =
-                  JSON.parse(cleaned);
-              } catch {
-                // Leave genuinely textual fields unchanged.
-              }
-            }
-          }
-        }
+        );
       } else {
         throw initialError;
       }
-      return this.parseOutput(outputFormat, normalized);
+      try {
+        return this.parseOutput(outputFormat, normalized);
+      } catch (validationError) {
+        // Use the raw input: repairing would already have decoded a JSON
+        // object written into `thinking`, hiding it from the recovery path.
+        const recovered = this.recoverSerializedToolInput(
+          outputFormat,
+          typeof input === 'string' ? normalized : input
+        );
+        if (recovered) {
+          return recovered.value;
+        }
+        throw validationError;
+      }
     }
   }
 

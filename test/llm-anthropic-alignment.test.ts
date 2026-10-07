@@ -405,4 +405,101 @@ describe('ChatAnthropic alignment', () => {
 
     expect((result.completion as any).metadata.note).toBe('line 1\nline 2');
   });
+
+  describe('serialized tool call recovery', () => {
+    const AgentLikeOutput = z.object({
+      thinking: z.string(),
+      next_goal: z.string(),
+      action: z.array(z.record(z.string(), z.unknown())).min(1),
+    });
+
+    it('recovers parameter markup written into the thinking field', async () => {
+      anthropicMock.anthropicCreateMock.mockResolvedValue(
+        buildResponse(
+          [
+            {
+              type: 'tool_use',
+              id: 'toolu_1',
+              name: 'response',
+              input: {
+                thinking:
+                  '<parameter name="thinking">Plan the search</parameter>\n' +
+                  '<parameter name="next_goal">Open results</next_goal>\n' +
+                  '<parameter name="action">[{"navigate": {"url": "https://example.com"}}]</parameter>',
+              },
+            },
+          ],
+          'tool_use'
+        )
+      );
+
+      const llm = new ChatAnthropic({ model: 'claude-opus-5' });
+      const response = await llm.ainvoke(
+        [new UserMessage('act')],
+        AgentLikeOutput as any
+      );
+
+      expect(response.completion).toEqual({
+        thinking: 'Plan the search',
+        next_goal: 'Open results',
+        action: [{ navigate: { url: 'https://example.com' } }],
+      });
+    });
+
+    it('recovers a JSON object written into the thinking field', async () => {
+      anthropicMock.anthropicCreateMock.mockResolvedValue(
+        buildResponse(
+          [
+            {
+              type: 'tool_use',
+              id: 'toolu_2',
+              name: 'response',
+              input: {
+                thinking: JSON.stringify({
+                  thinking: 'Check the form',
+                  next_goal: 'Submit',
+                  action: '[{"click": {"index": 3}}]',
+                }),
+              },
+            },
+          ],
+          'tool_use'
+        )
+      );
+
+      const llm = new ChatAnthropic({ model: 'claude-opus-5' });
+      const response = await llm.ainvoke(
+        [new UserMessage('act')],
+        AgentLikeOutput as any
+      );
+
+      expect((response.completion as any).action).toEqual([
+        { click: { index: 3 } },
+      ]);
+    });
+
+    it('does not promote serialized data from other fields', async () => {
+      anthropicMock.anthropicCreateMock.mockResolvedValue(
+        buildResponse(
+          [
+            {
+              type: 'tool_use',
+              id: 'toolu_3',
+              name: 'response',
+              input: {
+                next_goal:
+                  '<parameter name="thinking">x</parameter><parameter name="next_goal">y</parameter><parameter name="action">[{"done": {}}]</parameter>',
+              },
+            },
+          ],
+          'tool_use'
+        )
+      );
+
+      const llm = new ChatAnthropic({ model: 'claude-opus-5' });
+      await expect(
+        llm.ainvoke([new UserMessage('act')], AgentLikeOutput as any)
+      ).rejects.toBeInstanceOf(ModelProviderError);
+    });
+  });
 });
