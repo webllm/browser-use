@@ -65,6 +65,10 @@ export const extractBoundedPageHtml = async (
           'style',
           'noscript',
           'template',
+          'head',
+          'meta',
+          'link',
+          'title',
         ]);
         const voidTags = new Set([
           'area',
@@ -144,6 +148,29 @@ export const extractBoundedPageHtml = async (
             const element = node as Element;
             const tag = element.tagName.toLowerCase().slice(0, 128);
             if (!tag || skippedTags.has(tag)) return;
+            if (tag === 'code') {
+              // Hidden code elements usually carry SPA state JSON, such as
+              // LinkedIn's bpr-guid blobs, rather than readable content.
+              const style = (element.getAttribute('style') ?? '')
+                .toLowerCase()
+                .replace(/\s+/g, '');
+              const id = element.getAttribute('id') ?? '';
+              if (
+                style.includes('display:none') ||
+                id.includes('bpr-guid') ||
+                id.includes('data') ||
+                id.includes('state')
+              ) {
+                return;
+              }
+            }
+            // Inline base64 images are placeholders or tracking pixels.
+            if (
+              tag === 'img' &&
+              (element.getAttribute('src') ?? '').startsWith('data:image/')
+            ) {
+              return;
+            }
             append(`<${tag}`);
             const attributes = element.attributes;
             const attributeCount = Math.min(attributes.length, maxAttributes);

@@ -149,4 +149,33 @@ describe('bounded page HTML extraction', () => {
       42
     );
   });
+
+  it.each([
+    'display: none',
+    'Display: None',
+    'DISPLAY:\tNONE',
+    'color: red; display : none !important',
+  ])(
+    'drops code hidden with inline style %j and JSON state blobs',
+    async (style) => {
+      await page.setContent(
+        `<title>Fixture title</title><main>visible control</main>` +
+          `<code id="snippet" style="${style}">hidden state payload</code>` +
+          `<code id="bpr-guid-12">{"included":[]}</code>` +
+          `<code>visible snippet</code>` +
+          `<img src="data:image/png;base64,iVBORw0KGgo=" alt="pixel">` +
+          `<img src="https://example.com/logo.png" alt="logo">`
+      );
+
+      const { html } = await extractBoundedPageHtml(page, 10_000);
+
+      expect(html).toContain('visible control');
+      expect(html).toContain('visible snippet');
+      expect(html).toContain('https://example.com/logo.png');
+      expect(html).not.toContain('hidden state payload');
+      expect(html).not.toContain('included');
+      expect(html).not.toContain('data:image');
+      expect(html).not.toContain('Fixture title');
+    }
+  );
 });
