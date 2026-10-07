@@ -3963,17 +3963,28 @@ describe('Regression Coverage', () => {
     try {
       const result = await controller.registry.execute_action(
         'write_file',
-        { file_name: 'capture.png', content: 'hello' },
+        { file_name: 'capture.mp4', content: 'hello' },
         {
           file_system: fileSystem as any,
         }
       );
 
       expect(result.extracted_content).toContain(
-        "Error: Cannot write binary/image file 'capture.png'."
+        "Error: Cannot write binary/image file 'capture.mp4'."
       );
       expect(result.extracted_content).toContain(
         'For screenshots, the browser automatically captures them'
+      );
+
+      const image = await controller.registry.execute_action(
+        'write_file',
+        { file_name: 'capture.png', content: 'hello' },
+        {
+          file_system: fileSystem as any,
+        }
+      );
+      expect(image.extracted_content).toContain(
+        "content for 'capture.png' is not valid base64"
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

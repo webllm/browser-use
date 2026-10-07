@@ -223,13 +223,8 @@ const MAX_DOCX_ENTRY_BYTES = 20 * 1024 * 1024;
 const MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
 
 const UNSUPPORTED_BINARY_EXTENSIONS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
   'bmp',
   'svg',
-  'webp',
   'ico',
   'mp3',
   'mp4',
@@ -740,6 +735,145 @@ class DocxFile extends BaseFile {
   }
 }
 
+// Base64 image fixtures are meant to be tiny (for example a 1x1 PNG used to
+// exercise an upload form), so the decoded size stays well below image limits.
+const MAX_BASE64_IMAGE_BYTES = 1024 * 1024;
+
+// Leading bytes that identify a real file of each type, so base64 that decodes
+// to something else is rejected instead of written as a corrupt upload.
+const IMAGE_MAGIC_BYTES: Record<string, Buffer[]> = {
+  png: [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+  gif: [Buffer.from('GIF87a', 'ascii'), Buffer.from('GIF89a', 'ascii')],
+  jpg: [Buffer.from([0xff, 0xd8, 0xff])],
+  jpeg: [Buffer.from([0xff, 0xd8, 0xff])],
+  webp: [Buffer.from('RIFF', 'ascii')],
+};
+
+/**
+ * A small binary file the agent authors as base64 text. The decoded bytes are
+ * written to disk; read() returns a short description so the base64 never
+ * bloats the prompt.
+ */
+abstract class Base64BinaryFile extends BaseFile {
+  private decodeContent(content: string): Buffer {
+    const compact = content.replace(/\s+/g, '');
+    if (
+      !compact ||
+      compact.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)
+    ) {
+      throw new FileSystemError(
+        `Error: content for '${this.fullName}' is not valid base64. ` +
+          `For images, provide the base64 of a valid ${this.extension} file.`
+      );
+    }
+    const data = Buffer.from(compact, 'base64');
+    if (data.length > MAX_BASE64_IMAGE_BYTES) {
+      throw new FileSystemError(
+        `Error: image '${this.fullName}' is too large to write ` +
+          `(${data.length.toLocaleString()} bytes; limit ${MAX_BASE64_IMAGE_BYTES.toLocaleString()} bytes).`
+      );
+    }
+    return data;
+  }
+
+  private validate(content: string) {
+    const data = this.decodeContent(content);
+    const signatures = IMAGE_MAGIC_BYTES[this.extension] ?? [];
+    const matchesSignature = signatures.some((signature) =>
+      data.subarray(0, signature.length).equals(signature)
+    );
+    const isValidWebp =
+      this.extension !== 'webp' ||
+      data.subarray(8, 12).toString('ascii') === 'WEBP';
+    if (!matchesSignature || !isValidWebp) {
+      throw new FileSystemError(
+        `Error: content for '${this.fullName}' is valid base64 but not a ${this.extension} image. ` +
+          `Provide the base64 of a real ${this.extension} file.`
+      );
+    }
+    return data;
+  }
+
+  private decodedOrNull() {
+    try {
+      return this.decodeContent(this.content);
+    } catch {
+      return null;
+    }
+  }
+
+  protected override writeFileContent(content: string) {
+    this.validate(content);
+    super.writeFileContent(content);
+  }
+
+  protected override appendFileContent(_content: string) {
+    throw new FileSystemError(
+      `Error: cannot append to binary file '${this.fullName}'. Overwrite it instead.`
+    );
+  }
+
+  override get size() {
+    return this.decodedOrNull()?.length ?? 0;
+  }
+
+  override get lineCount() {
+    return 0;
+  }
+
+  override read() {
+    const data = this.decodedOrNull();
+    return data
+      ? `[binary ${this.extension} file, ${data.length} bytes]`
+      : '[binary file: content is not valid base64]';
+  }
+
+  override async syncToDisk(dir: string) {
+    await writePrivateBufferFileAsync(
+      path.join(dir, this.fullName),
+      this.validate(this.content)
+    );
+  }
+
+  override syncToDiskSync(dir: string) {
+    writePrivateBufferFile(
+      path.join(dir, this.fullName),
+      this.validate(this.content)
+    );
+  }
+}
+
+class PngFile extends Base64BinaryFile {
+  override get extension() {
+    return 'png';
+  }
+}
+
+class GifFile extends Base64BinaryFile {
+  override get extension() {
+    return 'gif';
+  }
+}
+
+class JpgFile extends Base64BinaryFile {
+  override get extension() {
+    return 'jpg';
+  }
+}
+
+class JpegFile extends Base64BinaryFile {
+  override get extension() {
+    return 'jpeg';
+  }
+}
+
+class WebpFile extends Base64BinaryFile {
+  override get extension() {
+    return 'webp';
+  }
+}
+
 class HtmlFile extends BaseFile {
   override get extension() {
     return 'html';
@@ -764,6 +898,11 @@ const FILE_TYPES: Record<string, FileClass> = {
   docx: DocxFile,
   html: HtmlFile,
   xml: XmlFile,
+  png: PngFile,
+  gif: GifFile,
+  jpg: JpgFile,
+  jpeg: JpegFile,
+  webp: WebpFile,
 };
 
 export interface FileState {
@@ -952,6 +1091,8 @@ export class FileSystem {
           'jpg',
           'jpeg',
           'png',
+          'gif',
+          'webp',
         ]);
         const textExtensions = this.get_allowed_extensions().filter(
           (ext) => !specialExtensions.has(ext)
@@ -1146,7 +1287,9 @@ export class FileSystem {
         if (
           extension === 'jpg' ||
           extension === 'jpeg' ||
-          extension === 'png'
+          extension === 'png' ||
+          extension === 'gif' ||
+          extension === 'webp'
         ) {
           if (fileStat.size > MAX_EXTERNAL_IMAGE_BYTES) {
             result.message =
@@ -1244,11 +1387,16 @@ export class FileSystem {
     }
     filename = resolved;
 
-    const file = this.files.get(filename) ?? this.instantiateFile(filename);
-    this.files.set(filename, file);
+    // A new file is registered only after a successful write, so a rejected
+    // write (for example invalid base64 for an image) leaves no ghost entry.
+    const existingFile = this.files.get(filename);
+    const file = existingFile ?? this.instantiateFile(filename);
 
     try {
       await file.write(content, this.dataDir);
+      if (!existingFile) {
+        this.files.set(filename, file);
+      }
       const sanitizeNote = wasSanitized
         ? ` (auto-corrected from '${originalFilename}')`
         : '';
