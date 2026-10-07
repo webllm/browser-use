@@ -178,11 +178,13 @@ describe('OpenAI-compatible providers alignment', () => {
     await llm.ainvoke([new UserMessage('hello')]);
 
     const request = openaiCreateMock.mock.calls[0]?.[0] ?? {};
+    const requestOptions = openaiCreateMock.mock.calls[0]?.[1] ?? {};
     expect(request.model).toBe('openai/gpt-4o');
     expect(request.temperature).toBe(0.4);
     expect(request.top_p).toBe(0.8);
     expect(request.seed).toBe(42);
-    expect(request.extra_headers).toEqual({
+    expect(request).not.toHaveProperty('extra_headers');
+    expect(requestOptions.headers).toEqual({
       'HTTP-Referer': 'https://example.com/app',
     });
     expect(request.provider).toEqual({ order: ['openai'] });
@@ -194,6 +196,18 @@ describe('OpenAI-compatible providers alignment', () => {
       defaultQuery: { purpose: 'alignment' },
       fetch: customFetch,
       fetchOptions: { cache: 'no-store' },
+    });
+  });
+
+  it('reports OpenRouter responses without choices as provider errors', async () => {
+    openaiCreateMock.mockResolvedValue({ choices: [], usage: null });
+    const llm = new ChatOpenRouter({ model: 'openai/gpt-4o' });
+
+    const failure = llm.ainvoke([new UserMessage('hello')]);
+    await expect(failure).rejects.toBeInstanceOf(ModelProviderError);
+    await expect(failure).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'Invalid OpenRouter response: missing or empty `choices`.',
     });
   });
 

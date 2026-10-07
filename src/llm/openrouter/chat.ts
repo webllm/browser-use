@@ -219,26 +219,41 @@ export class ChatOpenRouter implements BaseChatModel {
       ...modelParams,
       ...(this.extraBody ?? {}),
     };
+    // The Node SDK sends unknown body fields verbatim, so request headers must
+    // go through the per-request options rather than an `extra_headers` key.
+    const requestOptions: {
+      signal?: AbortSignal;
+      headers?: Record<string, string>;
+    } = {};
+    if (options.signal) {
+      requestOptions.signal = options.signal;
+    }
     if (this.httpReferer) {
-      request.extra_headers = {
-        'HTTP-Referer': this.httpReferer,
-      };
+      requestOptions.headers = { 'HTTP-Referer': this.httpReferer };
     }
 
     try {
       const response = await this.client.chat.completions.create(
         request as any,
-        options.signal ? { signal: options.signal } : undefined
+        Object.keys(requestOptions).length > 0 ? requestOptions : undefined
       );
 
-      raiseIfStructuredOutputTruncated(
-        output_format,
-        response.choices[0].finish_reason,
-        { model: this.model }
-      );
-      const content = response.choices[0].message.content || '';
+      const choice = Array.isArray(response?.choices)
+        ? response.choices[0]
+        : undefined;
+      if (!choice) {
+        throw new ModelProviderError(
+          'Invalid OpenRouter response: missing or empty `choices`.',
+          502,
+          this.model
+        );
+      }
+      raiseIfStructuredOutputTruncated(output_format, choice.finish_reason, {
+        model: this.model,
+      });
+      const content = choice.message?.content || '';
       const usage = this.getUsage(response);
-      const stopReason = response.choices[0].finish_reason ?? null;
+      const stopReason = choice.finish_reason ?? null;
 
       let completion: T | string = content;
       if (output_format) {
