@@ -28,6 +28,12 @@ import {
 } from '../process-identity.js';
 import { formatDirectUsage, isDirectCommandName } from './direct-commands.js';
 import {
+  createDirectScriptHelpers,
+  readDirectScriptSource,
+  readProcessStdin,
+  runDirectScript,
+} from './script.js';
+import {
   parseBoundedCookieImport,
   readBoundedCookieImportFile,
 } from './cookie-import.js';
@@ -327,6 +333,13 @@ export interface DirectCliEnvironment {
   get_process_command_line?: ProcessCommandLineReader;
   max_screenshot_bytes?: number | null;
   max_screenshot_pixels?: number | null;
+  /**
+   * Allow the `script` command, which runs JavaScript with the user's Node.js
+   * privileges. Only the browser-use-direct CLI enables it; the MCP server
+   * never does.
+   */
+  allow_scripts?: boolean;
+  read_stdin?: () => Promise<string>;
 }
 
 const DEFAULT_STDOUT: StreamLike = process.stdout;
@@ -1220,6 +1233,8 @@ export const run_direct_command = async (
       options.get_process_command_line ?? getProcessCommandLine,
     max_screenshot_bytes: options.max_screenshot_bytes ?? null,
     max_screenshot_pixels: options.max_screenshot_pixels ?? null,
+    allow_scripts: options.allow_scripts ?? false,
+    read_stdin: options.read_stdin ?? readProcessStdin,
   };
 
   const { useRemote, args } = extractDirectModeArgs(argv);
@@ -1233,6 +1248,10 @@ export const run_direct_command = async (
   ) {
     writeLine(environment.stdout, formatDirectUsage());
     return command ? 0 : 1;
+  }
+
+  if (command === 'script') {
+    return runDirectScriptCommand(args.slice(1), useRemote, environment);
   }
 
   if (!isDirectCommandName(command)) {
@@ -1831,8 +1850,45 @@ export const run_direct_command = async (
   }
 };
 
+const runDirectScriptCommand = async (
+  args: string[],
+  useRemote: boolean,
+  environment: Required<DirectCliEnvironment>
+) => {
+  if (!environment.allow_scripts) {
+    writeLine(
+      environment.stderr,
+      'Error: script is only available from the browser-use-direct CLI'
+    );
+    return 1;
+  }
+  let connected: Awaited<ReturnType<typeof connectDirectSession>> | null = null;
+  try {
+    const source = await readDirectScriptSource(args, environment.read_stdin);
+    connected = await connectDirectSession(useRemote, environment);
+    const { session, state } = connected;
+    await runDirectScript(
+      source,
+      createDirectScriptHelpers(session, environment.stdout),
+      environment.stdout
+    );
+    await updateDirectStateFromSession(session, state, environment);
+    await cleanupDirectSession(session);
+    return 0;
+  } catch (error) {
+    if (connected?.session) {
+      await cleanupDirectSession(connected.session);
+    }
+    writeLine(
+      environment.stderr,
+      `Error: ${(error as Error)?.message ?? String(error)}`
+    );
+    return 1;
+  }
+};
+
 export const main = async (argv: string[] = process.argv.slice(2)) => {
-  const exitCode = await run_direct_command(argv);
+  const exitCode = await run_direct_command(argv, { allow_scripts: true });
   if (isMainModule(import.meta.url)) {
     process.exit(exitCode);
   }

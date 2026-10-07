@@ -12,6 +12,8 @@ export interface DirectCommandSpec {
   name: string;
   variants: readonly DirectCommandVariant[];
   documentation: DirectCommandDocumentation;
+  /** Available from the browser-use-direct CLI only, never through MCP. */
+  cli_only?: boolean;
 }
 
 export const DIRECT_COMMAND_SPECS = [
@@ -240,6 +242,20 @@ export const DIRECT_COMMAND_SPECS = [
     documentation: {
       goal: 'Inspect page JavaScript state',
       usages: ['eval <javascript>'],
+    },
+  },
+  {
+    name: 'script',
+    cli_only: true,
+    variants: [
+      {
+        usage: 'script <file.js|-> | script -e <code>',
+        description: 'Run JavaScript with browser helpers (CLI only)',
+      },
+    ],
+    documentation: {
+      goal: 'Run a multi-step JavaScript script (CLI only)',
+      usages: ['script <file.js>', 'script -', 'script -e <code>'],
     },
   },
   {

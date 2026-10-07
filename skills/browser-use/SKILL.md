@@ -78,12 +78,39 @@ contain whitespace or shell metacharacters.
 | Request extraction handoff | `extract <query>` |
 | Read markup | `html [selector]` |
 | Inspect page JavaScript state | `eval <javascript>` |
+| Run a multi-step JavaScript script (CLI only) | `script <file.js>` or `script -` or `script -e <code>` |
 | Close the browser | `close` |
 <!-- END GENERATED DIRECT COMMANDS -->
 
 Prefer element indexes from `state` over brittle selectors. Use coordinates
 when the relevant control is visual, canvas-based, inside a complex frame, or
 otherwise absent from the interactive state.
+
+## Batch steps with a script (CLI only)
+
+When several deterministic steps belong together, the CLI can run JavaScript
+against the same persistent browser. The script runs in Node.js with the
+user's privileges, so use it only from the shell and keep it focused on the
+browser task. The MCP server does not run scripts.
+
+```bash
+browser-use-direct script - <<'JS'
+await goto_url('https://news.ycombinator.com');
+const titles = await js(() =>
+  [...document.querySelectorAll('.titleline > a')].slice(0, 3).map((a) => a.textContent)
+);
+print(titles);
+JS
+```
+
+Helpers: `goto_url(url)`, `new_tab(url)`, `page_info()`, `state()`,
+`click(index)`, `click_at_xy(x, y)`, `input(index, text)`, `type_text(text)`,
+`fill_input(selector, text)`, `press_key(keys)`, `scroll(direction, amount)`,
+`js(code)`, `wait_for_load()`, `wait_for_element(selector)`, `list_tabs()`,
+`switch_tab(tab)`, `close_tab(tab)`, `capture_screenshot(path)`,
+`sleep(seconds)`, and `print(...values)`. `browser` is the BrowserSession and
+`current_page()` returns the Playwright page. A returned value is printed.
+Fresh DOM indexes still come from `state()`.
 
 ## Capture screenshots
 
