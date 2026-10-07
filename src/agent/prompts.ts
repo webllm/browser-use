@@ -15,7 +15,7 @@ import { createLogger } from '../logging-config.js';
 import type { AgentStepInfo } from './views.js';
 import type { BrowserStateSummary } from '../browser/views.js';
 import type { FileSystem } from '../filesystem/file-system.js';
-import { DOMElementNode } from '../dom/views.js';
+import { DOMElementNode, DOMTextNode } from '../dom/views.js';
 
 const logger = createLogger('browser_use.agent.prompts');
 
@@ -182,6 +182,7 @@ export class AgentMessagePrompt {
       images: 0,
       interactive_elements: 0,
       total_elements: 0,
+      text_chars: 0,
     };
 
     const root = this.browserState.element_tree;
@@ -214,6 +215,8 @@ export class AgentMessagePrompt {
       for (const child of node.children) {
         if (child instanceof DOMElementNode) {
           traverseNode(child);
+        } else if (child instanceof DOMTextNode && child.is_visible) {
+          stats.text_chars += child.text.trim().length;
         }
       }
     };
@@ -225,8 +228,19 @@ export class AgentMessagePrompt {
   private browserStateDescription() {
     const pageStats = this.extractPageStatistics();
     let statsText = '<page_stats>';
+    const pendingRequestCount =
+      this.browserState.pending_network_requests?.length ?? 0;
     if (pageStats.total_elements < 10) {
-      statsText += 'Page appears empty (SPA not loaded?) - ';
+      statsText += 'Page appears empty - consider waiting - ';
+    } else if (
+      // Low text density only means "still loading" while requests are in flight.
+      pendingRequestCount > 0 &&
+      pageStats.total_elements > 20 &&
+      pageStats.text_chars < pageStats.total_elements * 5
+    ) {
+      statsText +=
+        `${pendingRequestCount} network request(s) in flight and little text rendered - ` +
+        'page may still be loading, consider waiting - ';
     }
     statsText += `${pageStats.links} links, ${pageStats.interactive_elements} interactive, ${pageStats.iframes} iframes`;
     if (pageStats.shadow_open > 0 || pageStats.shadow_closed > 0) {

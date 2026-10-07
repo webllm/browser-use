@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { AgentMessagePrompt, SystemPrompt } from '../src/agent/prompts.js';
 import { BrowserStateSummary } from '../src/browser/views.js';
-import { DOMElementNode, DOMState } from '../src/dom/views.js';
+import { DOMElementNode, DOMState, DOMTextNode } from '../src/dom/views.js';
 import { ContentPartTextParam } from '../src/llm/messages.js';
 import { Image, createCanvas } from 'canvas';
 
@@ -102,6 +102,75 @@ describe('AgentMessagePrompt browser state enrichment', () => {
     expect(content).toContain('1 links, 2 interactive, 1 iframes');
     expect(content).toContain('1 shadow(open), 0 shadow(closed)');
     expect(content).toContain('1 images, 5 total elements');
+  });
+
+  it('suggests waiting on sparse pages only while requests are in flight', () => {
+    const buildPrompt = (pending: number) => {
+      const root = new DOMElementNode(true, null, 'body', '/body', {}, []);
+      root.children = Array.from({ length: 30 }, (_, index) => {
+        const div = new DOMElementNode(
+          true,
+          root,
+          'div',
+          `/body/div[${index + 1}]`,
+          {},
+          []
+        );
+        div.children = [new DOMTextNode(true, div, 'x')];
+        return div;
+      });
+      const browserState = new BrowserStateSummary(new DOMState(root, {}), {
+        url: 'https://example.com/app',
+        title: 'App',
+        tabs: [{ page_id: 0, url: 'https://example.com/app', title: 'App' }],
+        pending_network_requests: Array.from({ length: pending }, () => ({
+          url: 'https://example.com/api',
+          method: 'GET',
+          loading_duration_ms: 50,
+          resource_type: 'fetch',
+        })),
+      });
+      return String(
+        (
+          new AgentMessagePrompt({
+            browser_state_summary: browserState,
+            file_system: {
+              describe: () => '/tmp',
+              get_todo_contents: () => '',
+            } as any,
+            task: 'test',
+          }).get_user_message(false) as any
+        ).content ?? ''
+      );
+    };
+
+    expect(buildPrompt(2)).toContain(
+      '2 network request(s) in flight and little text rendered - page may still be loading, consider waiting'
+    );
+    expect(buildPrompt(0)).not.toContain('consider waiting');
+  });
+
+  it('suggests waiting on empty pages', () => {
+    const root = new DOMElementNode(true, null, 'body', '/body', {}, []);
+    const browserState = new BrowserStateSummary(new DOMState(root, {}), {
+      url: 'https://example.com/blank',
+      title: 'Blank',
+      tabs: [],
+    });
+    const content = String(
+      (
+        new AgentMessagePrompt({
+          browser_state_summary: browserState,
+          file_system: {
+            describe: () => '/tmp',
+            get_todo_contents: () => '',
+          } as any,
+          task: 'test',
+        }).get_user_message(false) as any
+      ).content ?? ''
+    );
+
+    expect(content).toContain('Page appears empty - consider waiting - ');
   });
 
   it('tells the model when browser state capture failed', () => {
