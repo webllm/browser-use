@@ -143,6 +143,27 @@ const DOMAIN_POLICY_UNFILTERABLE_RECORDING_KEYS = new Set([
   'recordVideo',
 ]);
 const EMPTY_DOM_RETRY_DELAY_MS = 250;
+const BROWSER_STATE_DOM_TIMEOUT_MS = 20_000;
+const BROWSER_STATE_SCREENSHOT_TIMEOUT_MS = 10_000;
+const BROWSER_STATE_PROBE_TIMEOUT_MS = 5_000;
+export const BROWSER_STATE_TIMEOUT_ERROR =
+  'Browser state capture timed out. The current DOM and screenshot are unavailable, ' +
+  'so no element indices are safe to use. Recover with navigation, waiting, or another non-indexed action.';
+
+class BrowserStateCaptureTimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = 'BrowserStateCaptureTimeoutError';
+  }
+}
+
+const resolveStateCaptureTimeout = (
+  value: number | undefined,
+  fallback: number
+) =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.min(Math.floor(value), MAX_BROWSER_TIMER_DELAY_MS)
+    : fallback;
 const REMOTE_RECONNECT_DELAYS_MS = [1000, 2000, 4000] as const;
 const REMOTE_RECONNECT_ATTEMPT_TIMEOUT_MS = 15_000;
 
@@ -473,6 +494,12 @@ export interface BrowserStateOptions {
   include_screenshot?: boolean;
   include_recent_events?: boolean;
   signal?: AbortSignal | null;
+  /** Budget for extracting interactive elements before state capture gives up. */
+  dom_timeout_ms?: number;
+  /** Budget for the state screenshot; the DOM is kept when it stalls. */
+  screenshot_timeout_ms?: number;
+  /** Budget for page metrics and in-flight request probes. */
+  probe_timeout_ms?: number;
 }
 
 export interface BrowserActionOptions {
@@ -3006,6 +3033,25 @@ export class BrowserSession {
     await this.stop();
   }
 
+  private _withStateCaptureTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    label: string
+  ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new BrowserStateCaptureTimeoutError(label, timeoutMs)),
+        timeoutMs
+      );
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    });
+  }
+
   async get_browser_state_with_recovery(options: BrowserStateOptions = {}) {
     const signal = options.signal ?? null;
     const includeRecentEvents = options.include_recent_events ?? false;
@@ -3014,25 +3060,57 @@ export class BrowserSession {
     if (!this.initialized) {
       await this._withAbort(this.start(), signal);
     }
+    const domTimeoutMs = resolveStateCaptureTimeout(
+      options.dom_timeout_ms,
+      BROWSER_STATE_DOM_TIMEOUT_MS
+    );
+    const screenshotTimeoutMs = resolveStateCaptureTimeout(
+      options.screenshot_timeout_ms,
+      BROWSER_STATE_SCREENSHOT_TIMEOUT_MS
+    );
+    const probeTimeoutMs = resolveStateCaptureTimeout(
+      options.probe_timeout_ms,
+      BROWSER_STATE_PROBE_TIMEOUT_MS
+    );
     const page = await this._withAbort(this.get_current_page(), signal);
     this._throwIfAborted(signal);
     this.cachedBrowserState = null;
     let domState: DOMState;
+    // Set when the page stops responding; the model then gets a state with no
+    // actionable indices instead of selectors from an earlier capture.
+    let stateError: string | null = null;
+    const extractDomState = async (label: string) => {
+      const domService = new DomService(page!, this.logger);
+      try {
+        return await this._withAbort(
+          this._withStateCaptureTimeout(
+            domService.get_clickable_elements(
+              this.browser_profile.highlight_elements,
+              -1,
+              this.browser_profile.viewport_expansion
+            ),
+            domTimeoutMs,
+            label
+          ),
+          signal
+        );
+      } catch (error) {
+        if (error instanceof BrowserStateCaptureTimeoutError) {
+          this.logger.warning(
+            `Browser state capture stalled: ${error.message}`
+          );
+          stateError = BROWSER_STATE_TIMEOUT_ERROR;
+        }
+        throw error;
+      }
+    };
 
     if (!page) {
       domState = createEmptyDomState();
     } else {
       await this.validate_page_after_action(page, signal);
       try {
-        const domService = new DomService(page, this.logger);
-        domState = await this._withAbort(
-          domService.get_clickable_elements(
-            this.browser_profile.highlight_elements,
-            -1,
-            this.browser_profile.viewport_expansion
-          ),
-          signal
-        );
+        domState = await extractDomState('DOM extraction');
       } catch (error) {
         if (this._isAbortError(error)) {
           throw error;
@@ -3048,6 +3126,7 @@ export class BrowserSession {
           ? normalize_url(page.url())
           : this.currentUrl;
       const shouldRetryEmptyDom =
+        stateError === null &&
         Object.keys(domState.selector_map).length === 0 &&
         !this._is_new_tab_page(liveUrl) &&
         !liveUrl.toLowerCase().endsWith('.pdf');
@@ -3061,15 +3140,7 @@ export class BrowserSession {
         await this._waitWithAbort(EMPTY_DOM_RETRY_DELAY_MS, signal);
 
         try {
-          const retryDomService = new DomService(page, this.logger);
-          const retriedDomState = await this._withAbort(
-            retryDomService.get_clickable_elements(
-              this.browser_profile.highlight_elements,
-              -1,
-              this.browser_profile.viewport_expansion
-            ),
-            signal
-          );
+          const retriedDomState = await extractDomState('DOM extraction retry');
           if (Object.keys(retriedDomState.selector_map).length > 0) {
             domState = retriedDomState;
           }
@@ -3087,13 +3158,18 @@ export class BrowserSession {
     }
 
     let screenshot: string | null = null;
-    if (options.include_screenshot && page?.screenshot) {
+    if (options.include_screenshot && page?.screenshot && stateError === null) {
       try {
         const image = await this._withAbort(
-          page.screenshot({
-            type: 'png',
-            fullPage: false,
-          }),
+          this._withStateCaptureTimeout(
+            page.screenshot({
+              type: 'png',
+              fullPage: false,
+              timeout: screenshotTimeoutMs,
+            }),
+            screenshotTimeoutMs,
+            'State screenshot'
+          ),
           signal
         );
         screenshot =
@@ -3114,31 +3190,35 @@ export class BrowserSession {
     let pageInfo = null;
     let pixelsAbove = 0;
     let pixelsBelow = 0;
-    if (page) {
+    if (page && stateError === null) {
       try {
         const metrics = await this._withAbort(
-          page.evaluate(() => {
-            const doc = document.documentElement;
-            const body = document.body;
-            const width = Math.max(
-              doc?.scrollWidth ?? 0,
-              body?.scrollWidth ?? 0,
-              doc?.clientWidth ?? 0
-            );
-            const height = Math.max(
-              doc?.scrollHeight ?? 0,
-              body?.scrollHeight ?? 0,
-              doc?.clientHeight ?? 0
-            );
-            return {
-              viewportWidth: window.innerWidth,
-              viewportHeight: window.innerHeight,
-              scrollX: window.scrollX,
-              scrollY: window.scrollY,
-              pageWidth: width,
-              pageHeight: height,
-            };
-          }),
+          this._withStateCaptureTimeout(
+            page.evaluate(() => {
+              const doc = document.documentElement;
+              const body = document.body;
+              const width = Math.max(
+                doc?.scrollWidth ?? 0,
+                body?.scrollWidth ?? 0,
+                doc?.clientWidth ?? 0
+              );
+              const height = Math.max(
+                doc?.scrollHeight ?? 0,
+                body?.scrollHeight ?? 0,
+                doc?.clientHeight ?? 0
+              );
+              return {
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                scrollX: window.scrollX,
+                scrollY: window.scrollY,
+                pageWidth: width,
+                pageHeight: height,
+              };
+            }),
+            probeTimeoutMs,
+            'Page metrics'
+          ),
           signal
         );
         pixelsAbove = Math.max(metrics.scrollY ?? 0, 0);
@@ -3176,7 +3256,26 @@ export class BrowserSession {
       await this.validate_page_after_action(page, signal);
     }
 
-    const pendingNetworkRequests = await this._getPendingNetworkRequests(page);
+    let pendingNetworkRequests: NetworkRequest[] = [];
+    if (stateError === null) {
+      try {
+        pendingNetworkRequests = await this._withAbort(
+          this._withStateCaptureTimeout(
+            this._getPendingNetworkRequests(page),
+            probeTimeoutMs,
+            'Pending request probe'
+          ),
+          signal
+        );
+      } catch (error) {
+        if (this._isAbortError(error)) {
+          throw error;
+        }
+        this.logger.debug(
+          `Failed to read pending network requests: ${(error as Error).message}`
+        );
+      }
+    }
     if (page) {
       await this.validate_page_after_action(page, signal);
     }
@@ -3201,9 +3300,12 @@ export class BrowserSession {
       page_info: pageInfo,
       pixels_above: pixelsAbove,
       pixels_below: pixelsBelow,
-      browser_errors: this.currentPageLoadingStatus
-        ? [this.currentPageLoadingStatus]
-        : [],
+      browser_errors: [
+        ...(this.currentPageLoadingStatus
+          ? [this.currentPageLoadingStatus]
+          : []),
+        ...(stateError ? [stateError] : []),
+      ],
       is_pdf_viewer: Boolean(this.currentUrl?.toLowerCase().endsWith('.pdf')),
       loading_status: this.currentPageLoadingStatus,
       recent_events: includeRecentEvents
@@ -3212,10 +3314,11 @@ export class BrowserSession {
       pending_network_requests: pendingNetworkRequests,
       pagination_buttons: paginationButtons,
       closed_popup_messages: this._getClosedPopupMessagesSnapshot(),
+      state_error: stateError,
     });
 
     // Implement clickable element hash caching to detect new elements
-    if (options.cache_clickable_elements_hashes && page) {
+    if (options.cache_clickable_elements_hashes && page && !stateError) {
       await this.validate_page_after_action(page, signal);
       const currentUrl = page.url();
       const currentHashes = this._computeElementHashes(domState.selector_map);

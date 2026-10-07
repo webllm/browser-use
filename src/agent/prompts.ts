@@ -306,6 +306,9 @@ export class AgentMessagePrompt {
       this.includeRecentEvents && this.browserState.recent_events
         ? `Recent browser events: ${this.browserState.recent_events}\n`
         : '';
+    const stateErrorText = this.browserState.state_error
+      ? `<browser_state_error>${this.browserState.state_error}</browser_state_error>\n`
+      : '';
 
     let closedPopupsText = '';
     if (
@@ -323,7 +326,7 @@ export class AgentMessagePrompt {
 Available tabs:
 ${tabsText}
 ${pageInfoText}
-${recentEventsText}${closedPopupsText}${pdfMessage}Interactive elements${truncatedText}:
+${stateErrorText}${recentEventsText}${closedPopupsText}${pdfMessage}Interactive elements${truncatedText}:
 ${elementsText}
 `;
   }

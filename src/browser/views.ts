@@ -68,6 +68,7 @@ interface BrowserStateSummaryInit {
   pending_network_requests?: NetworkRequest[];
   pagination_buttons?: PaginationButton[];
   closed_popup_messages?: string[];
+  state_error?: string | null;
 }
 
 export class BrowserStateSummary extends DOMState {
@@ -85,6 +86,8 @@ export class BrowserStateSummary extends DOMState {
   pending_network_requests: NetworkRequest[];
   pagination_buttons: PaginationButton[];
   closed_popup_messages: string[];
+  /** Safe, model-visible explanation when the state could not be captured. */
+  state_error: string | null;
 
   constructor(dom_state: DOMState, init: BrowserStateSummaryInit) {
     super(dom_state.element_tree, dom_state.selector_map);
@@ -147,6 +150,9 @@ export class BrowserStateSummary extends DOMState {
       .map((message) =>
         boundBrowserStateText(message, MAX_BROWSER_STATE_MESSAGE_CHARS)
       );
+    this.state_error = init.state_error
+      ? boundBrowserStateText(init.state_error, MAX_BROWSER_STATE_MESSAGE_CHARS)
+      : null;
   }
 }
 

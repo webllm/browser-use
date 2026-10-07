@@ -57,7 +57,11 @@ vi.mock('../src/telemetry/service.js', () => ({
 }));
 
 // Import after mocks
-import { BrowserSession, systemChrome } from '../src/browser/session.js';
+import {
+  BROWSER_STATE_TIMEOUT_ERROR,
+  BrowserSession,
+  systemChrome,
+} from '../src/browser/session.js';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { DEFAULT_MAX_AUTO_DOWNLOAD_BYTES } from '../src/browser/download-limits.js';
 import {
@@ -2742,7 +2746,99 @@ esac
       expect(screenshot).toHaveBeenCalledWith({
         type: 'png',
         fullPage: false,
+        timeout: 10_000,
       });
+    } finally {
+      clickableSpy.mockRestore();
+    }
+  });
+
+  it('returns a non-actionable state when DOM capture stalls', async () => {
+    const clickableSpy = vi
+      .spyOn(DomService.prototype, 'get_clickable_elements')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    const screenshot = vi.fn(async () => Buffer.from('should not run'));
+    const page = {
+      url: vi.fn(() => 'https://example.com/slow'),
+      title: vi.fn(async () => 'Slow page'),
+      waitForLoadState: vi.fn(async () => {}),
+      screenshot,
+      evaluate: vi.fn(async () => ({})),
+    } as any;
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    session.update_current_page(page, 'Slow page', 'https://example.com/slow');
+    (session as any).initialized = true;
+    (session as any).cachedBrowserState = { selector_map: { 7: {} } };
+
+    try {
+      const summary = await session.get_browser_state_with_recovery({
+        include_screenshot: true,
+        dom_timeout_ms: 20,
+      });
+
+      expect(summary.selector_map).toEqual({});
+      expect(summary.screenshot).toBeNull();
+      expect(summary.page_info).toBeNull();
+      expect(summary.state_error).toBe(BROWSER_STATE_TIMEOUT_ERROR);
+      expect(summary.browser_errors).toContain(BROWSER_STATE_TIMEOUT_ERROR);
+      expect(summary.url).toBe('https://example.com/slow');
+      expect(screenshot).not.toHaveBeenCalled();
+      // The empty-DOM retry must not wait for a second stalled capture.
+      expect(clickableSpy).toHaveBeenCalledTimes(1);
+      expect(await session.get_selector_map()).toEqual({});
+    } finally {
+      clickableSpy.mockRestore();
+    }
+  });
+
+  it('keeps the DOM when only the state screenshot stalls', async () => {
+    const element = new DOMElementNode(
+      true,
+      null,
+      'button',
+      '/html/body/button[1]',
+      {},
+      [new DOMTextNode(true, null, 'Continue')]
+    );
+    element.highlight_index = 1;
+    const domState = new DOMState(
+      new DOMElementNode(true, null, 'body', '/html/body', {}, [element]),
+      { 1: element }
+    );
+    const clickableSpy = vi
+      .spyOn(DomService.prototype, 'get_clickable_elements')
+      .mockResolvedValue(domState);
+    const page = {
+      url: vi.fn(() => 'https://example.com'),
+      title: vi.fn(async () => 'Example'),
+      waitForLoadState: vi.fn(async () => {}),
+      screenshot: vi.fn(() => new Promise<never>(() => {})),
+      evaluate: vi.fn(async () => ({
+        viewportWidth: 1280,
+        viewportHeight: 720,
+        scrollX: 0,
+        scrollY: 0,
+        pageWidth: 1280,
+        pageHeight: 720,
+      })),
+    } as any;
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({}),
+    });
+    session.update_current_page(page, 'Example', 'https://example.com');
+    (session as any).initialized = true;
+
+    try {
+      const summary = await session.get_browser_state_with_recovery({
+        include_screenshot: true,
+        screenshot_timeout_ms: 20,
+      });
+
+      expect(Object.keys(summary.selector_map)).toEqual(['1']);
+      expect(summary.screenshot).toBeNull();
+      expect(summary.state_error).toBeNull();
     } finally {
       clickableSpy.mockRestore();
     }

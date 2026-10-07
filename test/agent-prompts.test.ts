@@ -104,6 +104,32 @@ describe('AgentMessagePrompt browser state enrichment', () => {
     expect(content).toContain('1 images, 5 total elements');
   });
 
+  it('tells the model when browser state capture failed', () => {
+    const root = new DOMElementNode(true, null, 'body', '/body', {}, []);
+    const browserState = new BrowserStateSummary(new DOMState(root, {}), {
+      url: 'https://example.com/slow',
+      title: 'Slow',
+      tabs: [{ page_id: 0, url: 'https://example.com/slow', title: 'Slow' }],
+      state_error: 'Browser state capture timed out.',
+    });
+
+    const prompt = new AgentMessagePrompt({
+      browser_state_summary: browserState,
+      file_system: {
+        describe: () => '/tmp',
+        get_todo_contents: () => '',
+      } as any,
+      task: 'test',
+    });
+
+    const content = String(
+      (prompt.get_user_message(false) as any).content ?? ''
+    );
+    expect(content).toContain(
+      '<browser_state_error>Browser state capture timed out.</browser_state_error>'
+    );
+  });
+
   it('does not include recent events by default', () => {
     const root = new DOMElementNode(true, null, 'body', '/body', {}, []);
     const domState = new DOMState(root, {});
