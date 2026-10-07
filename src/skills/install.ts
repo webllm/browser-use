@@ -12,6 +12,7 @@ export const SKILL_TARGETS = [
   'copilot',
   'cursor',
   'gemini',
+  'openclaw',
   'opencode',
 ] as const;
 

@@ -93,7 +93,7 @@ npx browser-use --mcp
 # Minimal direct-browser MCP server for coding agents
 npx browser-use --cli-mcp
 
-# Install the bundled coding-agent skill (codex, claude, cursor, etc.)
+# Install the bundled coding-agent skill (codex, claude, cursor, openclaw, etc.)
 npx browser-use skill install --target codex
 ```
 

@@ -135,6 +135,17 @@ describe('coding-agent skill installer', () => {
             );
       await expect(fs.access(destination)).resolves.toBeUndefined();
     }
+    await expect(
+      fs.access(
+        path.join(
+          homeDir,
+          '.openclaw',
+          'skills',
+          BROWSER_USE_SKILL_NAME,
+          'SKILL.md'
+        )
+      )
+    ).resolves.toBeUndefined();
   });
 
   it('ignores a relative XDG_CONFIG_HOME for the opencode target', async () => {
