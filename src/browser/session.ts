@@ -3863,12 +3863,26 @@ export class BrowserSession {
     coordinate_y: number,
     options: BrowserActionOptions & {
       button?: 'left' | 'right' | 'middle';
+      /** Complete press/release sequences to emit (2 = double click). */
+      click_count?: number;
+      /** Modifier keys held during the click. */
+      modifiers?: Array<'Alt' | 'Control' | 'Meta' | 'Shift'>;
     } = {}
   ) {
     const signal = options.signal ?? null;
     this._throwIfAborted(signal);
     requireFiniteBrowserActionNumber(coordinate_x, 'coordinate_x');
     requireFiniteBrowserActionNumber(coordinate_y, 'coordinate_y');
+    const clickCount = options.click_count ?? 1;
+    if (!Number.isInteger(clickCount) || clickCount < 1) {
+      throw new BrowserError('click_count must be a positive integer');
+    }
+    const modifiers = [...new Set(options.modifiers ?? [])];
+    for (const modifier of modifiers) {
+      if (!['Alt', 'Control', 'Meta', 'Shift'].includes(modifier)) {
+        throw new BrowserError(`Unsupported modifier: ${modifier}`);
+      }
+    }
     const page = await this._withAbort(this.get_current_page(), signal);
     await this.validate_page_after_action(page, signal);
     if (!page?.mouse?.click) {
@@ -3877,14 +3891,23 @@ export class BrowserSession {
       );
     }
 
+    const pressed: string[] = [];
     try {
+      for (const modifier of modifiers) {
+        await page.keyboard.down(modifier);
+        pressed.push(modifier);
+      }
       await this._withAbort(
         page.mouse.click(coordinate_x, coordinate_y, {
           button: options.button ?? 'left',
+          ...(clickCount !== 1 ? { clickCount } : {}),
         }),
         signal
       );
     } finally {
+      for (const modifier of pressed.reverse()) {
+        await page.keyboard.up(modifier).catch(() => undefined);
+      }
       await this.validate_page_after_action(page, signal);
     }
   }
@@ -6024,8 +6047,30 @@ export class BrowserSession {
       y: number;
       width: number;
       height: number;
-    } | null = null
+      /** Output scale for the clipped region (default 1). */
+      scale?: number;
+    } | null = null,
+    options: {
+      format?: 'png' | 'jpeg' | 'webp';
+      /** 0-100, JPEG only. */
+      quality?: number | null;
+    } = {}
   ): Promise<string | null> {
+    if (clip) {
+      const scale = clip.scale ?? 1;
+      if (
+        !(clip.width > 0) ||
+        !(clip.height > 0) ||
+        !(scale > 0) ||
+        !Number.isFinite(clip.x) ||
+        !Number.isFinite(clip.y)
+      ) {
+        throw new BrowserError(
+          'Screenshot clip width, height and scale must be positive'
+        );
+      }
+    }
+    const format = options.format ?? 'png';
     const page = await this.get_current_page();
     if (!page) {
       throw new Error('No page available for screenshot');
@@ -6060,7 +6105,7 @@ export class BrowserSession {
     let cdp_session: any = null;
     try {
       this.logger.debug(
-        `📸 Taking ${full_page ? 'full-page' : 'viewport'} PNG screenshot via CDP: ${logUrl}`
+        `📸 Taking ${full_page ? 'full-page' : 'viewport'} ${format.toUpperCase()} screenshot via CDP: ${logUrl}`
       );
 
       // Create CDP session for the screenshot
@@ -6070,15 +6115,21 @@ export class BrowserSession {
       const screenshotParams: Record<string, unknown> = {
         captureBeyondViewport: full_page,
         fromSurface: true,
-        format: 'png',
+        format,
       };
+      if (format === 'jpeg' && options.quality != null) {
+        screenshotParams.quality = Math.max(
+          0,
+          Math.min(100, Math.round(options.quality))
+        );
+      }
       if (clip) {
         screenshotParams.clip = {
           x: clip.x,
           y: clip.y,
           width: clip.width,
           height: clip.height,
-          scale: 1,
+          scale: clip.scale ?? 1,
         };
       }
 
