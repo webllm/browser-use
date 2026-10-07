@@ -156,6 +156,11 @@
       "import": "./dist/llm/openrouter/index.js",
       "default": "./dist/llm/openrouter/index.js"
     },
+    "./llm/orcarouter": {
+      "types": "./dist/llm/orcarouter/index.d.ts",
+      "import": "./dist/llm/orcarouter/index.js",
+      "default": "./dist/llm/orcarouter/index.js"
+    },
     "./llm/vercel": {
       "types": "./dist/llm/vercel/index.d.ts",
       "import": "./dist/llm/vercel/index.js",

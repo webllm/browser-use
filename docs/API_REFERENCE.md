@@ -553,6 +553,14 @@ import { ChatOpenRouter } from 'browser-use/llm/openrouter';
 const llm = new ChatOpenRouter('anthropic/claude-3-opus');
 ```
 
+### OrcaRouter
+
+```typescript
+import { ChatOrcaRouter } from 'browser-use/llm/orcarouter';
+
+const llm = new ChatOrcaRouter('anthropic/claude-sonnet-5');
+```
+
 ---
 
 ## Claude Browser Toolset

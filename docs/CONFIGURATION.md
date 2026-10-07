@@ -15,31 +15,32 @@ Configuration values are resolved in this order (highest priority first):
 
 ### Core Settings
 
-| Variable                      | Type      | Default                | Description                                                |
-| ----------------------------- | --------- | ---------------------- | ---------------------------------------------------------- |
-| `BROWSER_USE_LOGGING_LEVEL`   | `string`  | `'info'`               | Log level: `debug`, `info`, `warning`, `error`             |
-| `BROWSER_USE_CONFIG_DIR`      | `string`  | `~/.config/browseruse` | Configuration directory path                               |
-| `BROWSER_USE_HEADLESS`        | `boolean` | display detection      | Default `headless` for profiles that do not set it         |
-| `BROWSER_USE_DISABLE_SECURITY` | `boolean` | unset (secure)        | Opt-in: disable browser web security for config/MCP profiles |
-| `IN_DOCKER`                   | `boolean` | auto-detect            | Force Docker mode behavior (sandbox defaults, launch args) |
-| `BROWSER_USE_ALLOWED_DOMAINS` | `string`  | -                      | Comma-separated allowed domains                            |
+| Variable                       | Type      | Default                | Description                                                  |
+| ------------------------------ | --------- | ---------------------- | ------------------------------------------------------------ |
+| `BROWSER_USE_LOGGING_LEVEL`    | `string`  | `'info'`               | Log level: `debug`, `info`, `warning`, `error`               |
+| `BROWSER_USE_CONFIG_DIR`       | `string`  | `~/.config/browseruse` | Configuration directory path                                 |
+| `BROWSER_USE_HEADLESS`         | `boolean` | display detection      | Default `headless` for profiles that do not set it           |
+| `BROWSER_USE_DISABLE_SECURITY` | `boolean` | unset (secure)         | Opt-in: disable browser web security for config/MCP profiles |
+| `IN_DOCKER`                    | `boolean` | auto-detect            | Force Docker mode behavior (sandbox defaults, launch args)   |
+| `BROWSER_USE_ALLOWED_DOMAINS`  | `string`  | -                      | Comma-separated allowed domains                              |
 
 ### LLM Settings
 
-| Variable                         | Type     | Default                              | Description                         |
-| -------------------------------- | -------- | ------------------------------------ | ----------------------------------- |
-| `BROWSER_USE_LLM_MODEL`          | `string` | -                                    | Default LLM model                   |
-| `OPENAI_API_KEY`                 | `string` | -                                    | OpenAI API key                      |
-| `BROWSER_USE_CODEX_MODEL`        | `string` | `gpt-5.5`                            | Default Codex OAuth model           |
-| `BROWSER_USE_CODEX_BASE_URL`     | `string` | `https://chatgpt.com/backend-api/codex` | Codex OAuth backend URL             |
-| `BROWSER_USE_CODEX_ACCESS_TOKEN` | `string` | -                                    | Short-lived Codex access token      |
-| `ANTHROPIC_API_KEY`              | `string` | -                                    | Anthropic API key                   |
-| `GOOGLE_API_KEY`                 | `string` | -                                    | Google API key                      |
-| `AZURE_OPENAI_API_KEY`           | `string` | -                                    | Azure OpenAI API key                |
-| `AZURE_OPENAI_ENDPOINT`          | `string` | -                                    | Azure OpenAI endpoint               |
-| `GROQ_API_KEY`                   | `string` | -                                    | Groq API key                        |
-| `DEEPSEEK_API_KEY`               | `string` | -                                    | DeepSeek API key                    |
-| `OPENROUTER_API_KEY`             | `string` | -                                    | OpenRouter API key                  |
+| Variable                         | Type     | Default                                 | Description                    |
+| -------------------------------- | -------- | --------------------------------------- | ------------------------------ |
+| `BROWSER_USE_LLM_MODEL`          | `string` | -                                       | Default LLM model              |
+| `OPENAI_API_KEY`                 | `string` | -                                       | OpenAI API key                 |
+| `BROWSER_USE_CODEX_MODEL`        | `string` | `gpt-5.5`                               | Default Codex OAuth model      |
+| `BROWSER_USE_CODEX_BASE_URL`     | `string` | `https://chatgpt.com/backend-api/codex` | Codex OAuth backend URL        |
+| `BROWSER_USE_CODEX_ACCESS_TOKEN` | `string` | -                                       | Short-lived Codex access token |
+| `ANTHROPIC_API_KEY`              | `string` | -                                       | Anthropic API key              |
+| `GOOGLE_API_KEY`                 | `string` | -                                       | Google API key                 |
+| `AZURE_OPENAI_API_KEY`           | `string` | -                                       | Azure OpenAI API key           |
+| `AZURE_OPENAI_ENDPOINT`          | `string` | -                                       | Azure OpenAI endpoint          |
+| `GROQ_API_KEY`                   | `string` | -                                       | Groq API key                   |
+| `DEEPSEEK_API_KEY`               | `string` | -                                       | DeepSeek API key               |
+| `OPENROUTER_API_KEY`             | `string` | -                                       | OpenRouter API key             |
+| `ORCAROUTER_API_KEY`             | `string` | -                                       | OrcaRouter API key             |
 
 ### Display Settings
 

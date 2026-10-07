@@ -13,6 +13,7 @@ import { ChatOCIRaw } from './oci-raw/chat.js';
 import { ChatOllama } from './ollama/chat.js';
 import { ChatOpenAI } from './openai/chat.js';
 import { ChatOpenRouter } from './openrouter/chat.js';
+import { ChatOrcaRouter } from './orcarouter/chat.js';
 import { ChatVercel } from './vercel/chat.js';
 
 type ResolvedProvider =
@@ -22,6 +23,7 @@ type ResolvedProvider =
   | 'deepseek'
   | 'groq'
   | 'openrouter'
+  | 'orcarouter'
   | 'azure'
   | 'ollama'
   | 'aws'
@@ -39,6 +41,7 @@ const AVAILABLE_PROVIDERS = [
   'deepseek',
   'groq',
   'openrouter',
+  'orcarouter',
   'azure',
   'ollama',
   'aws',
@@ -162,6 +165,9 @@ const inferProviderFromModel = (model: string): ResolvedProvider | null => {
   if (lower.startsWith('openrouter:')) {
     return 'openrouter';
   }
+  if (lower.startsWith('orcarouter:')) {
+    return 'orcarouter';
+  }
   if (lower.startsWith('azure:')) {
     return 'azure';
   }
@@ -229,6 +235,9 @@ const normalizeModelForProvider = (
   if (provider === 'openrouter' && lower.startsWith('openrouter:')) {
     return model.slice('openrouter:'.length);
   }
+  if (provider === 'orcarouter' && lower.startsWith('orcarouter:')) {
+    return model.slice('orcarouter:'.length);
+  }
   if (provider === 'azure' && lower.startsWith('azure:')) {
     return model.slice('azure:'.length);
   }
@@ -290,6 +299,11 @@ const buildProviderModel = (
       return new ChatOpenRouter({
         model,
         apiKey: process.env.OPENROUTER_API_KEY,
+      });
+    case 'orcarouter':
+      return new ChatOrcaRouter({
+        model,
+        apiKey: process.env.ORCAROUTER_API_KEY,
       });
     case 'azure':
       return new ChatAzure({

@@ -25,6 +25,7 @@ import { ChatLiteLLM } from '../src/llm/litellm/chat.js';
 import { ChatOpenAI } from '../src/llm/openai/chat.js';
 import { ChatOpenAILike } from '../src/llm/openai/like.js';
 import { ChatOpenRouter } from '../src/llm/openrouter/chat.js';
+import { ChatOrcaRouter } from '../src/llm/orcarouter/chat.js';
 import { ChatMistral } from '../src/llm/mistral/chat.js';
 import { ChatCerebras } from '../src/llm/cerebras/chat.js';
 import { ChatVercel } from '../src/llm/vercel/chat.js';
@@ -68,6 +69,7 @@ const PROVIDER_KEY_ENV = {
   CEREBRAS_API_KEY: 'test-cerebras-key',
   MISTRAL_API_KEY: 'test-mistral-key',
   OPENROUTER_API_KEY: 'test-openrouter-key',
+  ORCAROUTER_API_KEY: 'test-orcarouter-key',
   AI_GATEWAY_API_KEY: 'test-vercel-key',
 } as const;
 
@@ -93,6 +95,8 @@ describe('OpenAI-compatible providers alignment', () => {
       (maxRetries: number) => new ChatLiteLLM({ maxRetries }),
       (maxRetries: number) => new ChatDeepSeek({ maxRetries }),
       (maxRetries: number) => new ChatOpenRouter({ maxRetries }),
+      (maxRetries: number) =>
+        new ChatOrcaRouter({ model: 'openai/gpt-5', maxRetries }),
       (maxRetries: number) => new ChatMistral({ maxRetries }),
       (maxRetries: number) => new ChatCerebras({ maxRetries }),
       (maxRetries: number) => new ChatVercel({ maxRetries }),
@@ -197,6 +201,70 @@ describe('OpenAI-compatible providers alignment', () => {
       defaultQuery: { purpose: 'alignment' },
       fetch: customFetch,
       fetchOptions: { cache: 'no-store' },
+    });
+  });
+
+  it('configures OrcaRouter as an OpenAI-compatible gateway', async () => {
+    openaiCreateMock.mockResolvedValue(buildResponse('{"value":"routed"}'));
+    const llm = new ChatOrcaRouter({
+      model: 'anthropic/claude-sonnet-5',
+      temperature: 0.2,
+      extraBody: { route: 'fallback' },
+    });
+    expect(llm.provider).toBe('orcarouter');
+    expect(llm.name).toBe('anthropic/claude-sonnet-5');
+    expect(openaiCtorMock.mock.calls[0]?.[0]).toMatchObject({
+      apiKey: 'test-orcarouter-key',
+      baseURL: 'https://api.orcarouter.ai/v1',
+      maxRetries: 10,
+    });
+
+    const response = await llm.ainvoke(
+      [new UserMessage('hello')],
+      z.object({ value: z.string() }) as any
+    );
+    const request = openaiCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(request).toMatchObject({
+      model: 'anthropic/claude-sonnet-5',
+      temperature: 0.2,
+      route: 'fallback',
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'agent_output', strict: true },
+      },
+    });
+    expect(openaiCreateMock.mock.calls[0]?.[1]).toBeUndefined();
+    expect(response.completion).toEqual({ value: 'routed' });
+    expect(response.usage).toMatchObject({
+      prompt_tokens: 12,
+      prompt_cached_tokens: 3,
+      completion_tokens: 4,
+    });
+
+    expect(() => new ChatOrcaRouter({ model: ' ' })).toThrow(
+      'ChatOrcaRouter requires a model name'
+    );
+  });
+
+  it('never sends the OpenRouter key to OrcaRouter', async () => {
+    vi.stubEnv('ORCAROUTER_API_KEY', undefined);
+    const llm = new ChatOrcaRouter('openai/gpt-4o');
+    expect(openaiCtorMock.mock.calls[0]?.[0]).toMatchObject({
+      apiKey: MISSING_PROVIDER_API_KEY,
+    });
+    await expect(llm.ainvoke([new UserMessage('hello')])).rejects.toMatchObject(
+      { statusCode: 401 }
+    );
+  });
+
+  it('reports OrcaRouter responses without choices as provider errors', async () => {
+    openaiCreateMock.mockResolvedValue({ choices: [], usage: null });
+    const failure = new ChatOrcaRouter('openai/gpt-4o').ainvoke([
+      new UserMessage('hello'),
+    ]);
+    await expect(failure).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'Invalid OrcaRouter response: missing or empty `choices`.',
     });
   });
 
@@ -428,6 +496,7 @@ describe('OpenAI-compatible providers alignment', () => {
   it.each([
     ['OpenAI', () => new ChatOpenAI({ model: 'gpt-4o' })],
     ['OpenRouter', () => new ChatOpenRouter({ model: 'openai/gpt-4o' })],
+    ['OrcaRouter', () => new ChatOrcaRouter({ model: 'openai/gpt-4o' })],
     ['DeepSeek', () => new ChatDeepSeek({ model: 'deepseek-chat' })],
     ['Mistral', () => new ChatMistral({ model: 'mistral-medium-latest' })],
     ['Cerebras', () => new ChatCerebras({ model: 'llama3.1-8b' })],
@@ -449,6 +518,7 @@ describe('OpenAI-compatible providers alignment', () => {
   it.each([
     ['OpenAI', () => new ChatOpenAI({ model: 'gpt-4o' })],
     ['OpenRouter', () => new ChatOpenRouter({ model: 'openai/gpt-4o' })],
+    ['OrcaRouter', () => new ChatOrcaRouter({ model: 'openai/gpt-4o' })],
     ['DeepSeek', () => new ChatDeepSeek({ model: 'deepseek-chat' })],
     ['Mistral', () => new ChatMistral({ model: 'mistral-medium-latest' })],
     ['Cerebras', () => new ChatCerebras({ model: 'llama3.1-8b' })],
@@ -484,6 +554,11 @@ describe('OpenAI-compatible providers alignment', () => {
       'OpenRouter',
       'OPENROUTER_API_KEY',
       () => new ChatOpenRouter({ model: 'openai/gpt-4o' }),
+    ],
+    [
+      'OrcaRouter',
+      'ORCAROUTER_API_KEY',
+      () => new ChatOrcaRouter({ model: 'openai/gpt-4o' }),
     ],
     [
       'Vercel AI Gateway',

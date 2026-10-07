@@ -127,6 +127,22 @@ describe('LLM models factory alignment', () => {
     expect(llm.model).toBe('gpt-4o');
   });
 
+  it('builds OrcaRouter models from prefixed names', () => {
+    const previous = process.env.ORCAROUTER_API_KEY;
+    process.env.ORCAROUTER_API_KEY = 'test-orcarouter-key';
+    try {
+      const llm = getLlmByName('orcarouter:openai/gpt-5');
+      expect(llm.provider).toBe('orcarouter');
+      expect(llm.model).toBe('openai/gpt-5');
+    } finally {
+      if (previous === undefined) {
+        delete process.env.ORCAROUTER_API_KEY;
+      } else {
+        process.env.ORCAROUTER_API_KEY = previous;
+      }
+    }
+  });
+
   it('supports mistral aliases from python llm.models', () => {
     const large = getLlmByName('mistral_large');
     const code = getLlmByName('codestral');

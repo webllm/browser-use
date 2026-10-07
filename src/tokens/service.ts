@@ -140,10 +140,46 @@ const nonNegativeFinite = (value: number | null | undefined) =>
 const finiteCost = (value: number) =>
   Number.isFinite(value) && value >= 0 ? value : 0;
 
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const ORCAROUTER_BASE_URL = 'https://api.orcarouter.ai/v1';
+
+const llmBaseUrl = (llm: BaseChatModel) => {
+  const candidate = llm as unknown as {
+    base_url?: unknown;
+    baseURL?: unknown;
+    client?: { baseURL?: unknown };
+  };
+  const value =
+    candidate.base_url ?? candidate.baseURL ?? candidate.client?.baseURL ?? '';
+  return typeof value === 'string' ? value.replace(/\/+$/, '') : '';
+};
+
+/**
+ * The model name used to look up an LLM's prices. Router gateways bill with
+ * their own prices, so their models must not match same-named upstream ids.
+ */
+export const getPricingModelName = (llm: BaseChatModel): string => {
+  const model = String(llm.model);
+  const baseUrl = llmBaseUrl(llm);
+  if (llm.provider === 'openrouter' || baseUrl === OPENROUTER_BASE_URL) {
+    if (!isOpenRouterPricingModel(model)) {
+      return `openrouter/${model}`;
+    }
+  }
+  // OrcaRouter is a gateway with its own pricing; never attribute upstream
+  // prices to it.
+  if (llm.provider === 'orcarouter' || baseUrl === ORCAROUTER_BASE_URL) {
+    return `orcarouter/${model}`;
+  }
+  return model;
+};
+
 export class TokenCost {
   private includeCost: boolean;
   private usageHistory: TokenUsageEntry[] = [];
   private registeredLlms = new WeakSet<BaseChatModel>();
+  /** Usage model name -> name used for price lookups. */
+  private pricingModelNames = new Map<string, string>();
   private originalAinvoke = new WeakMap<
     BaseChatModel,
     BaseChatModel['ainvoke']
@@ -291,6 +327,7 @@ export class TokenCost {
       return llm;
     }
     this.registeredLlms.add(llm);
+    this.pricingModelNames.set(llm.model, getPricingModelName(llm));
     const original = llm.ainvoke.bind(llm);
     this.originalAinvoke.set(llm, original);
 
@@ -390,7 +427,9 @@ export class TokenCost {
     if (!this.includeCost) {
       return null;
     }
-    const pricing = await this.getModelPricing(model);
+    const pricing = await this.getModelPricing(
+      this.pricingModelNames.get(model) ?? model
+    );
     if (!pricing) {
       return null;
     }

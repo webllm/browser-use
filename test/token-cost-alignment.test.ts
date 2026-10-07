@@ -6,7 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_PRICING_METADATA_BYTES,
   TokenCost,
+  getPricingModelName,
 } from '../src/tokens/service.js';
+import { ChatOpenAI } from '../src/llm/openai/chat.js';
+import { ChatOpenRouter } from '../src/llm/openrouter/chat.js';
+import { ChatOrcaRouter } from '../src/llm/orcarouter/chat.js';
 import {
   OPENROUTER_MODELS_URL,
   resetOpenRouterPricingCacheForTesting,
@@ -376,5 +380,63 @@ describe('TokenCost alignment', () => {
     expect(pricing?.output_cost_per_token).toBeCloseTo(0.0000011);
     expect(pricing?.max_tokens).toBe(163840);
     expect(mockedAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('prices router gateway models with router-specific names', async () => {
+    expect(
+      getPricingModelName(
+        new ChatOpenRouter({ model: 'openai/gpt-4o', apiKey: 'k' })
+      )
+    ).toBe('openrouter/openai/gpt-4o');
+    expect(
+      getPricingModelName(
+        new ChatOpenRouter({ model: 'openrouter/openai/gpt-4o', apiKey: 'k' })
+      )
+    ).toBe('openrouter/openai/gpt-4o');
+    expect(
+      getPricingModelName(
+        new ChatOrcaRouter({ model: 'openai/gpt-4o', apiKey: 'k' })
+      )
+    ).toBe('orcarouter/openai/gpt-4o');
+    expect(
+      getPricingModelName(
+        new ChatOpenAI({
+          model: 'openai/gpt-4o',
+          apiKey: 'k',
+          baseURL: 'https://openrouter.ai/api/v1/',
+        })
+      )
+    ).toBe('openrouter/openai/gpt-4o');
+    expect(
+      getPricingModelName(new ChatOpenAI({ model: 'gpt-4o', apiKey: 'k' }))
+    ).toBe('gpt-4o');
+
+    mockedAxiosGet.mockResolvedValue({ data: { data: [] } });
+    const tokenCost = new TokenCost(true);
+    (tokenCost as any).pricingData = {
+      'openai/gpt-4o': {
+        input_cost_per_token: 0.0000025,
+        output_cost_per_token: 0.00001,
+      },
+    };
+    (tokenCost as any).initialized = true;
+    const orca = {
+      provider: 'orcarouter',
+      model: 'openai/gpt-4o',
+      ainvoke: vi.fn(async () => ({ completion: 'ok', usage: null })),
+    };
+    tokenCost.register_llm(orca as any);
+    const usage = {
+      prompt_tokens: 1000,
+      prompt_cached_tokens: null,
+      prompt_cache_creation_tokens: null,
+      prompt_image_tokens: null,
+      completion_tokens: 100,
+      total_tokens: 1100,
+    };
+    // Upstream OpenAI prices must not be attributed to the OrcaRouter gateway.
+    await expect(
+      tokenCost.calculateCost('openai/gpt-4o', usage)
+    ).resolves.toBeNull();
   });
 });

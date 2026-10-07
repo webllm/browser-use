@@ -4,24 +4,25 @@ Browser-Use supports multiple LLM providers through a unified interface. This gu
 
 ## Supported Providers
 
-| Provider      | Vision Support | Reasoning Models | Caching | Notes                                |
-| ------------- | -------------- | ---------------- | ------- | ------------------------------------ |
-| OpenAI        | ✅             | ✅ (o1, o3, o4)  | ❌      | Default provider                     |
-| Codex         | ✅             | ✅               | ❌      | Experimental ChatGPT/Codex OAuth     |
-| Anthropic     | ✅             | ✅               | ✅      | Adaptive thinking and tool output    |
-| Google Gemini | ✅             | ✅               | ❌      | Extended thinking support            |
-| Azure OpenAI  | ✅             | ✅               | ❌      | Enterprise deployment                |
-| AWS Bedrock   | ✅             | ❌               | ❌      | Claude via AWS                       |
-| Groq          | ❌             | ❌               | ❌      | Fastest inference                    |
-| Ollama        | ❌             | ❌               | ❌      | Local models                         |
-| DeepSeek      | ❌             | ❌               | ❌      | Cost-effective                       |
-| OpenRouter    | Varies         | Varies           | ❌      | Multi-model routing                  |
-| Mistral       | Varies         | ❌               | ❌      | Mistral-hosted models                |
-| Cerebras      | ❌             | ❌               | ❌      | Fast hosted inference                |
-| Browser Use   | Varies         | Varies           | ❌      | Browser Use hosted LLM               |
-| LiteLLM       | Varies         | Varies           | Varies  | OpenAI-compatible gateway            |
-| OCI Raw       | Varies         | Varies           | ❌      | Oracle Cloud GenAI                   |
-| Vercel        | Varies         | Varies           | Varies  | AI Gateway / routed models           |
+| Provider      | Vision Support | Reasoning Models | Caching | Notes                             |
+| ------------- | -------------- | ---------------- | ------- | --------------------------------- |
+| OpenAI        | ✅             | ✅ (o1, o3, o4)  | ❌      | Default provider                  |
+| Codex         | ✅             | ✅               | ❌      | Experimental ChatGPT/Codex OAuth  |
+| Anthropic     | ✅             | ✅               | ✅      | Adaptive thinking and tool output |
+| Google Gemini | ✅             | ✅               | ❌      | Extended thinking support         |
+| Azure OpenAI  | ✅             | ✅               | ❌      | Enterprise deployment             |
+| AWS Bedrock   | ✅             | ❌               | ❌      | Claude via AWS                    |
+| Groq          | ❌             | ❌               | ❌      | Fastest inference                 |
+| Ollama        | ❌             | ❌               | ❌      | Local models                      |
+| DeepSeek      | ❌             | ❌               | ❌      | Cost-effective                    |
+| OpenRouter    | Varies         | Varies           | ❌      | Multi-model routing               |
+| OrcaRouter    | Varies         | Varies           | ❌      | Multi-model routing               |
+| Mistral       | Varies         | ❌               | ❌      | Mistral-hosted models             |
+| Cerebras      | ❌             | ❌               | ❌      | Fast hosted inference             |
+| Browser Use   | Varies         | Varies           | ❌      | Browser Use hosted LLM            |
+| LiteLLM       | Varies         | Varies           | Varies  | OpenAI-compatible gateway         |
+| OCI Raw       | Varies         | Varies           | ❌      | Oracle Cloud GenAI                |
+| Vercel        | Varies         | Varies           | Varies  | AI Gateway / routed models        |
 
 ## OpenAI
 
@@ -505,6 +506,31 @@ OpenRouter provides access to multiple providers. Use provider/model format:
 | `openai/gpt-4-turbo`              | OpenAI    |
 | `google/gemini-pro`               | Google    |
 | `meta-llama/llama-3-70b-instruct` | Meta      |
+
+---
+
+## OrcaRouter
+
+OrcaRouter is an OpenAI-compatible gateway that routes to many upstream
+models. Usage is priced with OrcaRouter's own model names
+(`orcarouter/<model>`), never with the upstream provider's prices.
+
+```bash
+export ORCAROUTER_API_KEY=your-api-key
+```
+
+```typescript
+import { ChatOrcaRouter } from 'browser-use/llm/orcarouter';
+
+const llm = new ChatOrcaRouter({
+  model: 'anthropic/claude-sonnet-5',
+  // baseURL defaults to https://api.orcarouter.ai/v1
+});
+```
+
+The model name is required. The API key is read from `apiKey` or
+`ORCAROUTER_API_KEY` only, never from `OPENAI_API_KEY`. `getLlmByName` accepts
+`orcarouter:<model>` names.
 
 ---
 
