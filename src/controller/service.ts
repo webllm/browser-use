@@ -1526,12 +1526,17 @@ export class Controller<Context = unknown> {
           long_term_memory: memory,
         });
       } catch (error) {
-        tabLogger.warning(
-          `Tab switch may have failed: ${(error as Error).message}`
-        );
-        const memory = `Attempted to switch to tab #${tabId}`;
-        return new ActionResult({
-          extracted_content: memory,
+        if (isAbortError(error)) {
+          throw error;
+        }
+        const reason =
+          error instanceof Error ? error.message : String(error ?? '');
+        tabLogger.warning(`Tab switch failed: ${reason}`);
+        // Keep the concrete cause (for example a stale tab id) so the agent
+        // receives actionable failure information instead of a success.
+        const memory = `Failed to switch to tab #${tabId}: ${reason}`;
+        throw new BrowserError(memory, {
+          short_term_memory: memory,
           long_term_memory: memory,
         });
       }

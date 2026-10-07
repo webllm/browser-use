@@ -2253,7 +2253,7 @@ describe('Regression Coverage', () => {
     expect(result.include_in_memory).toBe(false);
   });
 
-  it('switch action handles stale tab identifiers gracefully', async () => {
+  it('switch action reports stale tab identifiers as failures', async () => {
     const controller = new Controller();
     const browserSession = {
       switch_to_tab: vi.fn(async () => {
@@ -2270,16 +2270,24 @@ describe('Regression Coverage', () => {
       ],
     };
 
-    const result = await controller.registry.execute_action(
-      'switch',
-      { tab_id: '0007' },
+    await expect(
+      controller.registry.execute_action(
+        'switch',
+        { tab_id: '0007' },
+        { browser_session: browserSession as any }
+      )
+    ).rejects.toBeInstanceOf(BrowserError);
+
+    const result = await controller.act(
+      { switch: { tab_id: '0007' } },
       { browser_session: browserSession as any }
     );
 
-    expect(result.error).toBeNull();
-    expect(result.extracted_content).toContain(
-      'Attempted to switch to tab #0007'
+    expect(result.error).toBe('Failed to switch to tab #0007: missing target');
+    expect(result.extracted_content).toBe(
+      'Failed to switch to tab #0007: missing target'
     );
+    expect(result.extracted_content).not.toContain('Switched');
   });
 
   it('close action accepts tab_id identifiers', async () => {
