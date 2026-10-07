@@ -552,6 +552,8 @@ export class BrowserSession {
   readonly RECONNECT_WAIT_TIMEOUT = 54;
   private _reconnecting = false;
   private _reconnectTask: Promise<void> | null = null;
+  // Set when the connection drops again while a reconnect is still running.
+  private _reconnectPending = false;
   private _reconnectWaitPromise: Promise<void> = Promise.resolve();
   private _resolveReconnectWait: (() => void) | null = null;
   private _intentionalStop = false;
@@ -2237,11 +2239,13 @@ export class BrowserSession {
   }
 
   private _handleUnexpectedRemoteDisconnect() {
-    if (
-      this._intentionalStop ||
-      this._reconnecting ||
-      !this._usesRemoteBrowserConnection()
-    ) {
+    if (this._intentionalStop || !this._usesRemoteBrowserConnection()) {
+      return;
+    }
+    if (this._reconnecting) {
+      // The freshly reconnected browser can drop before the running reconnect
+      // finishes; remember it so a new attempt starts once that one ends.
+      this._reconnectPending = true;
       return;
     }
 
@@ -2484,8 +2488,13 @@ export class BrowserSession {
         })
       );
     } finally {
+      const reconnectPending = this._reconnectPending;
+      this._reconnectPending = false;
       this._reconnecting = false;
       this._endReconnectWait();
+      if (reconnectPending && !this._intentionalStop) {
+        this._handleUnexpectedRemoteDisconnect();
+      }
     }
   }
 
@@ -2910,6 +2919,7 @@ export class BrowserSession {
     this.initialized = false;
     this._intentionalStop = true;
     this._reconnecting = false;
+    this._reconnectPending = false;
     this._endReconnectWait();
     this._reconnectTask = null;
     this._detachRemoteDisconnectHandler();
