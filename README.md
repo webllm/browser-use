@@ -103,6 +103,17 @@ the `browser-use-direct` fallback. Run `npx browser-use skill install` without
 a target to install it for every supported coding agent, or use
 `npx browser-use skill show` to inspect it first.
 
+A second skill, [browser-use-ts](./skills/browser-use-ts/SKILL.md), is a
+reference for writing TypeScript code with this package (Agent, browser
+configuration, custom actions, providers, the Actor API, and integrations).
+Install it with `npx browser-use skill install --skill browser-use-ts`, and run
+`npx browser-use skill list` to see every bundled skill.
+
+For multi-step direct control, `browser-use-direct script <file|->` runs a
+JavaScript file against the persistent browser with helpers such as
+`goto_url`, `state`, `click`, `js`, and `print`. Scripts run with your Node.js
+privileges and are not exposed through the MCP server.
+
 ## 🏗️ Architecture
 
 ```

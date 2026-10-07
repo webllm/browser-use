@@ -113,18 +113,18 @@ Stop agent execution.
 stop(): void
 ```
 
-#### add_new_task
+#### addNewTask
 
 Add a follow-up task without restarting.
 
 ```typescript
-add_new_task(task: string): void
+addNewTask(task: string): void
 ```
 
 **Example:**
 
 ```typescript
-agent.add_new_task('Now click the submit button');
+agent.addNewTask('Now click the submit button');
 ```
 
 #### rerun_history

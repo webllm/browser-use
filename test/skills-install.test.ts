@@ -103,6 +103,68 @@ describe('coding-agent skill installer', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('lists, shows, and installs the TypeScript library skill', async () => {
+    const listed = createOutput();
+    expect(
+      await runSkillCommand(['list'], {
+        bundledSkillDir: BUNDLED_SKILL_DIR,
+        stdout: listed.stream,
+        stderr: createOutput().stream,
+      })
+    ).toBe(0);
+    expect(listed.read()).toContain('browser-use\t');
+    expect(listed.read()).toContain('browser-use-ts\t');
+
+    const shown = createOutput();
+    expect(
+      await runSkillCommand(['show', 'browser-use-ts'], {
+        bundledSkillDir: BUNDLED_SKILL_DIR,
+        stdout: shown.stream,
+        stderr: createOutput().stream,
+      })
+    ).toBe(0);
+    expect(shown.read()).toContain('name: browser-use-ts');
+
+    const unknown = createOutput();
+    expect(
+      await runSkillCommand(['show', 'cloud'], {
+        bundledSkillDir: BUNDLED_SKILL_DIR,
+        stdout: createOutput().stream,
+        stderr: unknown.stream,
+      })
+    ).toBe(1);
+    expect(unknown.read()).toContain('Unknown skill "cloud"');
+
+    const homeDir = await makeTempDir();
+    const installed = createOutput();
+    expect(
+      await runSkillCommand(
+        ['install', '--skill', 'browser-use-ts', '--target', 'claude'],
+        {
+          bundledSkillDir: BUNDLED_SKILL_DIR,
+          homeDir,
+          stdout: installed.stream,
+          stderr: createOutput().stream,
+        }
+      )
+    ).toBe(0);
+    const destination = path.join(
+      homeDir,
+      '.claude',
+      'skills',
+      'browser-use-ts'
+    );
+    expect(installed.read()).toContain(
+      `Installed browser-use-ts skill: ${destination}`
+    );
+    await expect(
+      fs.readFile(path.join(destination, 'references', 'agent.md'), 'utf8')
+    ).resolves.toContain('# Agent');
+    await expect(
+      fs.access(path.join(homeDir, '.claude', 'skills', BROWSER_USE_SKILL_NAME))
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('installs every supported target by default', async () => {
     const homeDir = await makeTempDir();
     const xdgConfigHome = path.join(homeDir, 'xdg');

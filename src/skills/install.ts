@@ -5,6 +5,16 @@ import { fileURLToPath } from 'node:url';
 
 export const BROWSER_USE_SKILL_NAME = 'browser-use';
 
+/** Skills shipped with the package, installable by name. */
+export const BUNDLED_SKILLS = {
+  'browser-use':
+    'Drive a persistent browser from a coding agent (direct CLI and MCP).',
+  'browser-use-ts':
+    'Reference for writing TypeScript code with the browser-use package.',
+} as const;
+
+export type BundledSkillName = keyof typeof BUNDLED_SKILLS;
+
 export const SKILL_TARGETS = [
   'agents',
   'claude',
@@ -29,16 +39,19 @@ export type SkillCommandOptions = {
 };
 
 type InstallRequest = {
+  skill: BundledSkillName;
   destinations: string[];
   force: boolean;
   skillFileOnly: boolean;
 };
 
 const getSkillUsage = () => `Usage:
-  browser-use skill show
-  browser-use skill install [--target <${SKILL_TARGETS.join('|')}>] [--force]
-  browser-use skill install --path <destination> [--force]
+  browser-use skill list
+  browser-use skill show [skill]
+  browser-use skill install [--skill <name>] [--target <${SKILL_TARGETS.join('|')}>] [--force]
+  browser-use skill install [--skill <name>] --path <destination> [--force]
 
+Skills: ${Object.keys(BUNDLED_SKILLS).join(', ')} (default: ${BROWSER_USE_SKILL_NAME}).
 Without --target or --path, install copies the skill to every supported coding-agent directory.`;
 
 const writeLine = (stream: Writable, value: string) => {
@@ -68,6 +81,24 @@ const readOptionValue = (argv: string[], index: number, option: string) => {
   return value;
 };
 
+const parseSkillName = (value: string): BundledSkillName => {
+  if (Object.prototype.hasOwnProperty.call(BUNDLED_SKILLS, value)) {
+    return value as BundledSkillName;
+  }
+  throw new Error(
+    `Unknown skill "${value}". Expected one of: ${Object.keys(BUNDLED_SKILLS).join(', ')}.`
+  );
+};
+
+/**
+ * Directory of a bundled skill. Skills sit side by side, so the directory of
+ * the default skill identifies the others.
+ */
+const getSkillDir = (bundledSkillDir: string, skill: BundledSkillName) =>
+  skill === BROWSER_USE_SKILL_NAME
+    ? bundledSkillDir
+    : path.join(path.dirname(bundledSkillDir), skill);
+
 const parseTarget = (value: string): SkillTarget => {
   if ((SKILL_TARGETS as readonly string[]).includes(value)) {
     return value as SkillTarget;
@@ -79,18 +110,14 @@ const parseTarget = (value: string): SkillTarget => {
 
 const getTargetDestination = (
   target: SkillTarget,
+  skill: BundledSkillName,
   homeDir: string,
   xdgConfigHome: string
 ) => {
   if (target === 'opencode') {
-    return path.join(
-      xdgConfigHome,
-      'opencode',
-      'skills',
-      BROWSER_USE_SKILL_NAME
-    );
+    return path.join(xdgConfigHome, 'opencode', 'skills', skill);
   }
-  return path.join(homeDir, `.${target}`, 'skills', BROWSER_USE_SKILL_NAME);
+  return path.join(homeDir, `.${target}`, 'skills', skill);
 };
 
 const parseInstallRequest = (
@@ -101,11 +128,21 @@ const parseInstallRequest = (
   const targets: SkillTarget[] = [];
   let customPath: string | null = null;
   let force = false;
+  let skill: BundledSkillName = BROWSER_USE_SKILL_NAME;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index] ?? '';
     if (arg === '--force') {
       force = true;
+      continue;
+    }
+    if (arg === '--skill') {
+      skill = parseSkillName(readOptionValue(argv, index, '--skill'));
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith('--skill=')) {
+      skill = parseSkillName(arg.slice('--skill='.length).trim());
       continue;
     }
     if (arg === '--target') {
@@ -139,6 +176,7 @@ const parseInstallRequest = (
   if (customPath) {
     const destination = expandHome(customPath, homeDir);
     return {
+      skill,
       destinations: [destination],
       force,
       skillFileOnly: path.basename(destination) === 'SKILL.md',
@@ -148,8 +186,9 @@ const parseInstallRequest = (
   const selectedTargets =
     targets.length > 0 ? [...new Set(targets)] : [...SKILL_TARGETS];
   return {
+    skill,
     destinations: selectedTargets.map((target) =>
-      getTargetDestination(target, homeDir, xdgConfigHome)
+      getTargetDestination(target, skill, homeDir, xdgConfigHome)
     ),
     force,
     skillFileOnly: false,
@@ -192,9 +231,10 @@ const installSkill = async (
   request: InstallRequest,
   stdout: Writable
 ) => {
+  const skillDir = getSkillDir(bundledSkillDir, request.skill);
   const source = request.skillFileOnly
-    ? path.join(bundledSkillDir, 'SKILL.md')
-    : bundledSkillDir;
+    ? path.join(skillDir, 'SKILL.md')
+    : skillDir;
 
   if (!(await getPathStats(source))) {
     throw new Error(`Bundled skill is missing: ${source}`);
@@ -227,7 +267,7 @@ const installSkill = async (
         errorOnExist: !request.force,
       });
     }
-    writeLine(stdout, `Installed browser-use skill: ${destination}`);
+    writeLine(stdout, `Installed ${request.skill} skill: ${destination}`);
   }
 };
 
@@ -253,11 +293,23 @@ export const runSkillCommand = async (
       return 0;
     }
 
-    if (command === 'show') {
-      if (argv.length > 1) {
-        throw new Error('browser-use skill show does not accept options.');
+    if (command === 'list') {
+      for (const [name, description] of Object.entries(BUNDLED_SKILLS)) {
+        writeLine(stdout, `${name}\t${description}`);
       }
-      stdout.write(await fs.readFile(path.join(bundledSkillDir, 'SKILL.md')));
+      return 0;
+    }
+
+    if (command === 'show') {
+      if (argv.length > 2 || (argv[1] ?? '').startsWith('-')) {
+        throw new Error('Usage: browser-use skill show [skill]');
+      }
+      const skill = argv[1] ? parseSkillName(argv[1]) : BROWSER_USE_SKILL_NAME;
+      stdout.write(
+        await fs.readFile(
+          path.join(getSkillDir(bundledSkillDir, skill), 'SKILL.md')
+        )
+      );
       return 0;
     }
 
