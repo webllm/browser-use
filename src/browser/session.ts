@@ -102,6 +102,7 @@ import {
 import { DOMElementNode, DOMState, type SelectorMap } from '../dom/views.js';
 import { normalize_url } from './utils.js';
 import { DomService, type DomServiceOptions } from '../dom/service.js';
+import { pressKeySequence } from './keyboard.js';
 import {
   showDVDScreensaver,
   showSpinner,
@@ -3837,17 +3838,16 @@ export class BrowserSession {
     }
 
     try {
-      try {
-        await this._withAbort(keyboard.press(keys), signal);
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('Unknown key')) {
-          for (const char of keys) {
-            await this._withAbort(keyboard.press(char), signal);
-          }
-          return;
-        }
-        throw error;
-      }
+      await this._withAbort(
+        pressKeySequence(
+          {
+            press: (key: string) =>
+              this._withAbort(keyboard.press(key), signal),
+          },
+          keys
+        ),
+        signal
+      );
     } finally {
       await this._waitForLoad(page, 5000, signal);
       if (page) {

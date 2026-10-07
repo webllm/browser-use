@@ -22,6 +22,7 @@ import {
   WaitEvent,
 } from '../browser/events.js';
 import { BrowserError } from '../browser/views.js';
+import { pressKeySequence } from '../browser/keyboard.js';
 import { readBoundedPageTitle } from '../browser/state-limits.js';
 import {
   buildScrollToTextExpression,
@@ -3900,18 +3901,7 @@ You will be given a query and the markdown of a webpage that has been filtered t
           }
           await validateBrowserPageAfterAction(browser_session, page);
           try {
-            await keyboard.press(params.keys);
-          } catch (error) {
-            if (
-              error instanceof Error &&
-              error.message.includes('Unknown key')
-            ) {
-              for (const char of params.keys) {
-                await keyboard.press(char);
-              }
-            } else {
-              throw error;
-            }
+            await pressKeySequence(keyboard, params.keys);
           } finally {
             await validateBrowserPageAfterAction(browser_session, page);
           }
