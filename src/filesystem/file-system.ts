@@ -1311,7 +1311,11 @@ export class FileSystem {
     }
 
     try {
-      const content = file.read().replaceAll(oldStr, newStr);
+      const currentContent = file.read();
+      if (!currentContent.includes(oldStr)) {
+        return `Error: Could not find the specified text in file ${filename}.`;
+      }
+      const content = currentContent.replaceAll(oldStr, newStr);
       await file.write(content, this.dataDir);
       const sanitizeNote = wasSanitized
         ? ` (auto-corrected from '${originalFilename}')`
