@@ -713,6 +713,23 @@ describe('Agent constructor browser session alignment', () => {
 
     expect(supportedToggleSpy).toHaveBeenCalledWith(true);
 
+    for (const model of [
+      'claude-fable-5',
+      'claude-fable-5-1',
+      'claude-opus-5',
+      'claude-sonnet-5',
+    ]) {
+      const controller = new Controller();
+      const toggleSpy = vi.spyOn(controller, 'set_coordinate_clicking');
+      const agent = new Agent({
+        task: `${model} coordinate toggle`,
+        llm: createLlm(model, 'anthropic'),
+        controller: controller as any,
+      });
+      expect(toggleSpy).toHaveBeenCalledWith(true);
+      await agent.close();
+    }
+
     await regularAgent.close();
     await supportedAgent.close();
   });

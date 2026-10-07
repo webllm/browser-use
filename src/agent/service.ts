@@ -968,6 +968,10 @@ export class Agent<
       const supportsCoordinateClicking = [
         'claude-sonnet-4',
         'claude-opus-4',
+        'claude-sonnet-5',
+        'claude-opus-5',
+        'claude-fable-5',
+        'claude-mythos-5',
         'gemini-3-pro',
         'browser-use/',
       ].some((pattern) => modelName.includes(pattern));
