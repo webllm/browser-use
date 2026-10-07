@@ -37,6 +37,22 @@ describe('TokenCost alignment', () => {
     expect(pricing?.cache_read_input_token_cost).toBeCloseTo(0.06 / 1_000_000);
   });
 
+  it('bills redirected bu-1-0 at bu-2-0 rates and prices the mini preview', async () => {
+    const tokenCost = new TokenCost(false);
+
+    const canonical = await tokenCost.getModelPricing('bu-2-0');
+    const legacy = await tokenCost.getModelPricing('bu-1-0');
+    const mini = await tokenCost.getModelPricing('bu-2-0-mini-preview');
+
+    expect(legacy?.input_cost_per_token).toBe(canonical?.input_cost_per_token);
+    expect(legacy?.output_cost_per_token).toBe(
+      canonical?.output_cost_per_token
+    );
+    expect(mini?.input_cost_per_token).toBeCloseTo(0.15 / 1_000_000);
+    expect(mini?.output_cost_per_token).toBeCloseTo(1.5 / 1_000_000);
+    expect(mini?.cache_read_input_token_cost).toBeCloseTo(0.15 / 1_000_000);
+  });
+
   it('keeps bu-latest and smart aliases aligned with bu-2-0 pricing', async () => {
     const tokenCost = new TokenCost(false);
 

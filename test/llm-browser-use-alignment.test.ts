@@ -197,6 +197,13 @@ describe('ChatBrowserUse alignment', () => {
     ).rejects.toBeInstanceOf(ModelOutputTruncatedError);
   });
 
+  it.each(['bu-2-0-mini-preview', 'bu-qa-1'])(
+    'accepts the %s gateway alias',
+    (model) => {
+      expect(new ChatBrowserUse({ model, apiKey: 'test' }).model).toBe(model);
+    }
+  );
+
   it.each([
     'gpt-5',
     'claude-sonnet-4-6',

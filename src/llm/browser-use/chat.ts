@@ -21,7 +21,14 @@ import {
 } from '../views.js';
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const VALID_MODELS = new Set(['bu-latest', 'bu-1-0', 'bu-2-0']);
+// bu-2-0-mini-preview is opt-in while in preview; bu-latest stays on bu-2-0.
+const VALID_MODELS = new Set([
+  'bu-latest',
+  'bu-1-0',
+  'bu-2-0',
+  'bu-2-0-mini-preview',
+  'bu-qa-1',
+]);
 const PROVIDER_PREFIXED_MODEL = /^[^/\s]+\/\S+$/;
 const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -112,7 +119,7 @@ export class ChatBrowserUse implements BaseChatModel {
       VALID_MODELS.has(model) || PROVIDER_PREFIXED_MODEL.test(model);
     if (!isValidModel) {
       throw new Error(
-        `Invalid model: '${model}'. Use a Browser Use alias (bu-latest, bu-1-0, bu-2-0) ` +
+        `Invalid model: '${model}'. Use a Browser Use alias (${[...VALID_MODELS].join(', ')}) ` +
           `or a provider-prefixed model such as 'anthropic/claude-sonnet-4-6', ` +
           `'openai/gpt-5.5', or 'google/gemini-3-pro'.`
       );

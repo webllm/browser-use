@@ -549,6 +549,11 @@ import { ChatBrowserUse } from 'browser-use/llm/browser-use';
 const llm = new ChatBrowserUse({ model: 'bu-latest' });
 ```
 
+Aliases: `bu-latest` and `bu-2-0` (default), `bu-2-0-mini-preview` (cheaper,
+opt-in while in preview), `bu-qa-1` (website QA), and the legacy `bu-1-0`, which
+the gateway redirects to `bu-2-0`. Provider-prefixed ids such as
+`anthropic/claude-sonnet-4-6` are routed by the gateway.
+
 ### LiteLLM
 
 ```bash
