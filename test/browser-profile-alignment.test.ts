@@ -20,6 +20,7 @@ const modeOf = (targetPath: string) => fs.statSync(targetPath).mode & 0o777;
 
 describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
   afterEach(() => {
+    delete process.env.BROWSER_USE_HEADLESS;
     delete process.env.BROWSER_USE_DISABLE_EXTENSIONS;
     delete process.env.BROWSER_USE_CONFIG_DIR;
     delete process.env.BROWSER_USE_SCREEN_WIDTH;
@@ -116,6 +117,37 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
     const { get_display_size } = await importProfileModule();
 
     expect(get_display_size()).toBeNull();
+  });
+
+  it.each([
+    ['true', true],
+    ['1', true],
+    ['yes', true],
+    ['false', false],
+    ['0', false],
+    ['off', false],
+    ['', false],
+  ])(
+    'defaults headless from BROWSER_USE_HEADLESS=%j',
+    async (value, expected) => {
+      process.env.BROWSER_USE_HEADLESS = value;
+      const { BrowserProfile } = await importProfileModule();
+
+      expect(new BrowserProfile({}).config.headless).toBe(expected);
+    }
+  );
+
+  it('prefers an explicit headless option over BROWSER_USE_HEADLESS', async () => {
+    process.env.BROWSER_USE_HEADLESS = 'true';
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(new BrowserProfile({ headless: false }).config.headless).toBe(false);
+  });
+
+  it('keeps display detection when BROWSER_USE_HEADLESS is unset', async () => {
+    const { BrowserProfile } = await importProfileModule();
+
+    expect(new BrowserProfile({}).config.headless).toBeNull();
   });
 
   it('defaults wait_between_actions to 0.1 seconds', async () => {

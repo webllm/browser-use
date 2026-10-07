@@ -745,11 +745,26 @@ const optimizeDomainList = (value: unknown[]): string[] | Set<string> => {
   return cleaned;
 };
 
+/**
+ * BROWSER_USE_HEADLESS supplies the default for profiles that do not set
+ * `headless`; unset keeps display detection.
+ */
+const readHeadlessFromEnv = (): boolean | null => {
+  const value = process.env.BROWSER_USE_HEADLESS;
+  if (value === undefined) {
+    return null;
+  }
+  return !['0', 'false', 'no', 'off', ''].includes(value.trim().toLowerCase());
+};
+
 export class BrowserProfile {
   private options: BrowserProfileOptions;
 
   constructor(init: Partial<BrowserProfileOptions> = {}) {
     const defaults = cloneDefaultOptions();
+    if (init.headless === undefined) {
+      defaults.headless = readHeadlessFromEnv();
+    }
     this.options = {
       ...defaults,
       ...init,
