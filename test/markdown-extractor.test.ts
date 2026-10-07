@@ -78,6 +78,25 @@ describe('markdown extractor alignment', () => {
     expect(resumed[0]?.chunk_index).toBe(secondChunk.chunk_index);
   });
 
+  it('ends the final chunk exactly at the content length for trailing newlines', () => {
+    const paragraph = 'word '.repeat(30).trim();
+    const content = `${Array.from(
+      { length: 6 },
+      (_, index) => `## H${index}\n${paragraph}\n`
+    ).join('\n')}\n`;
+
+    const chunks = chunkMarkdownByStructure(content, 200);
+    const last = chunks[chunks.length - 1]!;
+
+    expect(last.char_offset_end).toBe(content.length);
+    expect(last.has_more).toBe(false);
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(
+        chunkMarkdownByStructure(content, 200, 5, chunk.char_offset_end)
+      ).not.toHaveLength(0);
+    }
+  });
+
   it('preprocesses markdown by removing large json-like noise', () => {
     const noisy = [
       'Real line',

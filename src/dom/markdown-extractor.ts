@@ -299,8 +299,11 @@ const parseAtomicBlocks = (content: string): AtomicBlock[] => {
     offset = paragraphEnd;
   }
 
-  if (blocks.length > 0 && content && !content.endsWith('\n')) {
-    const last = blocks[blocks.length - 1] as AtomicBlock;
+  // Each line is counted with the newline it was split on, so content ending in
+  // a newline (or a blank line) overshoots by one. An overshooting final offset
+  // would make the next chunk request start past the end and return nothing.
+  const last = blocks[blocks.length - 1];
+  if (last && content && last.char_end > content.length) {
     blocks[blocks.length - 1] = {
       ...last,
       char_end: content.length,
