@@ -65,15 +65,23 @@ describe.runIf(posix)('runBash', () => {
     expect(result.output).toBe('a'.repeat(1000));
   });
 
+  // A shell killed by SIGKILL reports -9, or 137 when its foreground child
+  // reported the kill first; either way the whole group must be gone.
+  const KILLED_EXIT_CODES = [-9, 137];
+
   it('kills the process group on timeout, including background jobs', async () => {
     const started = Date.now();
-    const result = await run('echo started; sleep 30 & sleep 30', {
-      timeoutSeconds: 0.3,
-    });
+    const result = await run(
+      'echo started; (sleep 1; touch late.txt) & sleep 30',
+      { timeoutSeconds: 0.3 }
+    );
     expect(Date.now() - started).toBeLessThan(5000);
     expect(result.timed_out).toBe(true);
     expect(result.output).toBe('started\n');
-    expect(result.exit_code).toBe(-9);
+    expect(KILLED_EXIT_CODES).toContain(result.exit_code);
+    // The background job was killed with the group, so it never writes.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(fs.existsSync(path.join(outputDir, 'late.txt'))).toBe(false);
   });
 
   it('stops when aborted', async () => {
@@ -81,7 +89,7 @@ describe.runIf(posix)('runBash', () => {
     setTimeout(() => controller.abort(), 100);
     const result = await run('sleep 30', { signal: controller.signal });
     expect(result.timed_out).toBe(false);
-    expect(result.exit_code).toBe(-9);
+    expect(KILLED_EXIT_CODES).toContain(result.exit_code);
   });
 
   it('validates limits', async () => {
