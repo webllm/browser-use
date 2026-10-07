@@ -564,7 +564,7 @@ export class ChatGoogle implements BaseChatModel {
       }
     }
 
-    if (systemInstruction && !this.includeSystemInUser) {
+    if (systemInstruction) {
       requestConfig.systemInstruction = {
         role: 'system',
         parts: [{ text: systemInstruction }],

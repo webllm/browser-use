@@ -24,9 +24,9 @@ export class GoogleMessageSerializer {
     includeSystemInUser = false
   ): SerializedGoogleMessages {
     const contents: Content[] = [];
-    const systemParts: string[] = [];
-    let systemInstruction: string | null = null;
-    let injectedSystemIntoUser = false;
+    // Collect every system message; a later one must not overwrite earlier ones.
+    let systemParts: string[] = [];
+    let firstUserMessageSerialized = false;
 
     for (const message of messages) {
       const role = (message as any)?.role;
@@ -37,26 +37,25 @@ export class GoogleMessageSerializer {
       ) {
         const text = this.extractMessageText(message);
         if (text) {
-          if (includeSystemInUser) {
-            systemParts.push(text);
-          } else {
-            systemInstruction = text;
-          }
+          systemParts.push(text);
         }
         continue;
       }
 
       if (message instanceof UserMessage) {
-        const prependSystem =
+        // Merge into the first user message only. Once a user message has been
+        // serialized, later system text becomes the separate instruction.
+        let prependSystem: string | null = null;
+        if (
           includeSystemInUser &&
-          !injectedSystemIntoUser &&
+          !firstUserMessageSerialized &&
           systemParts.length > 0
-            ? systemParts.join('\n\n')
-            : null;
-        contents.push(this.serializeUserMessage(message, prependSystem));
-        if (prependSystem) {
-          injectedSystemIntoUser = true;
+        ) {
+          prependSystem = systemParts.join('\n\n');
+          systemParts = [];
         }
+        contents.push(this.serializeUserMessage(message, prependSystem));
+        firstUserMessageSerialized = true;
         continue;
       }
 
@@ -68,17 +67,21 @@ export class GoogleMessageSerializer {
     if (
       includeSystemInUser &&
       systemParts.length > 0 &&
-      !injectedSystemIntoUser
+      !firstUserMessageSerialized
     ) {
+      // Without any user turn, keep the request valid by sending the system
+      // text as the opening user content.
       contents.unshift({
         role: 'user',
         parts: [{ text: systemParts.join('\n\n') }],
       });
+      systemParts = [];
     }
 
     return {
       contents,
-      systemInstruction: includeSystemInUser ? null : systemInstruction,
+      systemInstruction:
+        systemParts.length > 0 ? systemParts.join('\n\n') : null,
     };
   }
 

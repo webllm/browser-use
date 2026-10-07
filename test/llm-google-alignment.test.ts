@@ -72,7 +72,7 @@ describe('Google LLM alignment', () => {
       new UserMessage('hello'),
     ]);
 
-    expect(systemInstruction).toBe('sys B');
+    expect(systemInstruction).toBe('sys A\n\nsys B');
     expect(contents).toHaveLength(1);
     expect((contents[0] as any).role).toBe('user');
     expect((contents[0] as any).parts[0].text).toBe('hello');
@@ -108,6 +108,29 @@ describe('Google LLM alignment', () => {
     expect((contents[0] as any).parts[0].text).toContain('sys A');
     expect((contents[0] as any).parts[0].text).toContain('sys B');
     expect((contents[0] as any).parts[1].text).toBe('task body');
+  });
+
+  it('merges system text only into the first user message', () => {
+    const serializer = new GoogleMessageSerializer();
+    const { contents, systemInstruction } = serializer.serializeWithSystem(
+      [
+        new AssistantMessage({ content: 'earlier model turn' }),
+        new SystemMessage('sys A'),
+        new UserMessage('first'),
+        new SystemMessage('late sys'),
+        new UserMessage('second'),
+      ],
+      true
+    );
+
+    expect((contents[1] as any).parts.map((part: any) => part.text)).toEqual([
+      'sys A',
+      'first',
+    ]);
+    expect((contents[2] as any).parts.map((part: any) => part.text)).toEqual([
+      'second',
+    ]);
+    expect(systemInstruction).toBe('late sys');
   });
 
   it('uses ImageURL media_type for inline data mime type', () => {
