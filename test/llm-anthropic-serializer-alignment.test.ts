@@ -69,6 +69,25 @@ describe('Anthropic serializer alignment', () => {
     expect(imageBlock?.source?.media_type).toBe('image/jpeg');
   });
 
+  it('treats data URL schemes and media types case-insensitively', () => {
+    const serializer = new AnthropicMessageSerializer();
+
+    const message = new UserMessage([
+      new ContentPartImageParam(new ImageURL('DATA:Image/PNG;base64,AAAA')),
+    ]);
+
+    const serialized = serializer.serializeMessage(message);
+    const imageBlock = (serialized.content as any[]).find(
+      (block) => block.type === 'image'
+    );
+
+    expect(imageBlock?.source).toEqual({
+      type: 'base64',
+      media_type: 'image/png',
+      data: 'AAAA',
+    });
+  });
+
   it('simplifies single uncached assistant text block to plain string', () => {
     const serializer = new AnthropicMessageSerializer();
 

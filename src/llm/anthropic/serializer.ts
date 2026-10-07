@@ -313,23 +313,37 @@ export class AnthropicMessageSerializer {
    * Check if URL is a base64 encoded image
    */
   private _isBase64Image(url: string): boolean {
-    return url.startsWith('data:image/');
+    // URI schemes (RFC 3986) and MIME types (RFC 2045) are case-insensitive,
+    // so DATA:image/PNG;base64,... is still an inline image.
+    const separator = url.indexOf(':');
+    if (separator < 0 || url.slice(0, separator).toLowerCase() !== 'data') {
+      return false;
+    }
+    const mediaType = (url.slice(separator + 1).split(',', 1)[0] ?? '')
+      .split(';', 1)[0]!
+      .toLowerCase();
+    return mediaType.startsWith('image/');
   }
 
   /**
    * Parse base64 data URL to extract media type and data
    */
   private _parseBase64Url(url: string): [SupportedImageMediaType, string] {
-    if (!url.startsWith('data:')) {
+    const separator = url.indexOf(':');
+    if (separator < 0 || url.slice(0, separator).toLowerCase() !== 'data') {
       throw new Error(`Invalid base64 URL: ${url}`);
     }
 
-    const [header, data] = url.split(',', 2);
+    const remainder = url.slice(separator + 1);
+    const commaIndex = remainder.indexOf(',');
+    const header = commaIndex >= 0 ? remainder.slice(0, commaIndex) : '';
+    const data = commaIndex >= 0 ? remainder.slice(commaIndex + 1) : '';
     if (!header || !data) {
       throw new Error(`Invalid base64 URL format: ${url}`);
     }
 
-    let mediaType = header.split(';')[0]?.replace('data:', '') || 'image/jpeg';
+    // Anthropic expects the canonical lowercase media type.
+    let mediaType = header.split(';', 1)[0]!.toLowerCase() || 'image/jpeg';
 
     // Ensure it's a supported media type
     const supportedTypes: SupportedImageMediaType[] = [
