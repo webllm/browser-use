@@ -50,10 +50,17 @@ export class SchemaOptimizer {
         const optimized: Record<string, any> = {};
 
         for (const [key, value] of Object.entries(obj)) {
+          // Keys inside a `properties` map are user field names, not schema
+          // keywords, so a field called `default` or `title` must survive.
+          if (inProperties) {
+            optimized[key] = optimize(value, false);
+            continue;
+          }
           if (key === '$defs') continue;
           // Some OpenAI-compatible providers reject this JSON Schema keyword.
           if (key === 'propertyNames') continue;
-          if (key === 'title' && !inProperties) continue;
+          // Titles are metadata; field names never reach this branch.
+          if (key === 'title') continue;
           if (removeMinItems && (key === 'minItems' || key === 'min_items')) {
             continue;
           }
