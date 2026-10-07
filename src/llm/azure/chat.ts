@@ -1,6 +1,10 @@
 import { AzureOpenAI } from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs';
-import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
+import {
+  isReasoningModel,
+  type BaseChatModel,
+  type ChatInvokeOptions,
+} from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
@@ -160,9 +164,7 @@ export class ChatAzure implements BaseChatModel {
   }
 
   private isReasoningModel(): boolean {
-    return REASONING_MODELS.some((m) =>
-      this.model.toLowerCase().includes(m.toLowerCase())
-    );
+    return isReasoningModel(this.model, REASONING_MODELS);
   }
 
   private shouldUseResponsesApi(): boolean {

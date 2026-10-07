@@ -33,6 +33,7 @@ import {
   ModelProviderError,
 } from '../src/llm/exceptions.js';
 import { MISSING_PROVIDER_API_KEY } from '../src/llm/api-key.js';
+import { isReasoningModel } from '../src/llm/base.js';
 
 const buildResponse = (content: string | null, finishReason?: string) => ({
   choices: [{ message: { content }, finish_reason: finishReason }],
@@ -197,6 +198,23 @@ describe('OpenAI-compatible providers alignment', () => {
       fetch: customFetch,
       fetchOptions: { cache: 'no-store' },
     });
+  });
+
+  it('ignores empty reasoning model patterns', async () => {
+    const llm = new ChatOpenAI({
+      model: 'gpt-4o',
+      temperature: 0.3,
+      reasoningModels: ['', '   '],
+    });
+
+    await llm.ainvoke([new UserMessage('hello')]);
+
+    const request = openaiCreateMock.mock.calls[0]?.[0] ?? {};
+    expect(request.temperature).toBe(0.3);
+    expect(request).not.toHaveProperty('reasoning_effort');
+    expect(isReasoningModel('gpt-4o', ['', 'o3'])).toBe(false);
+    expect(isReasoningModel('o3-mini', ['', 'o3'])).toBe(true);
+    expect(isReasoningModel('o3-mini', null)).toBe(false);
   });
 
   it('reports OpenRouter responses without choices as provider errors', async () => {

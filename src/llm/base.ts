@@ -27,3 +27,24 @@ export interface BaseChatModel {
     options?: ChatInvokeOptions
   ): Promise<ChatInvokeCompletion<T>>;
 }
+
+/**
+ * Return whether a model matches a non-empty reasoning-model pattern. An empty
+ * pattern would otherwise match every model name.
+ */
+export const isReasoningModel = (
+  model: unknown,
+  reasoningModels: Iterable<unknown> | null | undefined
+): boolean => {
+  if (!reasoningModels) {
+    return false;
+  }
+  const modelName = String(model).toLowerCase();
+  for (const pattern of reasoningModels) {
+    const patternName = String(pattern).toLowerCase();
+    if (patternName.trim() && modelName.includes(patternName)) {
+      return true;
+    }
+  }
+  return false;
+};

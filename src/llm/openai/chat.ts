@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam } from 'openai/resources/index.mjs';
-import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
+import {
+  isReasoningModel,
+  type BaseChatModel,
+  type ChatInvokeOptions,
+} from '../base.js';
 import { ChatInvokeCompletion, ChatInvokeUsage } from '../views.js';
 import type { Message } from '../messages.js';
 import { OpenAIMessageSerializer } from './serializer.js';
@@ -141,9 +145,7 @@ export class ChatOpenAI implements BaseChatModel {
   }
 
   private isReasoningModel(): boolean {
-    return (this.reasoningModels ?? []).some((m) =>
-      this.model.toLowerCase().includes(m.toLowerCase())
-    );
+    return isReasoningModel(this.model, this.reasoningModels);
   }
 
   private getUsage(

@@ -1,5 +1,9 @@
 import OpenAI from 'openai';
-import type { BaseChatModel, ChatInvokeOptions } from '../base.js';
+import {
+  isReasoningModel,
+  type BaseChatModel,
+  type ChatInvokeOptions,
+} from '../base.js';
 import {
   ModelProviderError,
   ModelRateLimitError,
@@ -304,14 +308,12 @@ export class ChatVercel implements BaseChatModel {
 
     const isGoogleModel = this.model.startsWith('google/');
     const isAnthropicModel = this.model.startsWith('anthropic/');
-    const isReasoningModel = (this.reasoningModels ?? []).some((pattern) =>
-      String(this.model).toLowerCase().includes(String(pattern).toLowerCase())
-    );
+    const isReasoning = isReasoningModel(this.model, this.reasoningModels);
 
     if (
       output_format &&
       zodSchemaCandidate &&
-      (isGoogleModel || isAnthropicModel || isReasoningModel)
+      (isGoogleModel || isAnthropicModel || isReasoning)
     ) {
       try {
         const rawJsonSchema = zodSchemaToJsonSchema(zodSchemaCandidate as any, {
