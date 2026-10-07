@@ -10,6 +10,7 @@ Complete API documentation for Browser-Use.
 - [Controller](#controller)
 - [Registry](#registry)
 - [LLM Providers](#llm-providers)
+- [Claude Browser Toolset](#claude-browser-toolset)
 - [Data Types](#data-types)
 - [Utility Functions](#utility-functions)
 
@@ -33,37 +34,37 @@ new Agent(options: AgentOptions)
 
 #### AgentOptions
 
-| Parameter                 | Type                        | Required | Default                     | Description                              |
-| ------------------------- | --------------------------- | -------- | --------------------------- | ---------------------------------------- |
-| `task`                    | `string`                    | Yes      | -                           | The task description in natural language |
-| `llm`                     | `BaseChatModel`             | Yes      | -                           | LLM instance for decision making         |
-| `browser_session`         | `BrowserSession`            | No       | Auto-created                | Browser session to use                   |
-| `browser_profile`         | `BrowserProfile`            | No       | Default profile             | Browser configuration                    |
-| `controller`              | `Controller`                | No       | Default controller          | Action controller                        |
-| `use_vision`              | `boolean`                   | No       | `true`                      | Enable screenshot analysis               |
-| `vision_detail_level`     | `'auto' \| 'low' \| 'high'` | No       | `'auto'`                    | Screenshot detail level                  |
-| `use_thinking`            | `boolean`                   | No       | `true`                      | Enable extended thinking prompts         |
-| `flash_mode`              | `boolean`                   | No       | `false`                     | Use optimized prompts for speed          |
-| `max_failures`            | `number`                    | No       | `3`                         | Max consecutive failures before stopping |
-| `retry_delay`             | `number`                    | No       | `10`                        | Delay (seconds) between retries          |
-| `max_actions_per_step`    | `number`                    | No       | `5`                         | Max actions per step                     |
-| `validate_output`         | `boolean`                   | No       | `false`                     | Validate LLM output strictly             |
-| `generate_gif`            | `boolean \| string`         | No       | `false`                     | Generate GIF of session                  |
-| `save_conversation_path`  | `string`                    | No       | `null`                      | Path to save conversation logs           |
-| `override_system_message` | `string`                    | No       | `null`                      | Replace system message                   |
-| `extend_system_message`   | `string`                    | No       | `null`                      | Append to system message                 |
-| `include_attributes`      | `string[]`                  | No       | `DEFAULT_INCLUDE_ATTRIBUTES` | Additional HTML attributes to include    |
-| `sensitive_data`          | `SensitiveDataMap`          | No       | `null`                      | Credentials for auto-fill; use `allowed_domains` for production credentialed tasks |
-| `session_attachment_mode` | `'copy' \| 'strict' \| 'shared'` | No | `'copy'`                    | How Agent attaches to an existing `BrowserSession` |
-| `llm_timeout`             | `number`                    | No       | Auto (model-dependent)      | LLM call timeout (seconds)               |
-| `step_timeout`            | `number`                    | No       | `180`                       | Step execution timeout (seconds)         |
-| `final_response_after_failure` | `boolean`             | No       | `true`                      | Allow one done-only recovery step after hitting `max_failures` |
-| `use_judge`               | `boolean`                   | No       | `true`                      | Run final trace judgement after task completion |
-| `judge_llm`               | `BaseChatModel \| null`     | No       | `null`                      | Optional dedicated model for final trace judgement (defaults to `llm`) |
-| `ground_truth`            | `string \| null`            | No       | `null`                      | Optional expected answer or criteria for final judgement |
-| `enable_planning`         | `boolean`                   | No       | `true`                      | Allow plan tracking via `plan_update` / `current_plan_item` |
-| `planning_replan_on_stall`| `number`                    | No       | `3`                         | Inject replan nudge after N consecutive failures |
-| `planning_exploration_limit` | `number`                 | No       | `5`                         | Inject planning nudge after N steps without a plan |
+| Parameter                      | Type                             | Required | Default                      | Description                                                                        |
+| ------------------------------ | -------------------------------- | -------- | ---------------------------- | ---------------------------------------------------------------------------------- |
+| `task`                         | `string`                         | Yes      | -                            | The task description in natural language                                           |
+| `llm`                          | `BaseChatModel`                  | Yes      | -                            | LLM instance for decision making                                                   |
+| `browser_session`              | `BrowserSession`                 | No       | Auto-created                 | Browser session to use                                                             |
+| `browser_profile`              | `BrowserProfile`                 | No       | Default profile              | Browser configuration                                                              |
+| `controller`                   | `Controller`                     | No       | Default controller           | Action controller                                                                  |
+| `use_vision`                   | `boolean`                        | No       | `true`                       | Enable screenshot analysis                                                         |
+| `vision_detail_level`          | `'auto' \| 'low' \| 'high'`      | No       | `'auto'`                     | Screenshot detail level                                                            |
+| `use_thinking`                 | `boolean`                        | No       | `true`                       | Enable extended thinking prompts                                                   |
+| `flash_mode`                   | `boolean`                        | No       | `false`                      | Use optimized prompts for speed                                                    |
+| `max_failures`                 | `number`                         | No       | `3`                          | Max consecutive failures before stopping                                           |
+| `retry_delay`                  | `number`                         | No       | `10`                         | Delay (seconds) between retries                                                    |
+| `max_actions_per_step`         | `number`                         | No       | `5`                          | Max actions per step                                                               |
+| `validate_output`              | `boolean`                        | No       | `false`                      | Validate LLM output strictly                                                       |
+| `generate_gif`                 | `boolean \| string`              | No       | `false`                      | Generate GIF of session                                                            |
+| `save_conversation_path`       | `string`                         | No       | `null`                       | Path to save conversation logs                                                     |
+| `override_system_message`      | `string`                         | No       | `null`                       | Replace system message                                                             |
+| `extend_system_message`        | `string`                         | No       | `null`                       | Append to system message                                                           |
+| `include_attributes`           | `string[]`                       | No       | `DEFAULT_INCLUDE_ATTRIBUTES` | Additional HTML attributes to include                                              |
+| `sensitive_data`               | `SensitiveDataMap`               | No       | `null`                       | Credentials for auto-fill; use `allowed_domains` for production credentialed tasks |
+| `session_attachment_mode`      | `'copy' \| 'strict' \| 'shared'` | No       | `'copy'`                     | How Agent attaches to an existing `BrowserSession`                                 |
+| `llm_timeout`                  | `number`                         | No       | Auto (model-dependent)       | LLM call timeout (seconds)                                                         |
+| `step_timeout`                 | `number`                         | No       | `180`                        | Step execution timeout (seconds)                                                   |
+| `final_response_after_failure` | `boolean`                        | No       | `true`                       | Allow one done-only recovery step after hitting `max_failures`                     |
+| `use_judge`                    | `boolean`                        | No       | `true`                       | Run final trace judgement after task completion                                    |
+| `judge_llm`                    | `BaseChatModel \| null`          | No       | `null`                       | Optional dedicated model for final trace judgement (defaults to `llm`)             |
+| `ground_truth`                 | `string \| null`                 | No       | `null`                       | Optional expected answer or criteria for final judgement                           |
+| `enable_planning`              | `boolean`                        | No       | `true`                       | Allow plan tracking via `plan_update` / `current_plan_item`                        |
+| `planning_replan_on_stall`     | `number`                         | No       | `3`                          | Inject replan nudge after N consecutive failures                                   |
+| `planning_exploration_limit`   | `number`                         | No       | `5`                          | Inject planning nudge after N steps without a plan                                 |
 
 ### Methods
 
@@ -144,6 +145,7 @@ async rerun_history(
 ```
 
 Defaults:
+
 - `max_retries`: `3`
 - `delay_between_actions`: `2`
 - `max_step_interval`: `45`
@@ -550,6 +552,33 @@ import { ChatOpenRouter } from 'browser-use/llm/openrouter';
 
 const llm = new ChatOpenRouter('anthropic/claude-3-opus');
 ```
+
+---
+
+## Claude Browser Toolset
+
+Runs Anthropic's `browser_toolset_20260801` on a Browser Use browser. See the
+[Claude Browser Toolset guide](./ANTHROPIC_TOOLSET.md).
+
+```typescript
+import {
+  BrowserUseToolset,
+  createBashTool,
+  runBash,
+  runBrowserToolsetConversation,
+} from 'browser-use/integrations/anthropic';
+```
+
+| Export                                   | Description                                                                                                                                                                               |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `new BrowserUseToolset(options?)`        | Driver for all 31 members. Options: `browser`, `browserProfile`, `useCloud`, `configs`, `confirm`, `uploadRoots`, `documentResolver`, `downloadsPath`, `maxLogEntries`, `actionTimeoutMs` |
+| `toolset.toolParam()`                    | The `tools[]` entry for the request                                                                                                                                                       |
+| `toolset.execute(block)`                 | Run one browser `tool_use` block; returns a `tool_result` (never throws)                                                                                                                  |
+| `toolset.executeBatch(blocks)`           | Run a turn's browser calls in order, halting after the first failure                                                                                                                      |
+| `toolset.start()` / `toolset.close()`    | Start lazily-started resources / release them (stops browsers the toolset launched)                                                                                                       |
+| `runBrowserToolsetConversation(options)` | Agentic loop: `client`, `toolset`, `tools`, `task` or `messages`, `system`, `model`, `maxTokens`, `maxIterations`, `params`, `signal`, `onMessage`, `onToolResult`                        |
+| `createBashTool(options?)`               | Bounded `bash` runnable tool: `outputDir`, `timeoutSeconds`, `maxOutputBytes`                                                                                                             |
+| `runBash(command, options?)`             | Run one command and get `{ exit_code, timed_out, truncated, output }` as JSON                                                                                                             |
 
 ---
 

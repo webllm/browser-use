@@ -378,6 +378,34 @@ Core MCP tools include `retry_with_browser_use_agent`, `browser_navigate`, `brow
 
 > See [MCP Server Guide](./docs/MCP_SERVER.md) for more details.
 
+## 🧭 Claude Browser Toolset
+
+Run Anthropic's browser toolset (`browser_toolset_20260801`) on a Browser Use browser — local Chromium, Browser Use Cloud, or an existing session — together with a bounded Bash tool:
+
+```typescript
+import Anthropic from '@anthropic-ai/sdk';
+import {
+  BrowserUseToolset,
+  createBashTool,
+  runBrowserToolsetConversation,
+} from 'browser-use/integrations/anthropic';
+
+const toolset = new BrowserUseToolset();
+try {
+  const { message } = await runBrowserToolsetConversation({
+    client: new Anthropic(),
+    toolset,
+    tools: [createBashTool({ outputDir: 'outputs' })],
+    task: 'Read the first three Hacker News posts and save their titles to hn.md.',
+  });
+  console.log(message.content);
+} finally {
+  await toolset.close();
+}
+```
+
+> See [Claude Browser Toolset](./docs/ANTHROPIC_TOOLSET.md) for runtimes, members, and safety controls.
+
 ## 🔒 Security
 
 - **Sensitive Data Masking** — Credentials are automatically masked in logs and LLM context
@@ -408,18 +436,19 @@ const agent = new Agent({
 
 ## 📚 Documentation
 
-| Document                                 | Description                          |
-| ---------------------------------------- | ------------------------------------ |
-| [Quick Start](./docs/QUICKSTART.md)      | Get started in 5 minutes             |
-| [Architecture](./docs/ARCHITECTURE.md)   | System design and component overview |
-| [API Reference](./docs/API_REFERENCE.md) | Complete API documentation           |
-| [Configuration](./docs/CONFIGURATION.md) | All configuration options            |
-| [LLM Providers](./docs/LLM_PROVIDERS.md) | Provider setup and comparison        |
-| [Actions](./docs/ACTIONS.md)             | Built-in and custom actions          |
-| [MCP Server](./docs/MCP_SERVER.md)       | MCP integration guide                |
-| [Security](./docs/SECURITY.md)           | Security best practices              |
-| [Examples](./docs/EXAMPLES.md)           | More code examples                   |
-| [Contributing](./docs/CONTRIBUTING.md)   | Contribution guidelines              |
+| Document                                              | Description                          |
+| ----------------------------------------------------- | ------------------------------------ |
+| [Quick Start](./docs/QUICKSTART.md)                   | Get started in 5 minutes             |
+| [Architecture](./docs/ARCHITECTURE.md)                | System design and component overview |
+| [API Reference](./docs/API_REFERENCE.md)              | Complete API documentation           |
+| [Configuration](./docs/CONFIGURATION.md)              | All configuration options            |
+| [LLM Providers](./docs/LLM_PROVIDERS.md)              | Provider setup and comparison        |
+| [Actions](./docs/ACTIONS.md)                          | Built-in and custom actions          |
+| [MCP Server](./docs/MCP_SERVER.md)                    | MCP integration guide                |
+| [Claude Browser Toolset](./docs/ANTHROPIC_TOOLSET.md) | Anthropic browser toolset driver     |
+| [Security](./docs/SECURITY.md)                        | Security best practices              |
+| [Examples](./docs/EXAMPLES.md)                        | More code examples                   |
+| [Contributing](./docs/CONTRIBUTING.md)                | Contribution guidelines              |
 
 ## 🛠️ Development
 

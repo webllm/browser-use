@@ -6172,6 +6172,30 @@ export class BrowserSession {
   // ==================== P2 Additional Functions ====================
 
   /**
+   * Open tabs paired with their Playwright pages, after syncing with the
+   * browser context so tabs opened by pages (popups, target=_blank) appear.
+   */
+  get_tab_pages(): Array<{
+    tab_id: string;
+    page_id: number;
+    url: string;
+    title: string;
+    page: Page | null;
+    active: boolean;
+  }> {
+    this._syncTabsWithBrowserPages();
+    const activeTab = this._tabs[this.currentTabIndex] ?? null;
+    return this._tabs.map((tab) => ({
+      tab_id: tab.tab_id || this._formatTabId(tab.page_id),
+      page_id: tab.page_id,
+      url: tab.url,
+      title: tab.title,
+      page: this.tabPages.get(tab.page_id) ?? null,
+      active: tab === activeTab,
+    }));
+  }
+
+  /**
    * Get information about all open tabs
    * @returns Array of tab information including page_id, tab_id, url, and title
    */

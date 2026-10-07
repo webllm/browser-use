@@ -51,6 +51,11 @@
       "import": "./dist/filesystem/index.js",
       "default": "./dist/filesystem/index.js"
     },
+    "./integrations/anthropic": {
+      "types": "./dist/integrations/anthropic/index.d.ts",
+      "import": "./dist/integrations/anthropic/index.js",
+      "default": "./dist/integrations/anthropic/index.js"
+    },
     "./integrations/gmail": {
       "types": "./dist/integrations/gmail/index.d.ts",
       "import": "./dist/integrations/gmail/index.js",
