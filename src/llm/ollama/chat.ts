@@ -1,5 +1,6 @@
 import {
   Ollama,
+  type ChatRequest,
   type ChatResponse,
   type Config as OllamaClientConfig,
   type Options as OllamaOptions,
@@ -15,20 +16,52 @@ import { zodSchemaToJsonSchema } from '../schema.js';
 import { OllamaMessageSerializer } from './serializer.js';
 import { createNoRedirectFetch } from '../http.js';
 import { MAX_HTTP_REQUEST_TIMEOUT_MS } from '../../http-response.js';
+import { createLogger } from '../../logging-config.js';
+
+const logger = createLogger('browser_use.llm.ollama');
+
+// These belong on the chat() request, not inside the model `options` map.
+const PASSTHROUGH_CHAT_KEYS = new Set([
+  'think',
+  'logprobs',
+  'top_logprobs',
+  'keep_alive',
+]);
+// ChatOllama owns structured output and requires a non-streaming response.
+const IGNORED_CHAT_KEYS = new Set(['format', 'stream']);
+const JSON_FENCE_RE =
+  /^```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```[ \t]*$/i;
+
+/**
+ * Strip the markdown code fence that Ollama vision models often wrap around JSON.
+ */
+export const unwrapOllamaJsonContent = (content: string): string => {
+  const text = content.trim();
+  const match = JSON_FENCE_RE.exec(text);
+  return match ? (match[1] ?? '').trim() : text;
+};
+
+export type ChatOllamaModelOptions = Partial<OllamaOptions> & {
+  think?: boolean | 'high' | 'medium' | 'low';
+  keep_alive?: string | number;
+  logprobs?: boolean;
+  top_logprobs?: number;
+  [key: string]: unknown;
+};
 
 export interface ChatOllamaOptions {
   model?: string;
   host?: string;
   timeout?: number | null;
   clientParams?: Partial<OllamaClientConfig> | null;
-  ollamaOptions?: Partial<OllamaOptions> | null;
+  ollamaOptions?: ChatOllamaModelOptions | null;
 }
 
 export class ChatOllama implements BaseChatModel {
   public model: string;
   public provider = 'ollama';
   private client: Ollama;
-  private ollamaOptions: Partial<OllamaOptions> | null;
+  private ollamaOptions: ChatOllamaModelOptions | null;
 
   constructor(
     modelOrOptions: string | ChatOllamaOptions = 'qwen2.5:latest',
@@ -76,6 +109,44 @@ export class ChatOllama implements BaseChatModel {
 
   get name(): string {
     return this.model;
+  }
+
+  /**
+   * Split model options from parameters that the chat() request takes at the
+   * top level. `format` and `stream` are dropped because this wrapper controls
+   * structured output and streaming itself.
+   */
+  private splitChatOptions(): {
+    modelOptions: Partial<OllamaOptions> | undefined;
+    topLevel: Record<string, unknown>;
+  } {
+    const options = this.ollamaOptions;
+    if (!options || typeof options !== 'object') {
+      return { modelOptions: undefined, topLevel: {} };
+    }
+    const modelOptions: Record<string, unknown> = {};
+    const topLevel: Record<string, unknown> = {};
+    const ignored: string[] = [];
+    for (const [key, value] of Object.entries(options)) {
+      if (PASSTHROUGH_CHAT_KEYS.has(key)) {
+        topLevel[key] = value;
+      } else if (IGNORED_CHAT_KEYS.has(key)) {
+        ignored.push(key);
+      } else {
+        modelOptions[key] = value;
+      }
+    }
+    if (ignored.length > 0) {
+      logger.warning(
+        `Ignoring ${ignored.sort().join(', ')} in ollamaOptions; ChatOllama controls structured output and streaming`
+      );
+    }
+    return {
+      modelOptions: Object.keys(modelOptions).length
+        ? (modelOptions as Partial<OllamaOptions>)
+        : undefined,
+      topLevel,
+    };
   }
 
   get model_name(): string {
@@ -182,13 +253,15 @@ export class ChatOllama implements BaseChatModel {
       format = 'json';
     }
 
+    const { modelOptions, topLevel } = this.splitChatOptions();
     const requestPromise: Promise<ChatResponse> = this.client.chat({
+      ...topLevel,
       model: this.model,
       messages: ollamaMessages,
       format: format,
-      options: this.ollamaOptions ?? undefined,
+      options: modelOptions,
       stream: false,
-    });
+    } as ChatRequest & { stream: false });
 
     const abortSignal = options.signal;
     const response = abortSignal
@@ -230,11 +303,15 @@ export class ChatOllama implements BaseChatModel {
 
       let completion: T | string = content;
       if (output_format) {
+        const jsonContent = unwrapOllamaJsonContent(content ?? '');
         if (zodSchemaCandidate) {
-          completion = this.parseOutput(output_format, JSON.parse(content));
+          completion = this.parseOutput(output_format, JSON.parse(jsonContent));
         } else {
           try {
-            completion = this.parseOutput(output_format, JSON.parse(content));
+            completion = this.parseOutput(
+              output_format,
+              JSON.parse(jsonContent)
+            );
           } catch {
             completion = this.parseOutput(output_format, content);
           }

@@ -66,6 +66,46 @@ describe('ChatOllama alignment', () => {
     expect(request.options).toMatchObject({ temperature: 0.1 });
   });
 
+  it('moves chat-level options out of the model options map', async () => {
+    const llm = new ChatOllama({
+      model: 'qwen3-vl',
+      ollamaOptions: {
+        temperature: 0.2,
+        num_ctx: 8192,
+        think: false,
+        keep_alive: '5m',
+        logprobs: true,
+        top_logprobs: 3,
+        format: 'json',
+        stream: true,
+      },
+    });
+
+    await llm.ainvoke([new UserMessage('hello')]);
+
+    const request = ollamaChatMock.mock.calls[0]?.[0] ?? {};
+    expect(request.options).toEqual({ temperature: 0.2, num_ctx: 8192 });
+    expect(request.think).toBe(false);
+    expect(request.keep_alive).toBe('5m');
+    expect(request.logprobs).toBe(true);
+    expect(request.top_logprobs).toBe(3);
+    expect(request.stream).toBe(false);
+    expect(request.format).toBeUndefined();
+  });
+
+  it('parses structured output wrapped in a markdown code fence', async () => {
+    ollamaChatMock.mockResolvedValue(
+      buildResponse('```json\n{"value":"fenced"}\n```')
+    );
+
+    const response = await new ChatOllama('qwen3-vl').ainvoke(
+      [new UserMessage('extract')],
+      z.object({ value: z.string() }) as any
+    );
+
+    expect((response.completion as any).value).toBe('fenced');
+  });
+
   it('clamps request timeouts to the maximum supported timer delay', async () => {
     const customFetch = vi.fn(async () => new Response('{}'));
     const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
