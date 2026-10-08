@@ -67,7 +67,7 @@ console.log('Final result:', history.final_result());
 
 ## Requirements
 
-- **Node.js**: 20.20+ (Node 20) or 22.22+
+- **Node.js**: 20.16+ (Node 20) or 22.3+
 - **Playwright**: Installed automatically as dependency
 - **LLM API Key**: At least one supported LLM provider
 

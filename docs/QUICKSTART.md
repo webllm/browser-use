@@ -8,7 +8,7 @@ Get up and running with Browser-Use for TypeScript in 5 minutes.
 
 ## Prerequisites
 
-- Node.js 20.20+ (Node 20) or 22.22+ installed
+- Node.js 20.16+ (Node 20) or 22.3+ installed
 - An API key from a supported LLM provider (OpenAI, Anthropic, etc.)
 
 ## Step 1: Install Browser-Use
