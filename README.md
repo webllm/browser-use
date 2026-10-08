@@ -486,7 +486,7 @@ pnpm exec tsx examples/simple-search.ts
 
 ## Requirements
 
-- **Node.js** >= 18.0.0
+- **Node.js** 20.20+ (Node 20) or 22.22+
 - **LLM API Key** — At least one supported provider
 - **Playwright** — Installed automatically as a dependency
 

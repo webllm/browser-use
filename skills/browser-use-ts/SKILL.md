@@ -20,9 +20,9 @@ matches the task before writing code.
 
 ## Critical notes
 
-- The package is ESM and requires Node.js 18 or newer. Import providers and
-  integrations from subpaths, for example `browser-use/llm/anthropic` or
-  `browser-use/integrations/anthropic`.
+- The package is ESM and requires Node.js 20.20+ (Node 20) or 22.22+. Import
+  providers and integrations from subpaths, for example
+  `browser-use/llm/anthropic` or `browser-use/integrations/anthropic`.
 - Option names follow the Python library and use snake_case on Agent and
   BrowserProfile (`use_vision`, `allowed_domains`); provider constructors use
   camelCase (`apiKey`, `baseURL`).

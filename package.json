@@ -279,7 +279,7 @@
   },
   "packageManager": "pnpm@10.28.1",
   "engines": {
-    "node": ">=18.0.0"
+    "node": "^20.20.0 || >=22.22.0"
   },
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc && node scripts/copy-dom-tree.mjs",

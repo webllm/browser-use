@@ -4,7 +4,7 @@ Get up and running with Browser-Use in 5 minutes.
 
 ## Prerequisites
 
-- Node.js 18+ installed
+- Node.js 20.20+ (Node 20) or 22.22+ installed
 - An API key from a supported LLM provider (OpenAI, Anthropic, etc.)
 
 ## Step 1: Install Browser-Use
