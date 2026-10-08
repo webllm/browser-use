@@ -88,7 +88,7 @@ const positiveIntegerOption = (value: unknown, fallback: number) =>
     : fallback;
 
 const nextHighlightIndex = (selectorMap: SelectorMap) => {
-  let next = 0;
+  let next = 1;
   for (const key of Object.keys(selectorMap)) {
     const index = Number(key);
     if (Number.isSafeInteger(index) && index >= next) {

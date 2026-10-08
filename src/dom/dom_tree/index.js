@@ -22,11 +22,12 @@
     domLimits.maxSerializedStringLength,
     8 * 1024 * 1024,
   );
+  // Indices start at 1, as the index-based action schemas require (index >= 1).
   // Frames extracted separately continue numbering after the parent document.
   let highlightIndex =
     Number.isSafeInteger(args.highlightIndexStart) && args.highlightIndexStart > 0
       ? args.highlightIndexStart
-      : 0;
+      : 1;
   let visitedNodeCount = 0;
   let reservedSerializedNodeCount = 0;
   let serializedStringLength = 0;
