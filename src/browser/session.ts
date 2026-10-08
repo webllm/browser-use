@@ -147,6 +147,11 @@ const EMPTY_DOM_RETRY_DELAY_MS = 250;
 const BROWSER_STATE_DOM_TIMEOUT_MS = 20_000;
 const BROWSER_STATE_SCREENSHOT_TIMEOUT_MS = 10_000;
 const BROWSER_STATE_PROBE_TIMEOUT_MS = 5_000;
+// After a click, wait this long for a download to start (as upstream does).
+// Downloads that start later are still saved by the session-wide handler and
+// reach the agent through downloaded_files.
+const CLICK_DOWNLOAD_START_GRACE_MS = 500;
+const CLICK_DOWNLOAD_COMPLETE_TIMEOUT_MS = 30_000;
 export const BROWSER_STATE_TIMEOUT_ERROR =
   'Browser state capture timed out. The current DOM and screenshot are unavailable, ' +
   'so no element indices are safe to use. Recover with navigation, waiting, or another non-indexed action.';
@@ -245,6 +250,18 @@ type BrowserEventEmitterLike = Browser & {
   removeListener?: (event: string, listener: (...args: any[]) => void) => void;
   isConnected?: () => boolean;
 };
+
+/** A download observed in one of the session's pages. */
+export interface BrowserDownload {
+  guid: string;
+  url: string;
+  suggested_filename: string;
+  /**
+   * Settles once the download is saved to downloads_path (`path`), finishes
+   * without being saved (`path: null`), or fails or is refused (`error`).
+   */
+  completion: Promise<{ path: string | null; error: unknown }>;
+}
 
 export interface BrowserSessionInit {
   id?: string;
@@ -567,6 +584,11 @@ export class BrowserSession {
   private _stoppingPromise: Promise<void> | null = null;
   private _closedPopupMessages: string[] = [];
   private _dialogHandlersAttached = new WeakSet<Page>();
+  private _downloadHandlersAttached = new WeakSet<Page>();
+  private _downloadContextsObserved = new WeakSet<object>();
+  private readonly _downloadListeners = new Set<
+    (download: BrowserDownload) => void
+  >();
   private readonly _maxClosedPopupMessages = 20;
   private _recentEvents: RecentBrowserEvent[] = [];
   private readonly _maxRecentEvents = 100;
@@ -632,6 +654,7 @@ export class BrowserSession {
     this.tabPages.set(this._tabs[0].page_id, this.agent_current_page ?? null);
     this._syncSessionManagerFromTabs();
     this._attachDialogHandler(this.agent_current_page);
+    this._attachDownloadHandler(this.agent_current_page);
     this._recordRecentEvent('session_initialized', { url: this.currentUrl });
   }
 
@@ -1128,6 +1151,7 @@ export class BrowserSession {
   private _assignAgentCurrentPage(page: Page | null) {
     const nextPage = page ?? null;
     this._attachDialogHandler(nextPage);
+    this._attachDownloadHandler(nextPage);
     this.agent_current_page = nextPage;
     this.currentPageLoadingStatus = this._getPageLoadingStatus(nextPage);
   }
@@ -1196,6 +1220,7 @@ export class BrowserSession {
 
     for (const page of pages) {
       this._attachDialogHandler(page ?? null);
+      this._attachDownloadHandler(page ?? null);
 
       let pageId: number | null = null;
       for (const [candidateId, candidatePage] of knownPageMappings) {
@@ -1414,6 +1439,260 @@ export class BrowserSession {
 
     pageWithEvents.on('dialog', handler);
     this._dialogHandlersAttached.add(page);
+  }
+
+  /**
+   * Observe every download started in this session's pages. The session saves
+   * each download to downloads_path; listeners receive it as soon as it
+   * starts. Returns a function that removes the listener.
+   */
+  add_download_listener(listener: (download: BrowserDownload) => void) {
+    this._downloadListeners.add(listener);
+    return () => {
+      this._downloadListeners.delete(listener);
+    };
+  }
+
+  private _attachDownloadHandler(page: Page | null) {
+    if (!page || this._downloadHandlersAttached.has(page)) {
+      return;
+    }
+    const pageWithEvents = page as unknown as {
+      on?: (event: string, handler: (...args: any[]) => void) => void;
+      context?: () => unknown;
+    };
+    if (typeof pageWithEvents.on !== 'function') {
+      return;
+    }
+    this._downloadHandlersAttached.add(page);
+    pageWithEvents.on('download', (download: any) => {
+      this._trackDownload(download);
+    });
+
+    // Pages opened later (popups, target=_blank) get the handler before they
+    // can start a download of their own.
+    type PageEvents = {
+      on?: (event: string, handler: (page: Page) => void) => void;
+    };
+    let context: PageEvents | null = null;
+    try {
+      context =
+        typeof pageWithEvents.context === 'function'
+          ? (pageWithEvents.context() as PageEvents | null)
+          : null;
+    } catch {
+      context = null;
+    }
+    if (
+      context &&
+      typeof context.on === 'function' &&
+      !this._downloadContextsObserved.has(context)
+    ) {
+      this._downloadContextsObserved.add(context);
+      context.on('page', (newPage: Page) => {
+        this._attachDownloadHandler(newPage);
+      });
+    }
+  }
+
+  private _trackDownload(download: any): BrowserDownload {
+    const guid = uuid7str();
+    const url =
+      typeof download?.url === 'function'
+        ? String(download.url())
+        : (this.currentUrl ?? '');
+    const suggested_filename =
+      typeof download?.suggestedFilename === 'function'
+        ? String(download.suggestedFilename())
+        : 'download';
+    const completion = this._saveDownload(
+      download,
+      guid,
+      url,
+      suggested_filename
+    ).then(
+      (savedPath) => ({ path: savedPath, error: null as unknown }),
+      (error: unknown) => {
+        if (!(error instanceof URLNotAllowedError)) {
+          this.logger.warning(
+            `⚠️ Download of ${BrowserSession._sanitize_download_filename(suggested_filename)} failed: ${(error as Error)?.message ?? String(error)}`
+          );
+        }
+        return { path: null, error };
+      }
+    );
+    const tracked: BrowserDownload = {
+      guid,
+      url,
+      suggested_filename,
+      completion,
+    };
+    for (const listener of [...this._downloadListeners]) {
+      try {
+        listener(tracked);
+      } catch (error) {
+        this.logger.debug(
+          `Download listener failed: ${(error as Error).message}`
+        );
+      }
+    }
+    return tracked;
+  }
+
+  private async _saveDownload(
+    download: any,
+    guid: string,
+    url: string,
+    suggestedFilename: string
+  ): Promise<string | null> {
+    await this._assert_download_url_allowed(download, url);
+    await this.event_bus.dispatch(
+      new DownloadStartedEvent({
+        guid,
+        url,
+        suggested_filename: suggestedFilename,
+        auto_download: false,
+      })
+    );
+    const downloadsDir = this.browser_profile.downloads_path;
+    if (!downloadsDir || typeof download?.saveAs !== 'function') {
+      return null;
+    }
+    try {
+      ensurePrivateDirectoryIfCreated(downloadsDir);
+      const uniqueFilename = await BrowserSession.get_unique_filename(
+        downloadsDir,
+        suggestedFilename
+      );
+      const downloadPath = path.join(downloadsDir, uniqueFilename);
+      await download.saveAs(downloadPath);
+      chmodPrivateFileBestEffort(downloadPath);
+      this.logger.info(`⬇️ Downloaded file to: ${downloadPath}`);
+      const stats = fs.existsSync(downloadPath)
+        ? fs.statSync(downloadPath)
+        : null;
+      await this.event_bus.dispatch(
+        new DownloadProgressEvent({
+          guid,
+          received_bytes: stats?.size ?? 0,
+          total_bytes: stats?.size ?? 0,
+          state: 'completed',
+        })
+      );
+      const fileDownloadedResult = await this.event_bus.dispatch(
+        new FileDownloadedEvent({
+          guid,
+          url,
+          path: downloadPath,
+          file_name: uniqueFilename,
+          file_size: stats?.size ?? 0,
+          file_type: path.extname(uniqueFilename).replace('.', '') || null,
+          mime_type: null,
+          auto_download: false,
+        })
+      );
+      if (fileDownloadedResult.handler_results.length === 0) {
+        this.add_downloaded_file(downloadPath);
+      }
+      return downloadPath;
+    } catch (error) {
+      await this.event_bus
+        .dispatch(
+          new DownloadProgressEvent({
+            guid,
+            received_bytes: 0,
+            total_bytes: 0,
+            state: 'canceled',
+          })
+        )
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** Collect the downloads that start until dispose() is called. */
+  private _watchDownloads() {
+    const started: BrowserDownload[] = [];
+    let notify: ((download: BrowserDownload) => void) | null = null;
+    const listener = (download: BrowserDownload) => {
+      started.push(download);
+      notify?.(download);
+    };
+    this._downloadListeners.add(listener);
+    return {
+      /** The first download since watching began, waiting up to graceMs. */
+      first: (graceMs: number): Promise<BrowserDownload | null> => {
+        if (started.length) {
+          return Promise.resolve(started[0]!);
+        }
+        return new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            notify = null;
+            resolve(null);
+          }, graceMs);
+          notify = (download) => {
+            clearTimeout(timer);
+            notify = null;
+            resolve(download);
+          };
+        });
+      },
+      dispose: () => {
+        this._downloadListeners.delete(listener);
+      },
+    };
+  }
+
+  /**
+   * Return the file a click downloaded: wait briefly for a download to start,
+   * then for it to finish. Refused downloads rethrow URLNotAllowedError.
+   */
+  private async _waitForClickDownload(
+    page: Page | null,
+    downloads: ReturnType<BrowserSession['_watchDownloads']>,
+    signal: AbortSignal | null
+  ): Promise<string | null> {
+    if (
+      !page ||
+      typeof (page as unknown as { on?: unknown }).on !== 'function'
+    ) {
+      return null;
+    }
+    const download = await this._withAbort(
+      downloads.first(CLICK_DOWNLOAD_START_GRACE_MS),
+      signal
+    );
+    if (!download) {
+      return null;
+    }
+    this.logger.info(
+      `📥 Download started: ${BrowserSession._sanitize_download_filename(download.suggested_filename)}`
+    );
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(
+        () => resolve('timeout'),
+        CLICK_DOWNLOAD_COMPLETE_TIMEOUT_MS
+      );
+    });
+    try {
+      const outcome = await this._withAbort(
+        Promise.race([download.completion, timeout]),
+        signal
+      );
+      if (outcome === 'timeout') {
+        this.logger.warning(
+          `⏱️ Download still in progress after ${CLICK_DOWNLOAD_COMPLETE_TIMEOUT_MS / 1000}s; it will be saved to downloads_path when it finishes.`
+        );
+        return null;
+      }
+      if (outcome.error instanceof URLNotAllowedError) {
+        throw outcome.error;
+      }
+      return outcome.path;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async _getPendingNetworkRequests(
@@ -2404,6 +2683,8 @@ export class BrowserSession {
     this._assignAgentCurrentPage(null);
     this.human_current_page = null;
     this._dialogHandlersAttached = new WeakSet<Page>();
+    this._downloadHandlersAttached = new WeakSet<Page>();
+    this._downloadContextsObserved = new WeakSet<object>();
     this.session_manager.clear();
 
     const playwright = (this.playwright as any) ?? (await async_playwright());
@@ -3027,6 +3308,8 @@ export class BrowserSession {
     this.downloaded_files = [];
     this._closedPopupMessages = [];
     this._dialogHandlersAttached = new WeakSet<Page>();
+    this._downloadHandlersAttached = new WeakSet<Page>();
+    this._downloadContextsObserved = new WeakSet<object>();
     this._recentEvents = [];
   }
 
@@ -5166,90 +5449,14 @@ export class BrowserSession {
     }
     const page = await this._withAbort(this.get_current_page(), signal);
     await this.validate_page_after_action(page, signal);
-    const performClick = async () => {
-      await this._withAbort(locator.click({ timeout: 5000 }), signal);
-    };
-
+    this._attachDownloadHandler(page);
+    const downloads = this._watchDownloads();
     let result: string | null = null;
     try {
-      const downloadsDir = this.browser_profile.downloads_path;
-      if (downloadsDir && page?.waitForEvent) {
-        ensurePrivateDirectoryIfCreated(downloadsDir);
-        const downloadPromise = page.waitForEvent('download', {
-          timeout: 5000,
-        });
-        await performClick();
-        try {
-          const download = await this._withAbort(downloadPromise, signal);
-          const downloadGuid = uuid7str();
-          const suggested =
-            typeof download.suggestedFilename === 'function'
-              ? download.suggestedFilename()
-              : 'download';
-          const downloadUrl =
-            typeof download.url === 'function'
-              ? download.url()
-              : (this.currentUrl ?? '');
-          await this._assert_download_url_allowed(download, downloadUrl);
-          await this.event_bus.dispatch(
-            new DownloadStartedEvent({
-              guid: downloadGuid,
-              url: downloadUrl,
-              suggested_filename: suggested,
-              auto_download: false,
-            })
-          );
-          const uniqueFilename = await BrowserSession.get_unique_filename(
-            downloadsDir,
-            suggested
-          );
-          const downloadPath = path.join(downloadsDir, uniqueFilename);
-          if (typeof download.saveAs === 'function') {
-            await download.saveAs(downloadPath);
-            chmodPrivateFileBestEffort(downloadPath);
-          }
-          const stats = fs.existsSync(downloadPath)
-            ? fs.statSync(downloadPath)
-            : null;
-          await this.event_bus.dispatch(
-            new DownloadProgressEvent({
-              guid: downloadGuid,
-              received_bytes: stats?.size ?? 0,
-              total_bytes: stats?.size ?? 0,
-              state: 'completed',
-            })
-          );
-          const fileDownloadedResult = await this.event_bus.dispatch(
-            new FileDownloadedEvent({
-              guid: downloadGuid,
-              url: downloadUrl,
-              path: downloadPath,
-              file_name: uniqueFilename,
-              file_size: stats?.size ?? 0,
-              file_type: path.extname(uniqueFilename).replace('.', '') || null,
-              mime_type: null,
-              auto_download: false,
-            })
-          );
-          if (fileDownloadedResult.handler_results.length === 0) {
-            this.add_downloaded_file(downloadPath);
-          }
-          result = downloadPath;
-        } catch (error) {
-          if (this._isAbortError(error)) {
-            throw error;
-          }
-          if (error instanceof URLNotAllowedError) {
-            throw error;
-          }
-          this.logger.debug(
-            `No download triggered within timeout: ${(error as Error).message}`
-          );
-        }
-      } else {
-        await performClick();
-      }
+      await this._withAbort(locator.click({ timeout: 5000 }), signal);
+      result = await this._waitForClickDownload(page, downloads, signal);
     } finally {
+      downloads.dispose();
       await this.validate_page_after_action(page, signal);
       if (
         page &&
@@ -6272,6 +6479,7 @@ export class BrowserSession {
         tab.tab_id = tab_id;
       }
       this._attachDialogHandler(page);
+      this._attachDownloadHandler(page);
 
       let currentUrl = tab.url;
       if (page?.url) {
@@ -7878,105 +8086,14 @@ export class BrowserSession {
       this.cachedBrowserState = null;
     };
 
+    this._attachDownloadHandler(page);
+    const downloads = this._watchDownloads();
     try {
-      // Check if downloads are enabled
-      const downloads_path = this.browser_profile.downloads_path;
-      if (downloads_path) {
-        ensurePrivateDirectoryIfCreated(downloads_path);
-
-        // Try to detect file download.
-        const download_promise = page.waitForEvent('download', {
-          timeout: 5000,
-        });
-
-        // Click failures should bubble to the caller.
-        try {
-          await element_handle.click();
-        } catch (error) {
-          void download_promise.catch(() => undefined);
-          throw error;
-        }
-
-        let download: any;
-        try {
-          download = await download_promise;
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          const isDownloadTimeout =
-            error instanceof Error &&
-            (error.name === 'TimeoutError' ||
-              message.toLowerCase().includes('timeout'));
-          if (!isDownloadTimeout) {
-            throw error;
-          }
-          this.logger.debug(
-            'No download triggered within timeout. Checking navigation...'
-          );
-          return null;
-        }
-
-        // Save the downloaded file.
-        const suggested_filename = download.suggestedFilename();
-        const unique_filename = await BrowserSession.get_unique_filename(
-          downloads_path,
-          suggested_filename
-        );
-        const download_path = path.join(downloads_path, unique_filename);
-        const download_guid = uuid7str();
-        const download_url =
-          typeof download.url === 'function'
-            ? download.url()
-            : (this.currentUrl ?? '');
-        await this._assert_download_url_allowed(download, download_url);
-        await this.event_bus.dispatch(
-          new DownloadStartedEvent({
-            guid: download_guid,
-            url: download_url,
-            suggested_filename,
-            auto_download: false,
-          })
-        );
-
-        await download.saveAs(download_path);
-        chmodPrivateFileBestEffort(download_path);
-        this.logger.info(`⬇️ Downloaded file to: ${download_path}`);
-        const stats = fs.existsSync(download_path)
-          ? fs.statSync(download_path)
-          : null;
-        await this.event_bus.dispatch(
-          new DownloadProgressEvent({
-            guid: download_guid,
-            received_bytes: stats?.size ?? 0,
-            total_bytes: stats?.size ?? 0,
-            state: 'completed',
-          })
-        );
-
-        const fileDownloadedResult = await this.event_bus.dispatch(
-          new FileDownloadedEvent({
-            guid: download_guid,
-            url: download_url,
-            path: download_path,
-            file_name: unique_filename,
-            file_size: stats?.size ?? 0,
-            file_type: path.extname(unique_filename).replace('.', '') || null,
-            mime_type: null,
-            auto_download: false,
-          })
-        );
-        if (fileDownloadedResult.handler_results.length === 0) {
-          this.add_downloaded_file(download_path);
-        }
-
-        return download_path;
-      } else {
-        // No downloads path configured, just click
-        await element_handle.click();
-      }
-
-      return null;
+      // Click failures bubble to the caller.
+      await element_handle.click();
+      return await this._waitForClickDownload(page, downloads, null);
     } finally {
+      downloads.dispose();
       await validateClickNavigation();
     }
   }

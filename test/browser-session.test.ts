@@ -80,6 +80,22 @@ import { URLNotAllowedError } from '../src/browser/views.js';
 import { DomService } from '../src/dom/service.js';
 import { DOMElementNode, DOMTextNode, DOMState } from '../src/dom/views.js';
 
+/** A page stub that delivers Playwright-style events to its handlers. */
+const withPageEvents = <T extends object>(page: T) => {
+  const handlers = new Map<string, Array<(value: unknown) => void>>();
+  return Object.assign(page, {
+    on: vi.fn((event: string, handler: (value: unknown) => void) => {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+    }),
+    off: vi.fn(),
+    emit(event: string, value: unknown) {
+      for (const handler of handlers.get(event) ?? []) {
+        handler(value);
+      }
+    },
+  });
+};
+
 describe('BrowserSession Basic Operations', () => {
   const withPlatform = async (
     platform: NodeJS.Platform,
@@ -1311,7 +1327,9 @@ esac
       });
 
       const locator = {
-        click: vi.fn(async () => {}),
+        click: vi.fn(async () => {
+          fakePage.emit('download', fakeDownload);
+        }),
       };
       const fakeDownload = {
         suggestedFilename: () => 'report.csv',
@@ -1320,10 +1338,9 @@ esac
           fs.writeFileSync(targetPath, 'abc');
         }),
       };
-      const fakePage = {
-        waitForEvent: vi.fn(async () => fakeDownload),
+      const fakePage = withPageEvents({
         waitForLoadState: vi.fn(async () => {}),
-      };
+      });
 
       vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
       vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage as any);
@@ -1364,6 +1381,7 @@ esac
       let pageUrl = 'https://example.com/download';
       const locator = {
         click: vi.fn(async () => {
+          fakePage.emit('download', fakeDownload);
           pageUrl = 'https://evil.test/from-download?token=secret';
         }),
       };
@@ -1374,15 +1392,14 @@ esac
           fs.writeFileSync(targetPath, 'abc');
         }),
       };
-      const fakePage = {
+      const fakePage = withPageEvents({
         goto: vi.fn(async (url: string) => {
           pageUrl = url;
         }),
         title: vi.fn(async () => pageUrl),
         url: vi.fn(() => pageUrl),
-        waitForEvent: vi.fn(async () => fakeDownload),
         waitForLoadState: vi.fn(async () => {}),
-      };
+      });
 
       vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
       vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage as any);
@@ -1419,7 +1436,9 @@ esac
       });
       let pageUrl = 'https://example.com/download';
       const locator = {
-        click: vi.fn(async () => {}),
+        click: vi.fn(async () => {
+          fakePage.emit('download', fakeDownload);
+        }),
       };
       const fakeDownload = {
         cancel: vi.fn(async () => {}),
@@ -1429,15 +1448,14 @@ esac
           fs.writeFileSync(targetPath, 'abc');
         }),
       };
-      const fakePage = {
+      const fakePage = withPageEvents({
         goto: vi.fn(async (url: string) => {
           pageUrl = url;
         }),
         title: vi.fn(async () => pageUrl),
         url: vi.fn(() => pageUrl),
-        waitForEvent: vi.fn(async () => fakeDownload),
         waitForLoadState: vi.fn(async () => {}),
-      };
+      });
 
       vi.spyOn(session, 'get_locate_element').mockResolvedValue(locator as any);
       vi.spyOn(session, 'get_current_page').mockResolvedValue(fakePage as any);
@@ -1617,11 +1635,11 @@ esac
         fs.writeFileSync(targetPath, 'csv');
       }),
     };
-    const fakePage = {
-      waitForEvent: vi.fn(async () => fakeDownload),
-    } as any;
+    const fakePage = withPageEvents({}) as any;
     const elementHandle = {
-      click: vi.fn(async () => {}),
+      click: vi.fn(async () => {
+        fakePage.emit('download', fakeDownload);
+      }),
     };
 
     vi.spyOn(session, 'get_locate_element').mockResolvedValue(
@@ -1665,11 +1683,11 @@ esac
         fs.writeFileSync(targetPath, 'safe');
       }),
     };
-    const fakePage = {
-      waitForEvent: vi.fn(async () => fakeDownload),
-    } as any;
+    const fakePage = withPageEvents({}) as any;
     const elementHandle = {
-      click: vi.fn(async () => {}),
+      click: vi.fn(async () => {
+        fakePage.emit('download', fakeDownload);
+      }),
     };
 
     vi.spyOn(session, 'get_locate_element').mockResolvedValue(
@@ -4418,17 +4436,18 @@ esac
         fs.writeFileSync(targetPath, 'csv');
       }),
     };
-    const fakePage = {
+    const fakePage = withPageEvents({
       goto: vi.fn(async (url: string) => {
         pageUrl = url;
       }),
       title: vi.fn(async () => pageUrl),
       url: vi.fn(() => pageUrl),
-      waitForEvent: vi.fn(async () => fakeDownload),
       waitForLoadState: vi.fn(async () => {}),
-    } as any;
+    }) as any;
     const elementHandle = {
-      click: vi.fn(async () => {}),
+      click: vi.fn(async () => {
+        fakePage.emit('download', fakeDownload);
+      }),
     };
 
     vi.spyOn(session, 'get_locate_element').mockResolvedValue(
@@ -4448,7 +4467,10 @@ esac
 
       expect(fakeDownload.saveAs).not.toHaveBeenCalled();
       expect(fakeDownload.cancel).toHaveBeenCalledTimes(1);
-      expect(fs.readdirSync(downloadsPath)).toEqual([]);
+      // Nothing is saved, so the downloads directory is not even created.
+      expect(
+        fs.existsSync(downloadsPath) ? fs.readdirSync(downloadsPath) : []
+      ).toEqual([]);
       expect(session.active_tab?.url).toBe('https://example.com/download');
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
