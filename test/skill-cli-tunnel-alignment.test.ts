@@ -705,19 +705,24 @@ describe('skill-cli tunnel alignment', () => {
         process.execPath,
         [
           '-e',
-          'setInterval(() => {}, 1000)',
+          "process.stdout.write('ready'); setInterval(() => {}, 1000)",
           'tunnel',
           '--url',
           'http://localhost:3000',
         ],
         {
           argv0: binaryPath,
-          stdio: 'ignore',
+          stdio: ['ignore', 'pipe', 'ignore'],
         }
       );
+      // 'spawn' can fire while the child is still inside execve, before Linux
+      // fills /proc/<pid>/cmdline. Output from the script means it has started.
       await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve);
+        child.stdout.once('data', () => resolve());
         child.once('error', reject);
+        child.once('exit', (code, signal) =>
+          reject(new Error(`Test process exited early (${code ?? signal})`))
+        );
       });
       fs.writeFileSync(
         infoPath,
