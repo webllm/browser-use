@@ -6,15 +6,17 @@ on:
 permissions:
   contents: read
 
+# Jobs run on ubuntu-24.04 instead of ubuntu-latest: Playwright 1.58 does not
+# support Ubuntu 26.04, which ubuntu-latest becomes from 2026-10-19.
 jobs:
   dependency-review:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check dependency graph availability
         id: dependency-graph
@@ -43,13 +45,13 @@ jobs:
 
       - name: Setup pnpm (fallback)
         if: steps.dependency-graph.outputs.enabled != 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 10.28.1
 
       - name: Use Node.js 22.x (fallback)
         if: steps.dependency-graph.outputs.enabled != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22.x'
           cache: pnpm
