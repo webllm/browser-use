@@ -2,21 +2,20 @@
   "$schema": "https://github.com/anthropics/dxt/blob/main/dist/dxt-manifest.schema.json",
   "dxt_version": "0.1",
   "name": "browser-use",
-  "display_name": "Browser-Use AI Browser Automation",
+  "display_name": "Browser-Use for TypeScript (Unofficial)",
   "version": "0.9.0",
-  "description": "AI-powered browser automation that lets Claude control web browsers to complete tasks autonomously",
-  "long_description": "Browser-Use is a powerful extension that enables Claude to control real web browsers through an AI agent. It can navigate websites, fill forms, extract data, and perform complex multi-step tasks autonomously. Perfect for web scraping, testing, research, and automation workflows.\n\n### Key Features:\n- **Autonomous AI Agent**: High-level task execution with minimal supervision\n- **Direct Browser Control**: Navigate, click, type, and interact with any website\n- **Content Extraction**: Smart extraction of structured data from web pages\n- **Tab Management**: Handle multiple tabs and complex workflows\n- **Vision Capabilities**: Use screenshots for visual understanding\n- **Security Features**: Domain restrictions and sandboxed execution\n\n### Use Cases:\n- Web scraping and data extraction\n- Automated testing and QA\n- Research and information gathering\n- Form filling and submissions\n- Multi-step workflow automation",
-  "homepage": "https://browser-use.com",
-  "documentation": "https://docs.browser-use.com",
+  "description": "Unofficial TypeScript port of browser-use: AI-powered browser automation that lets Claude control web browsers to complete tasks autonomously",
+  "long_description": "This is an unofficial, community-maintained TypeScript port of the open-source Python browser-use library. It is not affiliated with or endorsed by Browser Use; report issues at https://github.com/webllm/browser-use/issues.\n\nIt is a powerful extension that enables Claude to control real web browsers through an AI agent. It can navigate websites, fill forms, extract data, and perform complex multi-step tasks autonomously. Perfect for web scraping, testing, research, and automation workflows.\n\n### Key Features:\n- **Autonomous AI Agent**: High-level task execution with minimal supervision\n- **Direct Browser Control**: Navigate, click, type, and interact with any website\n- **Content Extraction**: Smart extraction of structured data from web pages\n- **Tab Management**: Handle multiple tabs and complex workflows\n- **Vision Capabilities**: Use screenshots for visual understanding\n- **Security Features**: Domain restrictions and sandboxed execution\n\n### Use Cases:\n- Web scraping and data extraction\n- Automated testing and QA\n- Research and information gathering\n- Form filling and submissions\n- Multi-step workflow automation",
+  "homepage": "https://github.com/webllm/browser-use",
+  "documentation": "https://github.com/webllm/browser-use/tree/main/docs",
   "repository": {
     "type": "git",
-    "url": "https://github.com/browser-use/browser-use"
+    "url": "https://github.com/webllm/browser-use"
   },
-  "support": "https://github.com/browser-use/browser-use/issues",
+  "support": "https://github.com/webllm/browser-use/issues",
   "author": {
-    "name": "Browser-Use Team",
-    "email": "support@browser-use.com",
-    "url": "https://browser-use.com"
+    "name": "unadlib",
+    "url": "https://github.com/webllm/browser-use"
   },
   "server": {
     "type": "node",
