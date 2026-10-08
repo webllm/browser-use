@@ -129,8 +129,10 @@ describe('persistent browser profiles', () => {
         playwright
       )
     ).toBe('none');
-    // Playwright creates these profiles and deletes them on close or exit.
-    expect(userDataDirs).toEqual(['', '']);
+    // Every launch, including retries without the sandbox on Linux CI, asks
+    // Playwright for a temporary profile that it deletes on close or exit.
+    expect(userDataDirs.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(userDataDirs)).toEqual(new Set(['']));
   }, 60_000);
 
   it('runs default extensions on agent pages in headless mode', async () => {
