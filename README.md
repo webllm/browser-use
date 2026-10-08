@@ -35,7 +35,7 @@ The port follows the Python library's behavior closely, with a native Node.js ex
 - 🔌 **MCP Server** — Model Context Protocol support for Claude Desktop and MCP-compatible clients
 - ⌨️ **CLI Tool** — Interactive and one-shot modes for quick browser tasks
 - 🔒 **Security First** — Sensitive data masking, domain restrictions, and Chromium sandboxing
-- 📊 **Observability** — Event system, telemetry, performance tracing, and session recording (GIF)
+- 📊 **Observability** — Event system, performance tracing, and session recording (GIF)
 - 🐳 **Docker Ready** — Configurable for containerized and CI/CD environments
 
 ## About this port
@@ -49,6 +49,7 @@ The port follows the Python library's behavior closely, with a native Node.js ex
 
 - The port tracks the Python library's behavior and naming (snake_case options, the same action set) and ports upstream changes periodically. Some upstream features are intentionally not ported; see the [architecture decisions](./docs/adr/index.md).
 - Browser Use Cloud and `ChatBrowserUse` are hosted services operated by Browser Use. This port only calls their public APIs with your own API key. Browser Use's official TypeScript SDK for its cloud API is the separate `browser-use-sdk` package.
+- This port collects no telemetry or usage analytics.
 - "Browser Use" and related names belong to their respective owners and are used here only to describe compatibility.
 
 ## 🚀 Quick Start
@@ -375,7 +376,6 @@ const agent = new Agent({ task: '...', llm, browser_session: session });
 | `BROWSER_USE_HEADLESS`        | Run browser headlessly (`true`/`false`)        |
 | `BROWSER_USE_LOGGING_LEVEL`   | Log level: `debug`, `info`, `warning`, `error` |
 | `BROWSER_USE_ALLOWED_DOMAINS` | Comma-separated domain allowlist               |
-| `ANONYMIZED_TELEMETRY`        | Enable/disable anonymous telemetry             |
 
 > See [Configuration Guide](./docs/CONFIGURATION.md) for the full list.
 

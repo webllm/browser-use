@@ -14,7 +14,7 @@ Browser-Use enables AI agents to autonomously control web browsers, making decis
 - **Custom Actions**: Extensible action registry for domain-specific operations
 - **Security First**: Built-in sensitive data masking and domain restrictions
 - **MCP Integration**: Model Context Protocol support for Claude Desktop
-- **Comprehensive Logging**: Detailed telemetry, event tracking, and debugging
+- **Comprehensive Logging**: Detailed logs, event tracking, and debugging, with no telemetry
 
 ## Documentation Index
 

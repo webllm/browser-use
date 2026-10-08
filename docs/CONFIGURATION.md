@@ -49,11 +49,7 @@ Configuration values are resolved in this order (highest priority first):
 | `BROWSER_USE_SCREEN_WIDTH`  | `number` | -       | Override screen width  |
 | `BROWSER_USE_SCREEN_HEIGHT` | `number` | -       | Override screen height |
 
-### Telemetry
-
-| Variable               | Type      | Default | Description                |
-| ---------------------- | --------- | ------- | -------------------------- |
-| `ANONYMIZED_TELEMETRY` | `boolean` | `true`  | Enable anonymous telemetry |
+This package sends no telemetry, so there is no telemetry setting.
 
 ## Configuration File
 
@@ -489,9 +485,6 @@ BROWSER_USE_HEADLESS=false
 
 # Logging
 BROWSER_USE_LOGGING_LEVEL=debug
-
-# Telemetry
-ANONYMIZED_TELEMETRY=false
 ```
 
 Load with dotenv:

@@ -56,5 +56,6 @@ npx browser-use --cli-mcp      # MCP server with direct browser commands
 | --------------------------- | --------------------------------------------------- |
 | `BROWSER_USE_HEADLESS`      | Default `headless` for new BrowserProfile instances |
 | `BROWSER_USE_LOGGING_LEVEL` | `debug`, `info`, `warning`, or `error`              |
-| `ANONYMIZED_TELEMETRY`      | Set to `false` to disable telemetry                 |
 | `BROWSER_USE_API_KEY`       | Browser Use Cloud browsers and `ChatBrowserUse`     |
+
+The package sends no telemetry.

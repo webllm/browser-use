@@ -75,7 +75,6 @@ GOOGLE_API_KEY=your-google-key
 
 # Development settings
 BROWSER_USE_LOGGING_LEVEL=debug
-ANONYMIZED_TELEMETRY=false
 ```
 
 ### IDE Setup
@@ -170,12 +169,9 @@ browser-use/
 │   │   ├── google.ts         # Google Gemini
 │   │   └── ...               # Other providers
 │   │
-│   ├── mcp/                  # MCP server
-│   │   ├── server.ts         # Server implementation
-│   │   └── tools.ts          # MCP tools
-│   │
-│   └── telemetry/            # Telemetry
-│       └── index.ts          # Telemetry service
+│   └── mcp/                  # MCP server
+│       ├── server.ts         # Server implementation
+│       └── tools.ts          # MCP tools
 │
 ├── tests/                    # Test files
 │   ├── unit/                 # Unit tests

@@ -169,9 +169,6 @@ BROWSER_USE_HEADLESS=true
 
 # MCP Configuration
 BROWSER_USE_MCP_SESSION_TIMEOUT_MINUTES=10
-
-# Telemetry
-ANONYMIZED_TELEMETRY=false
 ```
 
 ### Claude Desktop with Full Configuration
@@ -185,8 +182,7 @@ ANONYMIZED_TELEMETRY=false
       "env": {
         "OPENAI_API_KEY": "sk-your-key",
         "BROWSER_USE_HEADLESS": "true",
-        "BROWSER_USE_LLM_MODEL": "gpt-4o",
-        "ANONYMIZED_TELEMETRY": "false"
+        "BROWSER_USE_LLM_MODEL": "gpt-4o"
       }
     }
   }
@@ -284,17 +280,7 @@ MCP tools return structured error responses:
 
 ## Telemetry
 
-The MCP server reports anonymous telemetry:
-
-- Tool usage counts
-- Success/failure rates
-- Session durations
-
-Disable with:
-
-```bash
-ANONYMIZED_TELEMETRY=false
-```
+The MCP server sends no telemetry.
 
 ## Security Considerations
 

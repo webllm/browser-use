@@ -9,7 +9,7 @@ Browser-Use handles sensitive operations including browser automation, credentia
 - [Domain Restrictions](#domain-restrictions)
 - [Browser Security](#browser-security)
 - [Network Security](#network-security)
-- [Logging and Telemetry](#logging-and-telemetry)
+- [Logging](#logging)
 - [Production Deployment](#production-deployment)
 - [Security Checklist](#security-checklist)
 
@@ -345,7 +345,7 @@ await page.route('**/*', (route) => {
 
 ---
 
-## Logging and Telemetry
+## Logging
 
 ### Log Levels
 
@@ -369,25 +369,7 @@ INFO [agent] Navigating to https://example.com/login?token=<MASKED>
 
 ### Telemetry
 
-Disable telemetry if needed:
-
-```bash
-ANONYMIZED_TELEMETRY=false
-```
-
-Telemetry data collected (when enabled):
-
-- Tool usage counts
-- Session durations
-- Success/failure rates
-- Model/provider information (no content)
-
-**Not collected:**
-
-- URLs visited
-- Page content
-- Credentials or sensitive data
-- Personal information
+This package sends no telemetry or usage analytics.
 
 ---
 
@@ -505,7 +487,6 @@ const llm = new ChatOpenAI({
 - [ ] Enable Chromium sandbox (or use secure containers)
 - [ ] Set `BROWSER_USE_HEADLESS=true`
 - [ ] Configure domain restrictions
-- [ ] Disable telemetry if required by policy
 - [ ] Set appropriate log levels
 - [ ] Use HTTPS only
 - [ ] Run as non-root user

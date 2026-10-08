@@ -67,7 +67,6 @@ src/agent/
 - **Step Execution**: Runs the main loop of observe → think → act
 - **State Tracking**: Maintains history of all actions and results
 - **Error Recovery**: Handles failures with retry logic
-- **Telemetry**: Reports metrics and events
 
 ### 2. Browser Session (`src/browser/`)
 
@@ -351,7 +350,6 @@ class AssistantMessage {
          │  │  ┌─────────────────────────────────────┐│ │
          │  │  │ - Create AgentHistory entry         ││ │
          │  │  │ - Emit CreateAgentStepEvent         ││ │
-         │  │  │ - Capture telemetry                 ││ │
          │  │  └─────────────────────────────────────┘│ │
          │  └─────────────────────────────────────────┘ │
          │                      │                       │
@@ -497,7 +495,7 @@ Used in Controller to create dynamic action models based on registered actions.
 
 ### 7. Singleton Pattern
 
-Used for Logger instances and ProductTelemetry.
+Used for Logger instances.
 
 ### 8. Decorator Pattern
 
