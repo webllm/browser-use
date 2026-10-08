@@ -4423,7 +4423,7 @@ esac
     await session.stop();
   });
 
-  it('launches on a fresh temporary profile and deletes it on stop', async () => {
+  it('launches on a Playwright temporary profile when no user_data_dir is set', async () => {
     const { fakeContext, fakeBrowser, launchPersistentContext, playwright } =
       createPersistentLaunchFixture();
     const session = new BrowserSession({
@@ -4433,9 +4433,10 @@ esac
 
     await session.start();
 
+    // An empty path makes Playwright create the profile and delete it when
+    // the browser closes or the process exits.
     const [userDataDir, launchOptions] = launchPersistentContext.mock.calls[0]!;
-    expect(path.basename(userDataDir)).toMatch(/^browser-use-user-data-dir-/);
-    expect(fs.existsSync(userDataDir)).toBe(true);
+    expect(userDataDir).toBe('');
     expect(launchOptions).not.toHaveProperty('userDataDir');
     expect(launchOptions).not.toHaveProperty('storageState');
     expect(session.browser_context).toBe(fakeContext);
@@ -4444,7 +4445,6 @@ esac
     await session.stop();
 
     expect(fakeContext.close).toHaveBeenCalled();
-    expect(fs.existsSync(userDataDir)).toBe(false);
   });
 
   it('launches on the configured profile and keeps it after stop', async () => {
@@ -4581,16 +4581,45 @@ esac
 
       expect(launchPersistentContext).toHaveBeenCalledTimes(2);
       expect(launchPersistentContext.mock.calls[0]![0]).toBe(userDataDir);
-      const fallbackDir = launchPersistentContext.mock.calls[1]![0];
-      expect(path.basename(fallbackDir)).toMatch(/^browser-use-user-data-dir-/);
+      expect(launchPersistentContext.mock.calls[1]![0]).toBe('');
 
       await session.stop();
-      expect(fs.existsSync(fallbackDir)).toBe(false);
       expect(fs.existsSync(userDataDir)).toBe(true);
     } finally {
       fs.rmSync(userDataDir, { recursive: true, force: true });
     }
   });
+
+  it.runIf(process.platform !== 'win32')(
+    'skips a configured profile whose lock owner is still running',
+    async () => {
+      const userDataDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-held-profile-')
+      );
+      fs.symlinkSync(
+        `${os.hostname()}-${process.pid}`,
+        path.join(userDataDir, 'SingletonLock')
+      );
+      const { launchPersistentContext, playwright } =
+        createPersistentLaunchFixture();
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile({
+          headless: false,
+          user_data_dir: userDataDir,
+        }),
+        playwright: playwright as any,
+      });
+
+      try {
+        await session.start();
+        expect(launchPersistentContext).toHaveBeenCalledTimes(1);
+        expect(launchPersistentContext.mock.calls[0]![0]).toBe('');
+        await session.stop();
+      } finally {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it.runIf(process.platform !== 'win32')(
     'treats a profile as in use only while its lock owner is running',

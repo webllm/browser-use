@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BrowserProfile } from '../src/browser/profile.js';
 import { BrowserSession } from '../src/browser/session.js';
@@ -44,9 +45,13 @@ describe('persistent browser profiles', () => {
   const visit = async (
     profile: BrowserProfile,
     pathname: string,
-    inspect?: (session: BrowserSession) => Promise<void>
+    inspect?: (session: BrowserSession) => Promise<void>,
+    playwright?: unknown
   ) => {
-    const session = new BrowserSession({ browser_profile: profile });
+    const session = new BrowserSession({
+      browser_profile: profile,
+      playwright: playwright as any,
+    });
     await session.start();
     try {
       const page = await session.get_current_page();
@@ -96,29 +101,36 @@ describe('persistent browser profiles', () => {
     }
   }, 60_000);
 
-  it('gives each default session a fresh profile and deletes it afterwards', async () => {
-    const profileDirs: string[] = [];
-    const recordProfileDir = async (session: BrowserSession) => {
-      profileDirs.push((session as any)._ownedUserDataDir);
+  it('gives each default session its own temporary profile', async () => {
+    const userDataDirs: string[] = [];
+    const playwright = {
+      chromium: {
+        executablePath: () => chromium.executablePath(),
+        launchPersistentContext: (userDataDir: string, options: object) => {
+          userDataDirs.push(userDataDir);
+          return chromium.launchPersistentContext(userDataDir, options);
+        },
+      },
     };
 
     expect(
       await visit(
         new BrowserProfile({ headless: true }),
         '/set',
-        recordProfileDir
+        undefined,
+        playwright
       )
     ).toBe('none');
     expect(
-      await visit(new BrowserProfile({ headless: true }), '/', recordProfileDir)
+      await visit(
+        new BrowserProfile({ headless: true }),
+        '/',
+        undefined,
+        playwright
+      )
     ).toBe('none');
-
-    expect(profileDirs).toHaveLength(2);
-    expect(profileDirs[0]).not.toBe(profileDirs[1]);
-    for (const profileDir of profileDirs) {
-      expect(path.basename(profileDir)).toMatch(/^browser-use-user-data-dir-/);
-      expect(fs.existsSync(profileDir)).toBe(false);
-    }
+    // Playwright creates these profiles and deletes them on close or exit.
+    expect(userDataDirs).toEqual(['', '']);
   }, 60_000);
 
   it('runs default extensions on agent pages in headless mode', async () => {

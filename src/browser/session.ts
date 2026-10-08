@@ -138,6 +138,9 @@ const execFileAsync = promisify(execFile);
 const PLAYWRIGHT_OPTION_KEY_OVERRIDES: Record<string, string> = {
   extra_http_headers: 'extraHTTPHeaders',
 };
+// launchPersistentContext() takes an empty path to mean a temporary profile,
+// which Playwright deletes when the browser closes or the process exits.
+const TEMPORARY_USER_DATA_DIR = '';
 const DOMAIN_POLICY_UNFILTERABLE_RECORDING_KEYS = new Set([
   'record_video_dir',
   'record_video_size',
@@ -580,8 +583,6 @@ export class BrowserSession {
   private _subprocess: ChildProcess | null = null;
   private _childProcesses: Set<number> = new Set();
   private _browserLaunchToken: string | null = null;
-  // Temporary profile directory this session created and deletes on shutdown.
-  private _ownedUserDataDir: string | null = null;
   private attachedAgentId: string | null = null;
   private attachedSharedAgentIds: Set<string> = new Set();
   private _stoppingPromise: Promise<void> | null = null;
@@ -2904,18 +2905,14 @@ export class BrowserSession {
         context = await launchOn(userDataDir);
       } catch (error) {
         // Another browser can take the profile after the lock check.
-        if (this._ownedUserDataDir || !this._isProfileInUseError(error)) {
+        if (!userDataDir || !this._isProfileInUseError(error)) {
           throw error;
         }
-        this.logger.warning(
-          `Browser profile ${userDataDir} is in use by another browser, falling back to a temporary profile`
-        );
-        this._ownedUserDataDir = await this._fallbackToTempProfile();
-        context = await launchOn(this._ownedUserDataDir);
+        this._warnProfileInUse(userDataDir);
+        context = await launchOn(TEMPORARY_USER_DATA_DIR);
       }
     } catch (error) {
       this._browserLaunchToken = null;
-      this._removeOwnedUserDataDir();
       throw error;
     }
 
@@ -2971,18 +2968,28 @@ export class BrowserSession {
     }
   }
 
-  /** The profile directory to launch on; a temporary one when none is set. */
+  /**
+   * The profile directory to launch on. Without a usable configured one, the
+   * session gets a temporary profile from Playwright, which deletes it when
+   * the browser closes or the process exits.
+   */
   private async _resolveLaunchUserDataDir(): Promise<string> {
     const configured = this.browser_profile.user_data_dir;
     if (!configured) {
-      this._ownedUserDataDir = await this._createTempUserDataDir();
-      return this._ownedUserDataDir;
+      return TEMPORARY_USER_DATA_DIR;
     }
-    const prepared = await this.prepareUserDataDir(configured);
-    if (prepared !== configured) {
-      this._ownedUserDataDir = prepared;
+    if (await this._checkForSingletonLockConflict(configured)) {
+      this._warnProfileInUse(configured);
+      return TEMPORARY_USER_DATA_DIR;
     }
-    return prepared;
+    ensurePrivateDirectoryIfCreated(configured);
+    return configured;
+  }
+
+  private _warnProfileInUse(userDataDir: string) {
+    this.logger.warning(
+      `Browser profile ${userDataDir} is in use by another browser, falling back to a temporary profile`
+    );
   }
 
   private _isProfileInUseError(error: unknown) {
@@ -2990,27 +2997,6 @@ export class BrowserSession {
     return /ProcessSingleton|SingletonLock|profile appears to be in use|existing browser session/i.test(
       message
     );
-  }
-
-  /** Delete the temporary profile this session created, if any. */
-  private _removeOwnedUserDataDir() {
-    const userDataDir = this._ownedUserDataDir;
-    this._ownedUserDataDir = null;
-    if (!userDataDir) {
-      return;
-    }
-    try {
-      fs.rmSync(userDataDir, {
-        recursive: true,
-        force: true,
-        maxRetries: 3,
-        retryDelay: 100,
-      });
-    } catch (error) {
-      this.logger.debug(
-        `Failed to remove temporary profile ${userDataDir}: ${(error as Error).message}`
-      );
-    }
   }
 
   /**
@@ -3440,7 +3426,6 @@ export class BrowserSession {
     if (this.ownsBrowserResources && this.browser_pid) {
       await this._terminateBrowserProcess();
     }
-    this._removeOwnedUserDataDir();
 
     this.browser = null;
     this.browser_context = null;
