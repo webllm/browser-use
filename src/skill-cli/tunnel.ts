@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
   getProcessArguments,
+  isProcessRunning,
   type ProcessArgumentsReader,
 } from '../process-identity.js';
 import { readBoundedPrivateFile } from '../private-state.js';
@@ -661,14 +662,7 @@ export class TunnelManager {
   }
 }
 
-const default_is_process_alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-};
+const default_is_process_alive = isProcessRunning;
 
 const default_kill_process = async (
   pid: number,

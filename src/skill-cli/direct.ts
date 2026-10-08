@@ -23,6 +23,8 @@ import { readBoundedPrivateFile } from '../private-state.js';
 import {
   getProcessArguments,
   getProcessCommandLine,
+  isProcessRunning,
+  isZombieProcess,
   parseProcessCommandLineArguments,
   type ProcessCommandLineReader,
 } from '../process-identity.js';
@@ -624,14 +626,7 @@ const waitForLocalCdpEndpoint = async (
   );
 };
 
-const isProcessTargetAlive = (target: number) => {
-  try {
-    process.kill(target, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
-  }
-};
+const isProcessTargetAlive = isProcessRunning;
 
 const waitForProcessTargetExit = async (target: number) => {
   for (let attempt = 0; attempt < 10; attempt += 1) {
@@ -1041,6 +1036,9 @@ const defaultKillDirectBrowserProcess = async (pid: number) => {
         return;
       }
       throw error;
+    }
+    if (isZombieProcess(pid)) {
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

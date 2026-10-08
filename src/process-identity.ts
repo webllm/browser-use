@@ -116,6 +116,35 @@ const argumentsAfterExecutable = (
   return [executablePath, ...parseProcessCommandLineArguments(remainder)];
 };
 
+/**
+ * Whether a Linux process has exited but has not been reaped by its parent.
+ * Detached processes end up like this in containers whose PID 1 never reaps
+ * orphans; kill(pid, 0) still succeeds and /proc/<pid>/cmdline is empty.
+ */
+export const isZombieProcess = (pid: number) => {
+  if (process.platform !== 'linux' || !isValidPid(pid)) {
+    return false;
+  }
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    // The state follows the command name, which may contain ")" itself.
+    const state = stat.slice(stat.lastIndexOf(')') + 1).trim()[0];
+    return state === 'Z' || state === 'X';
+  } catch {
+    return false;
+  }
+};
+
+/** Whether a process (or a process group, for a negative target) is running. */
+export const isProcessRunning = (target: number) => {
+  try {
+    process.kill(target, 0);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+  return !isZombieProcess(target);
+};
+
 export const getProcessArguments: ProcessArgumentsReader = (pid) => {
   if (!isValidPid(pid)) {
     return null;
