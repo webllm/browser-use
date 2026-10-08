@@ -258,8 +258,8 @@ The browser runs on a profile directory, as in the Python library:
 - With `user_data_dir` set, cookies, logins, and other site data persist in
   that directory between sessions. If another browser is using it, the session
   falls back to a temporary profile and logs a warning.
-- Without it, each session starts on a fresh temporary profile that is deleted
-  when the session closes.
+- Without it, each session starts on a fresh temporary profile, which is
+  deleted when the browser closes or the process exits.
 - A Google Chrome profile directory (for example under
   `~/Library/Application Support/Google/Chrome`) is copied to a temporary
   directory first, so the session can use its logins without locking or

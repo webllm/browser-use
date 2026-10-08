@@ -30,8 +30,8 @@ cannot run extensions at all.
 - Local launches use `chromium.launchPersistentContext()` on the profile
   directory. The session keeps the context's `Browser` as `browser`.
 - `BrowserProfile.user_data_dir` defaults to `null`, as upstream. A session
-  without one launches on a new `browser-use-user-data-dir-*` directory and
-  deletes it when the session shuts down.
+  without one passes an empty path, so Playwright creates a temporary profile
+  and deletes it when the browser closes or the process exits.
 - If the configured profile is held by another browser (a live
   `SingletonLock`, or a launch error saying the profile is in use), the session
   falls back to a temporary profile and logs a warning.
@@ -58,14 +58,14 @@ permissions, headers, downloads) that Playwright applies at launch.
   `BrowserProfile` now gets `null`.
 - Headless runs with extensions use more memory and start more slowly than
   with the headless shell, as upstream's do.
-- A session that is never stopped or killed leaves its temporary profile
-  behind, as upstream does.
+- Temporary profiles are deleted even when a session is never stopped, which
+  upstream does not do.
 
 ## Verification
 
 - `test/browser-persistent-profile.test.ts` launches real browsers to check
   that cookies survive a restart with the same `user_data_dir`, that default
-  sessions do not share data and delete their profiles, that a storage state
-  file still loads, and that default extensions run on agent pages headlessly.
-- `test/browser-session.test.ts` covers the launch arguments, the temporary
-  profile cleanup, the profile-in-use fallback, and the lock check.
+  sessions get separate temporary profiles, that a storage state file still
+  loads, and that default extensions run on agent pages headlessly.
+- `test/browser-session.test.ts` covers the launch arguments, the
+  profile-in-use fallbacks, and the lock check.
