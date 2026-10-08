@@ -211,11 +211,6 @@
       "import": "./dist/sandbox/index.js",
       "default": "./dist/sandbox/index.js"
     },
-    "./telemetry": {
-      "types": "./dist/telemetry/index.d.ts",
-      "import": "./dist/telemetry/index.js",
-      "default": "./dist/telemetry/index.js"
-    },
     "./tokens": {
       "types": "./dist/tokens/index.d.ts",
       "import": "./dist/tokens/index.js",
@@ -363,7 +358,6 @@
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.17.2",
     "playwright": "^1.58.2",
-    "posthog-node": "^5.24.11",
     "semver": "^7.8.1",
     "turndown": "^7.2.2",
     "yauzl": "^3.4.0",

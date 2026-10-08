@@ -251,15 +251,15 @@ describe('Agent constructor browser session alignment', () => {
       task: 'default max steps',
       llm: createLlm(),
     });
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
+    const stepInfos: Array<{ max_steps: number }> = [];
+    vi.spyOn(agent as any, '_step').mockImplementation(async (info: any) => {
+      stepInfos.push(info);
+      agent.state.stopped = true;
+    });
 
-    agent.state.stopped = true;
     await agent.run();
 
-    const lastCall = logAgentEventSpy.mock.calls.at(-1);
-    expect(lastCall?.[0]).toBe(500);
+    expect(stepInfos[0]?.max_steps).toBe(500);
 
     await agent.close();
   });
@@ -300,9 +300,6 @@ describe('Agent constructor browser session alignment', () => {
     const startSpy = vi
       .spyOn(agent.browser_session as any, 'start')
       .mockResolvedValue(undefined);
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
     const stepSpy = vi
       .spyOn(agent as any, '_step')
       .mockImplementation(async () => {
@@ -314,7 +311,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(startSpy).toHaveBeenCalledTimes(1);
     expect(stepSpy).toHaveBeenCalledTimes(1);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -327,9 +323,6 @@ describe('Agent constructor browser session alignment', () => {
     });
 
     const infoSpy = vi.spyOn(agent.logger, 'info');
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
     const stepSpy = vi.spyOn(agent as any, '_step');
 
     await agent.run(1);
@@ -339,7 +332,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(agent.state.stopped).toBe(true);
     expect(infoSpy).toHaveBeenCalledWith('External callback requested stop');
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -352,9 +344,6 @@ describe('Agent constructor browser session alignment', () => {
       initial_actions: [{ wait: { seconds: 0 } }],
     });
 
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
     const stepSpy = vi.spyOn(agent as any, '_step');
 
     await expect(agent.run(1)).resolves.toBeDefined();
@@ -363,7 +352,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(stepSpy).not.toHaveBeenCalled();
     expect(agent.state.stopped).toBe(true);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -373,9 +361,6 @@ describe('Agent constructor browser session alignment', () => {
       llm: createLlm(),
     });
     const dispatchSpy = vi.spyOn(agent.eventbus, 'dispatch');
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
 
     agent.state.stopped = true;
     await agent.run(1);
@@ -393,7 +378,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(taskEventCount).toBe(2);
     expect(agent.state.session_initialized).toBe(true);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -529,9 +513,6 @@ describe('Agent constructor browser session alignment', () => {
       task: 'resume run loop from saved step',
       llm: createLlm(),
     });
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
     const stepSpy = vi
       .spyOn(agent as any, '_step')
       .mockImplementation(async () => {
@@ -546,7 +527,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(stepInfo.step_number).toBe(2);
     expect(stepInfo.max_steps).toBe(3);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -1900,9 +1880,6 @@ describe('Agent constructor browser session alignment', () => {
     });
 
     const multiActSpy = vi.spyOn(agent, 'multi_act').mockResolvedValue([]);
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
 
     agent.state.stopped = true;
     await agent.run(1);
@@ -1913,7 +1890,6 @@ describe('Agent constructor browser session alignment', () => {
     await agent.run(1);
     expect(multiActSpy).toHaveBeenCalledTimes(1);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -1939,9 +1915,6 @@ describe('Agent constructor browser session alignment', () => {
     const multiActSpy = vi
       .spyOn(agent, 'multi_act')
       .mockResolvedValue(initialResult as any);
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
 
     agent.state.stopped = true;
     await agent.run(1);
@@ -1955,7 +1928,6 @@ describe('Agent constructor browser session alignment', () => {
       'Loaded start URL'
     );
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 
@@ -1978,9 +1950,6 @@ describe('Agent constructor browser session alignment', () => {
       .mockResolvedValue([
         new ActionResult({ extracted_content: 'ok' }),
       ] as any);
-    const logAgentEventSpy = vi
-      .spyOn(agent as any, '_log_agent_event')
-      .mockImplementation(() => {});
 
     agent.state.stopped = true;
     await agent.run(1);
@@ -1988,7 +1957,6 @@ describe('Agent constructor browser session alignment', () => {
     expect(multiActSpy).toHaveBeenCalledTimes(1);
     expect(multiActSpy.mock.calls[0]).toHaveLength(1);
 
-    logAgentEventSpy.mockRestore();
     await agent.close();
   });
 

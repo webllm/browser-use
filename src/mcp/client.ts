@@ -39,8 +39,6 @@ import type { Controller } from '../controller/service.js';
 import type { Registry } from '../tools/registry/service.js';
 import type { Tools } from '../tools/service.js';
 import { ActionResult } from '../agent/views.js';
-import { productTelemetry } from '../telemetry/service.js';
-import { MCPClientTelemetryEvent } from '../telemetry/views.js';
 import { get_browser_use_version, retryAsync } from '../utils.js';
 import {
   formatMcpCommandForLog,
@@ -138,8 +136,6 @@ export class MCPClient {
 
     this._connecting = true;
     const actualTimeout = timeout ?? this.connectionTimeout;
-    const startTime = Date.now() / 1000;
-    let errorMsg: string | null = null;
 
     try {
       logger.info(
@@ -197,25 +193,10 @@ export class MCPClient {
       // Start health checks
       this._startHealthCheck();
     } catch (error) {
-      errorMsg = redactMcpLogMessage(error);
       this._connected = false;
       throw error;
     } finally {
       this._connecting = false;
-
-      // Capture telemetry for connect action
-      const duration = Date.now() / 1000 - startTime;
-      productTelemetry.capture(
-        new MCPClientTelemetryEvent({
-          server_name: this.serverName,
-          command: this.command,
-          tools_discovered: this._tools.size,
-          version: get_browser_use_version(),
-          action: 'connect',
-          duration_seconds: duration,
-          error_message: errorMsg,
-        })
-      );
     }
   }
 
@@ -253,9 +234,6 @@ export class MCPClient {
       return;
     }
 
-    const startTime = Date.now() / 1000;
-    let errorMsg: string | null = null;
-
     try {
       logger.info(`🔌 Disconnecting from MCP server '${this.serverName}'`);
 
@@ -273,23 +251,9 @@ export class MCPClient {
         `Disconnected from '${this.serverName}' (${stats.toolCallCount} tool calls, ${(stats.successRate * 100).toFixed(1)}% success rate)`
       );
     } catch (error) {
-      errorMsg = redactMcpLogMessage(error);
-      logger.error(`Error disconnecting from MCP server: ${errorMsg}`);
-    } finally {
-      // Capture telemetry for disconnect action
-      const duration = Date.now() / 1000 - startTime;
-      productTelemetry.capture(
-        new MCPClientTelemetryEvent({
-          server_name: this.serverName,
-          command: this.command,
-          tools_discovered: 0, // Tools cleared on disconnect
-          version: get_browser_use_version(),
-          action: 'disconnect',
-          duration_seconds: duration,
-          error_message: errorMsg,
-        })
+      logger.error(
+        `Error disconnecting from MCP server: ${redactMcpLogMessage(error)}`
       );
-      productTelemetry.flush();
     }
   }
 
@@ -320,9 +284,6 @@ export class MCPClient {
       throw new Error(`MCP server '${this.serverName}' not connected`);
     }
 
-    const startTime = Date.now() / 1000;
-    let errorMsg: string | null = null;
-
     try {
       logger.debug(
         `🔧 Calling MCP tool '${name}' with params: ${formatMcpToolArgsForLog(args)}`
@@ -341,24 +302,8 @@ export class MCPClient {
       return result;
     } catch (error) {
       this._errorCount++;
-      errorMsg = redactMcpLogMessage(error);
-      logger.error(`MCP tool '${name}' failed: ${errorMsg}`);
+      logger.error(`MCP tool '${name}' failed: ${redactMcpLogMessage(error)}`);
       throw error;
-    } finally {
-      // Capture telemetry for tool call
-      const duration = Date.now() / 1000 - startTime;
-      productTelemetry.capture(
-        new MCPClientTelemetryEvent({
-          server_name: this.serverName,
-          command: this.command,
-          tools_discovered: this._tools.size,
-          version: get_browser_use_version(),
-          action: 'tool_call',
-          tool_name: name,
-          duration_seconds: duration,
-          error_message: errorMsg,
-        })
-      );
     }
   }
 

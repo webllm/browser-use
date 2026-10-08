@@ -78,6 +78,8 @@ describe('ChatBrowserUse alignment', () => {
     const payload = JSON.parse(String(request.body));
     expect(payload.model).toBe('bu-2-0');
     expect(payload.request_type).toBe('judge');
+    // The port collects no telemetry and asks the service not to either.
+    expect(payload.anonymized_telemetry).toBe(false);
     expect(payload.session_id).toBe('session-123');
     expect(payload.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(request.redirect).toBe('error');

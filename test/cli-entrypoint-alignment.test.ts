@@ -40,7 +40,6 @@ const runNode = (args: string[], timeoutMs = 20000) =>
       cwd: process.cwd(),
       env: {
         ...process.env,
-        ANONYMIZED_TELEMETRY: 'false',
         BROWSER_USE_LOGGING_LEVEL: 'result',
       },
       stdio: ['ignore', 'pipe', 'pipe'],

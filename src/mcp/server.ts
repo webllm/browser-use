@@ -54,9 +54,6 @@ import {
   get_default_profile,
 } from '../config.js';
 import { zodSchemaToJsonSchema } from '../llm/schema.js';
-import { productTelemetry } from '../telemetry/service.js';
-import { MCPServerTelemetryEvent } from '../telemetry/views.js';
-import { get_browser_use_version } from '../utils.js';
 import { redactMcpLogMessage } from './redaction.js';
 
 const logger = createLogger('browser_use.mcp.server');
@@ -606,7 +603,6 @@ export class MCPServer {
 
     // Execute tool
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const startTime = Date.now() / 1000;
       let errorMsg: string | null = null;
 
       try {
@@ -633,18 +629,6 @@ export class MCPServer {
           ],
           isError: true,
         };
-      } finally {
-        // Capture telemetry for tool calls
-        const duration = Date.now() / 1000 - startTime;
-        productTelemetry.capture(
-          new MCPServerTelemetryEvent({
-            version: get_browser_use_version(),
-            action: 'tool_call',
-            tool_name: request.params.name,
-            duration_seconds: duration,
-            error_message: errorMsg,
-          })
-        );
       }
     });
 
@@ -1257,14 +1241,6 @@ export class MCPServer {
     }
     this.restoreConsoleRedirect ??= redirectConsoleToStderr();
 
-    // Capture telemetry for server start
-    productTelemetry.capture(
-      new MCPServerTelemetryEvent({
-        version: get_browser_use_version(),
-        action: 'start',
-      })
-    );
-
     try {
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
@@ -1309,17 +1285,6 @@ export class MCPServer {
         this.browserSession = null;
         logger.info('Browser session closed');
       }
-
-      // Capture telemetry for server stop
-      const duration = Date.now() / 1000 - this.startTime;
-      productTelemetry.capture(
-        new MCPServerTelemetryEvent({
-          version: get_browser_use_version(),
-          action: 'stop',
-          duration_seconds: duration,
-        })
-      );
-      productTelemetry.flush();
 
       const stats = this.getStats();
       logger.info(

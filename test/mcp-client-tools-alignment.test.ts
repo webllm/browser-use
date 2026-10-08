@@ -174,7 +174,7 @@ describe('MCPClient tools alignment', () => {
     expect(formatted).not.toContain('query-secret');
   });
 
-  it('redacts sensitive MCP error messages before logging or telemetry', () => {
+  it('redacts sensitive MCP error messages before logging', () => {
     const formatted = redactMcpLogMessage(
       new Error(
         'Request failed api_key=sk-test Authorization: Bearer bearer-secret at https://example.com/callback?token=query-secret#frag data:text/html,<secret>'

@@ -54,7 +54,6 @@ describe('CLI interactive mode e2e', () => {
           ...process.env,
           BROWSER_USE_CLI_FORCE_INTERACTIVE: '1',
           BROWSER_USE_CONFIG_DIR: configDir,
-          ANONYMIZED_TELEMETRY: 'false',
           BROWSER_USE_LOGGING_LEVEL: 'result',
         },
       }

@@ -8,7 +8,6 @@ vi.mock('../src/config.js', () => ({
   CONFIG: {
     BROWSER_USE_LOGGING_LEVEL: 'info',
     BROWSER_USE_CONFIG_DIR: '/tmp/browser-use-test-config',
-    ANONYMIZED_TELEMETRY: false,
   },
   load_browser_use_config: () => ({
     browser_profile: {

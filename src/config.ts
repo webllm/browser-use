@@ -244,13 +244,8 @@ class OldConfig {
     return (process.env.BROWSER_USE_LOGGING_LEVEL ?? 'info').toLowerCase();
   }
 
-  get ANONYMIZED_TELEMETRY() {
-    return string_to_bool(process.env.ANONYMIZED_TELEMETRY, true);
-  }
-
   get BROWSER_USE_CLOUD_SYNC() {
-    const value = process.env.BROWSER_USE_CLOUD_SYNC;
-    return value ? string_to_bool(value) : this.ANONYMIZED_TELEMETRY;
+    return string_to_bool(process.env.BROWSER_USE_CLOUD_SYNC, true);
   }
 
   get BROWSER_USE_CLOUD_API_URL() {
@@ -395,10 +390,6 @@ class OldConfig {
 class FlatEnvConfig {
   get BROWSER_USE_LOGGING_LEVEL() {
     return process.env.BROWSER_USE_LOGGING_LEVEL ?? 'info';
-  }
-
-  get ANONYMIZED_TELEMETRY() {
-    return string_to_bool(process.env.ANONYMIZED_TELEMETRY, true);
   }
 
   get BROWSER_USE_CLOUD_SYNC() {

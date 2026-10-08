@@ -108,8 +108,6 @@ import {
 } from './cloud-events.js';
 import { create_history_gif } from './gif.js';
 import { ScreenshotService } from '../screenshots/service.js';
-import { ProductTelemetry, productTelemetry } from '../telemetry/service.js';
-import { AgentTelemetryEvent } from '../telemetry/views.js';
 import { TokenCost } from '../tokens/service.js';
 import {
   construct_judge_messages,
@@ -672,7 +670,6 @@ export class Agent<
     AgentStructuredOutput
   >['register_external_agent_status_raise_error_callback'];
   context: Context | null;
-  telemetry: ProductTelemetry;
   eventbus: EventBus;
   enable_cloud_sync: boolean;
   cloud_sync: any = null;
@@ -711,7 +708,6 @@ export class Agent<
   agent_current_page: Page | null = null;
   _session_start_time = 0;
   _task_start_time = 0;
-  _force_exit_telemetry_logged = false;
   private _closePromise: Promise<void> | null = null;
   private _hasBrowserSessionClaim = false;
   private _sharedPinnedTabId: number | null = null;
@@ -1093,7 +1089,6 @@ export class Agent<
       this.settings.loop_detection_window
     );
     this.history = new AgentHistoryList([], null);
-    this.telemetry = productTelemetry;
 
     this._file_system_path = file_system_path;
     this.file_system = this._initFileSystem(file_system_path);
@@ -1168,7 +1163,6 @@ export class Agent<
 
     this._session_start_time = 0;
     this._task_start_time = 0;
-    this._force_exit_telemetry_logged = false;
 
     // Security validation for sensitive_data and allowed_domains
     this._validateSecuritySettings();
@@ -2679,16 +2673,10 @@ export class Agent<
       MAX_AGENT_RUN_STEPS + 1
     );
     let agent_run_error: string | null = null;
-    this._force_exit_telemetry_logged = false;
 
     const signal_handler = new SignalHandler({
       pause_callback: this.pause.bind(this),
       resume_callback: this.resume.bind(this),
-      custom_exit_callback: () => {
-        this._log_agent_event(max_steps, 'SIGINT: Cancelled by user');
-        this.telemetry?.flush?.();
-        this._force_exit_telemetry_logged = true;
-      },
       exit_on_second_int: true,
     });
     signal_handler.register();
@@ -2886,26 +2874,6 @@ export class Agent<
     } finally {
       await this.token_cost_service.log_usage_summary();
       signal_handler.unregister();
-
-      if (!this._force_exit_telemetry_logged) {
-        try {
-          this._log_agent_event(max_steps, agent_run_error);
-        } catch (logError) {
-          this.logger.error(
-            `Failed to log telemetry event: ${String(logError)}`
-          );
-        } finally {
-          try {
-            this.telemetry?.flush?.();
-          } catch (flushError) {
-            this.logger.error(
-              `Failed to flush telemetry client: ${String(flushError)}`
-            );
-          }
-        }
-      } else {
-        this.logger.info('Telemetry for force exit (SIGINT) already logged.');
-      }
 
       this.eventbus.dispatch(UpdateAgentTaskEvent.fromAgent(this as any));
 
@@ -6314,100 +6282,6 @@ export class Agent<
     const status_str = status_parts.length ? status_parts.join(' | ') : '✅ 0';
     this.logger.info(
       `📍 Step ${this.state.n_steps}: Ran ${action_count} actions in ${step_duration.toFixed(2)}s: ${status_str}`
-    );
-  }
-
-  private _log_agent_event(max_steps: number, agent_run_error: string | null) {
-    if (!this.telemetry) {
-      return;
-    }
-
-    const token_summary = this.token_cost_service?.get_usage_tokens_for_model?.(
-      this.llm.model
-    ) ?? {
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      total_tokens: 0,
-    };
-
-    const action_history_data = this.history.history.map((historyItem) => {
-      if (!historyItem.model_output) {
-        return null;
-      }
-      return historyItem.model_output.action.map((action) => {
-        if (typeof (action as any)?.model_dump === 'function') {
-          return (action as any).model_dump({ exclude_unset: true });
-        }
-        return action;
-      });
-    });
-
-    const final_result = this.history.final_result();
-    const final_result_str =
-      final_result != null ? JSON.stringify(final_result) : null;
-    const judgement_data = this.history.judgement();
-    const judge_verdict =
-      judgement_data && typeof judgement_data.verdict === 'boolean'
-        ? judgement_data.verdict
-        : null;
-    const judge_reasoning =
-      judgement_data && typeof judgement_data.reasoning === 'string'
-        ? judgement_data.reasoning
-        : null;
-    const judge_failure_reason =
-      judgement_data && typeof judgement_data.failure_reason === 'string'
-        ? judgement_data.failure_reason
-        : null;
-    const judge_reached_captcha =
-      judgement_data && typeof judgement_data.reached_captcha === 'boolean'
-        ? judgement_data.reached_captcha
-        : null;
-    const judge_impossible_task =
-      judgement_data && typeof judgement_data.impossible_task === 'boolean'
-        ? judgement_data.impossible_task
-        : null;
-
-    let cdpHost: string | null = null;
-    const cdpUrl = (this.browser_session as any)?.cdp_url;
-    if (typeof cdpUrl === 'string' && cdpUrl) {
-      try {
-        const parsed = new URL(cdpUrl);
-        cdpHost = parsed.hostname || cdpUrl;
-      } catch {
-        cdpHost = cdpUrl;
-      }
-    }
-
-    this.telemetry.capture(
-      new AgentTelemetryEvent({
-        task: this.task,
-        model: this.llm.model,
-        model_provider: (this.llm as any).provider ?? 'unknown',
-        max_steps: max_steps,
-        max_actions_per_step: this.settings.max_actions_per_step,
-        use_vision: this.settings.use_vision,
-        version: this.version,
-        source: this.source,
-        cdp_url: cdpHost,
-        agent_type: null,
-        action_errors: this.history.errors(),
-        action_history: action_history_data,
-        urls_visited: this.history.urls(),
-        steps: this.state.n_steps,
-        total_input_tokens: token_summary.prompt_tokens ?? 0,
-        total_output_tokens: token_summary.completion_tokens ?? 0,
-        prompt_cached_tokens: token_summary.prompt_cached_tokens ?? 0,
-        total_tokens: token_summary.total_tokens ?? 0,
-        total_duration_seconds: this.history.total_duration_seconds(),
-        success: this.history.is_successful(),
-        final_result_response: final_result_str,
-        error_message: agent_run_error,
-        judge_verdict,
-        judge_reasoning,
-        judge_failure_reason,
-        judge_reached_captcha,
-        judge_impossible_task,
-      })
     );
   }
 

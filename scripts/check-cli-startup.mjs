@@ -80,7 +80,6 @@ const runExitSample = (scenario) =>
       cwd: repositoryRoot,
       env: {
         ...process.env,
-        ANONYMIZED_TELEMETRY: 'false',
         BROWSER_USE_LOGGING_LEVEL: 'result',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -138,7 +137,6 @@ const runMcpSample = (scenario, sampleIndex) =>
       cwd: repositoryRoot,
       env: {
         ...process.env,
-        ANONYMIZED_TELEMETRY: 'false',
         BROWSER_USE_LOGGING_LEVEL: 'result',
       },
       stdio: ['pipe', 'pipe', 'pipe'],

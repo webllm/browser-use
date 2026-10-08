@@ -47,14 +47,6 @@ vi.mock('../src/utils.js', () => {
   };
 });
 
-// Mock telemetry
-vi.mock('../src/telemetry/service.js', () => ({
-  productTelemetry: {
-    capture: vi.fn(),
-    flush: vi.fn(),
-  },
-}));
-
 // Import after mocks
 import type { AgentSettings } from '../src/agent/views.js';
 import { ActionResult } from '../src/agent/views.js';

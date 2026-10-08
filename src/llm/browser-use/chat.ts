@@ -1,5 +1,4 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { CONFIG } from '../../config.js';
 import {
   HttpRequestTimeoutError,
   readBoundedResponseJson,
@@ -397,7 +396,8 @@ export class ChatBrowserUse implements BaseChatModel {
       messages: messages.map((message) => this.serializeMessage(message)),
       fast: this.fast,
       request_type: options.request_type ?? 'browser_agent',
-      anonymized_telemetry: CONFIG.ANONYMIZED_TELEMETRY,
+      // This port sends no telemetry and asks the service not to collect it.
+      anonymized_telemetry: false,
     };
     if (typeof (options as any).session_id === 'string') {
       payload.session_id = (options as any).session_id;
