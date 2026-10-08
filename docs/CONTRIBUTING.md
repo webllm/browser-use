@@ -1,6 +1,11 @@
 # Contributing Guide
 
-Thank you for your interest in contributing to Browser-Use! This guide will help you get started.
+Thank you for your interest in contributing to Browser-Use for TypeScript! This guide will help you get started.
+
+This repository is an unofficial port maintained independently of the official
+Python [browser-use](https://github.com/browser-use/browser-use) project. Open
+issues and pull requests for the TypeScript port here, and report problems with
+the Python library to the official project.
 
 ## Table of Contents
 
@@ -347,11 +352,11 @@ describe('Registry', () => {
 
 ### Test Categories
 
-| Category    | Location                  | Purpose                           |
-| ----------- | ------------------------- | --------------------------------- |
-| Unit        | `test/*.test.ts`          | Test individual functions/classes |
+| Category    | Location                    | Purpose                           |
+| ----------- | --------------------------- | --------------------------------- |
+| Unit        | `test/*.test.ts`            | Test individual functions/classes |
 | Integration | `test/integration*.test.ts` | Test component interactions       |
-| Packaging   | `scripts/smoke-pack.mjs`  | Validate npm public entrypoints   |
+| Packaging   | `scripts/smoke-pack.mjs`    | Validate npm public entrypoints   |
 
 ### Running Tests
 

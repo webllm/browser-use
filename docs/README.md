@@ -1,6 +1,6 @@
 # Browser-Use Documentation
 
-> **Browser-Use** is a powerful TypeScript/Node.js library for autonomous browser automation powered by Large Language Models (LLMs).
+> **Unofficial TypeScript port** of the Python [browser-use](https://github.com/browser-use/browser-use) library for autonomous browser automation powered by Large Language Models (LLMs). It is community-maintained and not affiliated with the official project; see [About this port](../README.md#about-this-port).
 
 ## Overview
 

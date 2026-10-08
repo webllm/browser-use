@@ -1,6 +1,6 @@
 ---
 name: browser-use
-description: Control a persistent browser for web interaction, local-app testing, scraping, screenshots, and login-assisted workflows. Use when a coding agent should inspect or operate a website directly through the browser_exec/browser_screenshot MCP tools or the browser-use-direct CLI instead of delegating the task to an autonomous browser agent.
+description: Control a persistent browser for web interaction, local-app testing, scraping, screenshots, and login-assisted workflows with the unofficial TypeScript port of browser-use (npm package browser-use). Use when a coding agent should inspect or operate a website directly through the browser_exec/browser_screenshot MCP tools or the browser-use-direct CLI instead of delegating the task to an autonomous browser agent.
 ---
 
 # Browser Use

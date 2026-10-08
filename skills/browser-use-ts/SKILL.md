@@ -1,6 +1,6 @@
 ---
 name: browser-use-ts
-description: Reference for writing TypeScript or JavaScript code with the browser-use npm package (the TypeScript port of Browser Use). Use when code imports from "browser-use" or its subpaths, or when the user asks how to configure Agent, BrowserSession, BrowserProfile, custom actions (Controller/Tools), LLM providers, the Actor API, structured output, sensitive data, the MCP server, or the Claude browser toolset integration. Do not use it to drive a browser directly from the shell; use the browser-use skill for that.
+description: Reference for writing TypeScript or JavaScript code with the browser-use npm package (the unofficial, community-maintained TypeScript port of the Python browser-use library). Use when code imports from "browser-use" or its subpaths, or when the user asks how to configure Agent, BrowserSession, BrowserProfile, custom actions (Controller/Tools), LLM providers, the Actor API, structured output, sensitive data, the MCP server, or the Claude browser toolset integration. Do not use it to drive a browser directly from the shell; use the browser-use skill for that.
 ---
 
 # Browser Use for TypeScript

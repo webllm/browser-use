@@ -1,6 +1,10 @@
 # Quick Start Guide
 
-Get up and running with Browser-Use in 5 minutes.
+Get up and running with Browser-Use for TypeScript in 5 minutes.
+
+> This guide covers the unofficial, community-maintained TypeScript port
+> (`npm install browser-use`). For the official Python library, see
+> [browser-use/browser-use](https://github.com/browser-use/browser-use).
 
 ## Prerequisites
 

@@ -1,7 +1,7 @@
 <p align="center">
-  <h1 align="center">🌐 Browser-Use</h1>
+  <h1 align="center">🌐 Browser-Use for TypeScript</h1>
   <p align="center">
-    <strong>Make websites accessible for AI agents — in TypeScript</strong>
+    <strong>Unofficial, community-maintained TypeScript port of the Python <a href="https://github.com/browser-use/browser-use">browser-use</a> library</strong>
   </p>
   <p align="center">
     A TypeScript-first library for building AI-powered web agents that can autonomously browse, interact with, and extract data from the web using LLMs and Playwright.
@@ -18,7 +18,12 @@
 
 ---
 
-> **Production-capable TypeScript port**, inspired by and behavior-aligned with Python [browser-use](https://github.com/browser-use/browser-use) — with a native Node.js experience, full type safety, and first-class support for all major LLM providers.
+> **Unofficial project.** This repository is a community-maintained TypeScript port of the Python [browser-use](https://github.com/browser-use/browser-use) library. It is not developed, maintained, or endorsed by the browser-use maintainers or by Browser Use (the company), and its versions are independent of the Python package.
+>
+> - Official Python library: [github.com/browser-use/browser-use](https://github.com/browser-use/browser-use). Official docs and Browser Use Cloud: [docs.browser-use.com](https://docs.browser-use.com).
+> - Questions and bugs about this TypeScript port belong in [webllm/browser-use issues](https://github.com/webllm/browser-use/issues), not in the official project.
+
+The port follows the Python library's behavior closely, with a native Node.js experience, full type safety, and support for all major LLM providers.
 
 ## ✨ Features
 
@@ -32,6 +37,19 @@
 - 🔒 **Security First** — Sensitive data masking, domain restrictions, and Chromium sandboxing
 - 📊 **Observability** — Event system, telemetry, performance tracing, and session recording (GIF)
 - 🐳 **Docker Ready** — Configurable for containerized and CI/CD environments
+
+## About this port
+
+|                 | This repository                                                    | Official browser-use                                                         |
+| --------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Language        | TypeScript / Node.js                                               | Python                                                                       |
+| Maintained by   | The community ([webllm](https://github.com/webllm/browser-use))    | The Browser Use team                                                         |
+| Package         | [`browser-use` on npm](https://www.npmjs.com/package/browser-use)  | [`browser-use` on PyPI](https://pypi.org/project/browser-use/)               |
+| Issues and help | [webllm/browser-use](https://github.com/webllm/browser-use/issues) | [browser-use/browser-use](https://github.com/browser-use/browser-use/issues) |
+
+- The port tracks the Python library's behavior and naming (snake_case options, the same action set) and ports upstream changes periodically. Some upstream features are intentionally not ported; see the [architecture decisions](./docs/adr/index.md).
+- Browser Use Cloud and `ChatBrowserUse` are hosted services operated by Browser Use. This port only calls their public APIs with your own API key. Browser Use's official TypeScript SDK for its cloud API is the separate `browser-use-sdk` package.
+- "Browser Use" and related names belong to their respective owners and are used here only to describe compatibility.
 
 ## 🚀 Quick Start
 

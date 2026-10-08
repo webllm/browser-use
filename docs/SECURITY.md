@@ -527,7 +527,11 @@ const llm = new ChatOpenAI({
 If you discover a security vulnerability:
 
 1. **Do not** open a public GitHub issue
-2. Email security concerns to the maintainers privately
+2. Report it privately to the maintainers of this TypeScript port
+   ([webllm/browser-use](https://github.com/webllm/browser-use)), for example
+   through a GitHub security advisory. This port is not maintained by the
+   official browser-use project, so do not send reports about it to them;
+   vulnerabilities in the Python library follow that project's own process.
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
