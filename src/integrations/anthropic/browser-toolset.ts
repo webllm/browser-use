@@ -15,7 +15,6 @@ import { createCanvas, loadImage } from 'canvas';
 import type {
   BrowserContext,
   ConsoleMessage,
-  Download,
   ElementHandle,
   Frame,
   JSHandle,
@@ -27,7 +26,7 @@ import { z } from 'zod';
 import { CloudBrowserClient } from '../../browser/cloud/cloud.js';
 import type { CreateBrowserRequest } from '../../browser/cloud/views.js';
 import { BrowserProfile } from '../../browser/profile.js';
-import { BrowserSession } from '../../browser/session.js';
+import { BrowserSession, type BrowserDownload } from '../../browser/session.js';
 import {
   collectAccessibleEntries,
   createRefRegistry,
@@ -279,11 +278,6 @@ export interface BrowserUseToolsetOptions {
   uploadRoots?: string[];
   /** Maps `file_upload` document IDs to files on the browser host. */
   documentResolver?: (documentId: string) => string | Promise<string>;
-  /**
-   * Where completed downloads are saved. Defaults to the browser profile's
-   * downloads_path.
-   */
-  downloadsPath?: string | null;
   /** Console and network entries kept per tab (default 1000). */
   maxLogEntries?: number;
   /** Upper bound for a single member call (default 120s). */
@@ -583,7 +577,6 @@ export class BrowserUseToolset {
   private readonly _documentResolver:
     | BrowserUseToolsetOptions['documentResolver']
     | null;
-  private readonly _downloadsPathOption: string | null | undefined;
   private readonly _maxLogEntries: number;
   private readonly _actionTimeoutMs: number;
 
@@ -593,6 +586,7 @@ export class BrowserUseToolset {
   private _queue: Promise<unknown> = Promise.resolve();
   private _context: BrowserContext | null = null;
   private _onContextPage: ((page: Page) => void) | null = null;
+  private _stopDownloads: (() => void) | null = null;
   private readonly _pages = new Map<Page, PageState>();
   private readonly _refs = new Map<string, RefOwner>();
   private readonly _registries = new Map<Frame, JSHandle<RefRegistry>>();
@@ -632,7 +626,6 @@ export class BrowserUseToolset {
       ? options.uploadRoots.map((root) => path.resolve(root))
       : null;
     this._documentResolver = options.documentResolver ?? null;
-    this._downloadsPathOption = options.downloadsPath;
     this._maxLogEntries = Math.max(1, options.maxLogEntries ?? 1000);
     this._actionTimeoutMs =
       options.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
@@ -710,6 +703,10 @@ export class BrowserUseToolset {
     const context = this.browser.browser_context;
     if (context) {
       this._context = context;
+      // The session saves every download; the toolset only reports them.
+      this._stopDownloads = this.browser.add_download_listener((download) => {
+        this._trackDownload(download);
+      });
       this._onContextPage = (page: Page) => {
         this._observePage(page);
       };
@@ -748,6 +745,8 @@ export class BrowserUseToolset {
       sleep(2000, undefined, { signal: timer.signal }).catch(() => undefined),
     ]);
     timer.abort();
+    this._stopDownloads?.();
+    this._stopDownloads = null;
     if (this._context && this._onContextPage) {
       this._context.off('page', this._onContextPage);
     }
@@ -1193,9 +1192,6 @@ export class BrowserUseToolset {
         // Responses of detached frames are irrelevant to navigation status.
       }
     };
-    const onDownload = (download: Download) => {
-      this._trackDownload(download);
-    };
     const onClose = () => {
       this._forgetPage(page);
     };
@@ -1204,7 +1200,6 @@ export class BrowserUseToolset {
     page.on('requestfinished', onRequestFinished);
     page.on('requestfailed', onRequestFailed);
     page.on('response', onResponse);
-    page.on('download', onDownload);
     page.on('close', onClose);
     state.detach = () => {
       page.off('console', onConsole);
@@ -1212,7 +1207,6 @@ export class BrowserUseToolset {
       page.off('requestfinished', onRequestFinished);
       page.off('requestfailed', onRequestFailed);
       page.off('response', onResponse);
-      page.off('download', onDownload);
       page.off('close', onClose);
     };
     this._pages.set(page, state);
@@ -1262,70 +1256,44 @@ export class BrowserUseToolset {
     this._pushLog(state.network, JSON.stringify(row));
   }
 
-  private _downloadsPath() {
-    if (this._downloadsPathOption !== undefined) {
-      return this._downloadsPathOption;
-    }
-    return this._browser?.browser_profile.downloads_path ?? null;
-  }
-
-  private _trackDownload(download: Download) {
+  private _trackDownload(download: BrowserDownload) {
     const downloadId = `download_${this._nextDownload++}`;
-    const url = download.url();
+    const url = download.url;
     this._pendingChanges.push({
       type: 'download_started',
       download_id: downloadId,
       url,
     });
-    const task = (async () => {
-      let savedPath: string | null = null;
-      try {
-        const directory = this._downloadsPath();
-        if (directory) {
-          fs.mkdirSync(directory, { recursive: true });
-          const fileName = await BrowserSession.get_unique_filename(
-            directory,
-            download.suggestedFilename()
-          );
-          savedPath = path.join(directory, fileName);
-          await download.saveAs(savedPath);
-        } else {
-          savedPath = await download.path().catch(() => null);
-        }
-      } catch {
-        savedPath = null;
-      }
-      const failure = await download
-        .failure()
-        .catch((error: unknown) =>
-          error instanceof Error ? error.message : String(error)
-        );
-      if (failure) {
+    const task = download.completion.then(({ path: savedPath, error }) => {
+      if (error) {
         this._pendingChanges.push({
           type: 'download_failed',
           download_id: downloadId,
           url,
-          error: cleanField(failure),
+          error: cleanField(
+            error instanceof Error ? error.message : String(error)
+          ),
         });
         return;
       }
       let size: number | null = null;
-      if (savedPath) {
+      let reportedPath = savedPath;
+      if (reportedPath) {
         try {
-          size = fs.statSync(savedPath).size;
-          this.completedDownloadPaths.push(savedPath);
+          size = fs.statSync(reportedPath).size;
+          this.completedDownloadPaths.push(reportedPath);
         } catch {
-          savedPath = null;
+          reportedPath = null;
         }
       }
       this._pendingChanges.push({
         type: 'download_completed',
         download_id: downloadId,
         url,
-        ...(savedPath ? { path: cleanField(savedPath) } : {}),
+        ...(reportedPath ? { path: cleanField(reportedPath) } : {}),
         ...(size !== null ? { size_bytes: size } : {}),
       });
-    })();
+    });
     this._background.add(task);
     void task.finally(() => this._background.delete(task));
   }

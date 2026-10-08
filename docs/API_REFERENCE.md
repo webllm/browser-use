@@ -577,16 +577,16 @@ import {
 } from 'browser-use/integrations/anthropic';
 ```
 
-| Export                                   | Description                                                                                                                                                                               |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `new BrowserUseToolset(options?)`        | Driver for all 31 members. Options: `browser`, `browserProfile`, `useCloud`, `configs`, `confirm`, `uploadRoots`, `documentResolver`, `downloadsPath`, `maxLogEntries`, `actionTimeoutMs` |
-| `toolset.toolParam()`                    | The `tools[]` entry for the request                                                                                                                                                       |
-| `toolset.execute(block)`                 | Run one browser `tool_use` block; returns a `tool_result` (never throws)                                                                                                                  |
-| `toolset.executeBatch(blocks)`           | Run a turn's browser calls in order, halting after the first failure                                                                                                                      |
-| `toolset.start()` / `toolset.close()`    | Start lazily-started resources / release them (stops browsers the toolset launched)                                                                                                       |
-| `runBrowserToolsetConversation(options)` | Agentic loop: `client`, `toolset`, `tools`, `task` or `messages`, `system`, `model`, `maxTokens`, `maxIterations`, `params`, `signal`, `onMessage`, `onToolResult`                        |
-| `createBashTool(options?)`               | Bounded `bash` runnable tool: `outputDir`, `timeoutSeconds`, `maxOutputBytes`                                                                                                             |
-| `runBash(command, options?)`             | Run one command and get `{ exit_code, timed_out, truncated, output }` as JSON                                                                                                             |
+| Export                                   | Description                                                                                                                                                              |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `new BrowserUseToolset(options?)`        | Driver for all 31 members. Options: `browser`, `browserProfile`, `useCloud`, `configs`, `confirm`, `uploadRoots`, `documentResolver`, `maxLogEntries`, `actionTimeoutMs` |
+| `toolset.toolParam()`                    | The `tools[]` entry for the request                                                                                                                                      |
+| `toolset.execute(block)`                 | Run one browser `tool_use` block; returns a `tool_result` (never throws)                                                                                                 |
+| `toolset.executeBatch(blocks)`           | Run a turn's browser calls in order, halting after the first failure                                                                                                     |
+| `toolset.start()` / `toolset.close()`    | Start lazily-started resources / release them (stops browsers the toolset launched)                                                                                      |
+| `runBrowserToolsetConversation(options)` | Agentic loop: `client`, `toolset`, `tools`, `task` or `messages`, `system`, `model`, `maxTokens`, `maxIterations`, `params`, `signal`, `onMessage`, `onToolResult`       |
+| `createBashTool(options?)`               | Bounded `bash` runnable tool: `outputDir`, `timeoutSeconds`, `maxOutputBytes`                                                                                            |
+| `runBash(command, options?)`             | Run one command and get `{ exit_code, timed_out, truncated, output }` as JSON                                                                                            |
 
 ---
 

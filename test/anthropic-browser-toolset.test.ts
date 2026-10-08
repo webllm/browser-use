@@ -196,7 +196,6 @@ describe('BrowserUseToolset (Anthropic browser toolset)', () => {
         file_upload: { enabled: true },
       },
       uploadRoots: [path.join(workDir, 'uploads')],
-      downloadsPath: path.join(workDir, 'downloads'),
     });
     // Leave exactly one tab on the fixture page.
     const tabs = session.get_tab_pages();

@@ -120,8 +120,8 @@ Every result answers its `tool_use` with `toolset_name: "browser"`.
   of that turn are not executed and report
   `Not executed: an earlier action in this turn failed.`
 
-Completed downloads are saved to `downloadsPath` (default: the browser
-profile's `downloads_path`) and listed in `toolset.completedDownloadPaths`.
+The browser session saves completed downloads to its profile's
+`downloads_path`; the toolset lists them in `toolset.completedDownloadPaths`.
 
 ## Safety controls
 
