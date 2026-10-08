@@ -395,7 +395,8 @@ describe('CLI argument parsing', () => {
     expect(usage).toContain('browser-use install');
     expect(usage).toContain('browser-use setup');
     expect(usage).toContain('browser-use auth codex');
-    expect(usage).toContain('browser-use skill <show|install>');
+    expect(usage).toContain('browser-use skill <list|show|install>');
+    expect(usage).toContain('unofficial port of the Python browser-use');
     expect(usage).toContain('browser-use tunnel <port>');
     expect(usage).toContain('--provider <name>');
     expect(usage).toContain('--model <model>');
