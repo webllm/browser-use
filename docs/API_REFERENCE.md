@@ -293,7 +293,7 @@ new BrowserProfile(options?: Partial<BrowserProfileOptions>)
 | `viewport`                             | `ViewportSize`    | `null`       | Browser viewport size                                                                                     |
 | `window_size`                          | `ViewportSize`    | `null`       | Browser window size                                                                                       |
 | `user_agent`                           | `string`          | `null`       | Custom user agent                                                                                         |
-| `user_data_dir`                        | `string`          | Default path | User data directory for persistence                                                                       |
+| `user_data_dir`                        | `string \| null`  | `null`       | Profile directory; cookies and logins persist there. Unset: a fresh temporary profile, deleted on close   |
 | `proxy`                                | `ProxySettings`   | `null`       | Proxy configuration                                                                                       |
 | `timeout`                              | `number`          | `30000`      | Default timeout (ms)                                                                                      |
 | `slow_mo`                              | `number`          | `0`          | Slow down operations (ms)                                                                                 |

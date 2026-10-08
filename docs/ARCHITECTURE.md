@@ -109,7 +109,7 @@ interface BrowserProfileOptions {
   ignore_https_errors: boolean;
 
   // Storage
-  user_data_dir: string;
+  user_data_dir: string | null; // null: a fresh temporary profile per session
   storage_state: string | StorageState;
 
   // Performance

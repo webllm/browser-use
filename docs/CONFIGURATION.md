@@ -253,9 +253,21 @@ const profile = new BrowserProfile({
 
 ### Storage Options
 
+The browser runs on a profile directory, as in the Python library:
+
+- With `user_data_dir` set, cookies, logins, and other site data persist in
+  that directory between sessions. If another browser is using it, the session
+  falls back to a temporary profile and logs a warning.
+- Without it, each session starts on a fresh temporary profile that is deleted
+  when the session closes.
+- A Google Chrome profile directory (for example under
+  `~/Library/Application Support/Google/Chrome`) is copied to a temporary
+  directory first, so the session can use its logins without locking or
+  changing it.
+
 ```typescript
 const profile = new BrowserProfile({
-  // User data directory for persistent sessions
+  // Profile directory; cookies and logins persist here between sessions
   user_data_dir: '/path/to/profile',
 
   // Storage state (cookies, localStorage)
@@ -319,6 +331,12 @@ const profile = new BrowserProfile({
   deterministic_rendering: false,
 });
 ```
+
+The default extensions run in headed and headless sessions. Playwright's
+headless shell build cannot run extensions, so a headless session that loads
+extensions uses the full Chromium build in new headless mode when it is
+installed, as the Python library does. Set `BROWSER_USE_DISABLE_EXTENSIONS=1`
+to skip the extensions; headless sessions then keep the faster headless shell.
 
 ## Agent Settings
 
