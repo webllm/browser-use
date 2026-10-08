@@ -306,7 +306,7 @@ const profile = new BrowserProfile({
   // Include dynamic attributes in DOM
   include_dynamic_attributes: true,
 
-  // Enable default extensions (uBlock, cookie consent)
+  // Enable default extensions (uBlock Origin Lite, cookie banner blocking)
   enable_default_extensions: true,
 
   // Stealth mode

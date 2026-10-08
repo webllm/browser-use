@@ -178,21 +178,18 @@ export const CHROME_DEFAULT_ARGS = [
   `--disable-features=${CHROME_DISABLED_COMPONENTS.join(',')}`,
 ];
 
+// Manifest V3 only: the Chrome Web Store no longer serves Manifest V2
+// extensions such as uBlock Origin and ClearURLs.
 const DEFAULT_EXTENSIONS = [
   {
-    name: 'uBlock Origin',
-    id: 'cjpalhdlnbpafiamejdnhcphjbkeiagm',
-    url: 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dcjpalhdlnbpafiamejdnhcphjbkeiagm%26uc',
+    name: 'uBlock Origin Lite',
+    id: 'ddkjiahejlhfcafbddmgiahcphecmpfh',
+    url: 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dddkjiahejlhfcafbddmgiahcphecmpfh%26uc',
   },
   {
     name: "I still don't care about cookies",
     id: 'edibdbjcniadpccecjdfdjjppcpchdlm',
     url: 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dedibdbjcniadpccecjdfdjjppcpchdlm%26uc',
-  },
-  {
-    name: 'ClearURLs',
-    id: 'lckanjgmijmafbedllaakclkaicjfmnk',
-    url: 'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=133&acceptformat=crx3&x=id%3Dlckanjgmijmafbedllaakclkaicjfmnk%26uc',
   },
   {
     name: 'Force Background Tab',
@@ -1120,7 +1117,13 @@ export class BrowserProfile {
 
         if (fs.existsSync(crxFile)) {
           logger.info(`📂 Extracting ${ext.name} extension...`);
-          await this.extractExtension(crxFile, extDir);
+          try {
+            await this.extractExtension(crxFile, extDir);
+          } catch (error) {
+            // Drop the unusable archive so the next launch downloads it again.
+            fs.rmSync(crxFile, { force: true });
+            throw error;
+          }
           extensionPaths.push(extDir);
           loadedNames.push(ext.name);
         }
@@ -1220,7 +1223,13 @@ export class BrowserProfile {
             return;
           }
 
-          if (!statusCode || statusCode < 200 || statusCode >= 300) {
+          // The Chrome Web Store answers 204 for extensions it no longer serves.
+          if (
+            !statusCode ||
+            statusCode < 200 ||
+            statusCode >= 300 ||
+            statusCode === 204
+          ) {
             response.resume();
             rejectOnce(
               new Error(

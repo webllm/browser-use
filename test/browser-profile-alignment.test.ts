@@ -276,6 +276,81 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it('treats a 204 extension download as a failure without caching a file', async () => {
+    const { BrowserProfile } = await importProfileModule();
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-204-')
+    );
+    const outputPath = path.join(tempDir, 'extension.crx');
+    const getSpy = vi.spyOn(https, 'get').mockImplementation(((
+      _url: string | URL,
+      callback: (response: PassThrough & Record<string, unknown>) => void
+    ) => {
+      const response = new PassThrough() as PassThrough &
+        Record<string, unknown>;
+      response.statusCode = 204;
+      response.headers = {};
+      queueMicrotask(() => {
+        callback(response);
+        response.end();
+      });
+      return new EventEmitter();
+    }) as any);
+
+    try {
+      const profile = new BrowserProfile({ enable_default_extensions: false });
+      await expect(
+        (profile as any).downloadExtension(
+          'https://example.test/removed.crx',
+          outputPath
+        )
+      ).rejects.toThrow('status 204');
+      expect(fs.readdirSync(tempDir)).toEqual([]);
+    } finally {
+      getSpy.mockRestore();
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('downloads Manifest V3 defaults again after a cached archive fails to extract', async () => {
+    const { BrowserProfile } = await importProfileModule();
+    const configDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-extension-cache-')
+    );
+    process.env.BROWSER_USE_CONFIG_DIR = configDir;
+    const requestedUrls: string[] = [];
+    const downloadSpy = vi
+      .spyOn(BrowserProfile.prototype as any, 'downloadExtension')
+      .mockImplementation(async (url: unknown, outputPath: unknown) => {
+        requestedUrls.push(String(url));
+        fs.writeFileSync(String(outputPath), '');
+      });
+
+    try {
+      const profile = new BrowserProfile({ enable_default_extensions: false });
+      await expect(
+        (profile as any).ensureDefaultExtensionsDownloaded()
+      ).resolves.toEqual([]);
+      const extensionsDir = path.join(configDir, 'extensions');
+      expect(
+        fs.readdirSync(extensionsDir).filter((name) => name.endsWith('.crx'))
+      ).toEqual([]);
+
+      const firstAttempt = requestedUrls.length;
+      await (profile as any).ensureDefaultExtensionsDownloaded();
+      expect(requestedUrls).toHaveLength(firstAttempt * 2);
+
+      const urls = requestedUrls.join('\n');
+      // uBlock Origin Lite replaces the Manifest V2 uBlock Origin and ClearURLs.
+      expect(urls).toContain('ddkjiahejlhfcafbddmgiahcphecmpfh');
+      expect(urls).not.toContain('cjpalhdlnbpafiamejdnhcphjbkeiagm');
+      expect(urls).not.toContain('lckanjgmijmafbedllaakclkaicjfmnk');
+    } finally {
+      downloadSpy.mockRestore();
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('enforces a hard deadline for stalled default extension requests', async () => {
     vi.useFakeTimers();
     const { BrowserProfile } = await importProfileModule();
