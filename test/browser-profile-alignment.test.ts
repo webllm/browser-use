@@ -528,6 +528,21 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
     }
   });
 
+  it('leaves user_data_dir unset by default and resolves configured paths', async () => {
+    const { BrowserProfile } = await importProfileModule();
+
+    // As upstream: no directory means each session gets a fresh temp profile.
+    expect(new BrowserProfile({}).config.user_data_dir).toBeNull();
+    expect(
+      new BrowserProfile({ user_data_dir: '~/browser-use-profile' }).config
+        .user_data_dir
+    ).toBe(path.join(os.homedir(), 'browser-use-profile'));
+    expect(
+      new BrowserProfile({ user_data_dir: 'relative-profile' }).config
+        .user_data_dir
+    ).toBe(path.resolve('relative-profile'));
+  });
+
   it('keeps browser-use managed Chrome profiles persistent instead of temp-copying them', async () => {
     const configDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'browser-use-config-')
@@ -539,6 +554,7 @@ describe('BrowserProfile alignment with latest py-browser-use defaults', () => {
       const profile = new BrowserProfile({
         executable_path:
           '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        user_data_dir: path.join(configDir, 'profiles', 'default'),
       });
 
       expect(profile.config.user_data_dir).toBe(

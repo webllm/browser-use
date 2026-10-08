@@ -619,7 +619,8 @@ const DEFAULT_BROWSER_PROFILE_OPTIONS: BrowserProfileOptions = {
   handle_sigint: false,
   handle_sigterm: false,
   id: uuid7str(),
-  user_data_dir: CONFIG.BROWSER_USE_DEFAULT_USER_DATA_DIR,
+  // As upstream: no directory means each session gets a fresh temporary profile.
+  user_data_dir: null,
   storage_state: null,
   stealth: false,
   disable_security: false,
@@ -728,6 +729,20 @@ const isExactHostDomainEntry = (entry: string) => {
   return !entry.includes(':');
 };
 
+/** Expand a leading "~" and make the profile directory absolute. */
+const resolveUserDataDir = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  const expanded =
+    value === '~'
+      ? os.homedir()
+      : /^~[\\/]/.test(value)
+        ? path.join(os.homedir(), value.slice(2))
+        : value;
+  return path.resolve(expanded);
+};
+
 const optimizeDomainList = (value: unknown[]): string[] | Set<string> => {
   const cleaned = value.map(normalizeDomainEntry).filter(Boolean);
   const canOptimizeToSet =
@@ -792,6 +807,7 @@ export class BrowserProfile {
     };
     validateProfileNumericOptions(this.options);
     this.options.id = init.id ?? uuid7str();
+    this.options.user_data_dir = resolveUserDataDir(this.options.user_data_dir);
     this.ensureDefaultDownloadsPath();
     this.applyLegacyWindowSize();
     this.warnStorageStateUserDataDirConflict();

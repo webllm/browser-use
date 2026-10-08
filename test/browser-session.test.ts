@@ -4354,60 +4354,275 @@ esac
     expect(session.browser_context).toBeNull();
   });
 
-  it('retries chromium launch without sandbox when sandbox is unavailable', async () => {
-    const launch = vi
-      .fn()
-      .mockRejectedValueOnce(
-        new Error('Chromium sandboxing failed! No usable sandbox.')
-      );
+  const createPersistentLaunchFixture = (
+    options: { executablePath?: string } = {}
+  ) => {
     const fakePage = {
       url: () => 'about:blank',
       title: vi.fn(async () => 'about:blank'),
       isClosed: vi.fn(() => false),
     };
-    const fakeContext = {
-      pages: vi.fn(() => []),
+    const fakeBrowser: Record<string, any> = {
+      close: vi.fn(async () => {}),
+    };
+    const fakeContext: Record<string, any> = {
+      pages: vi.fn(() => [fakePage]),
       newPage: vi.fn(async () => fakePage),
       close: vi.fn(async () => {}),
+      addCookies: vi.fn(async () => {}),
+      browser: () => fakeBrowser,
     };
-    const fakeBrowser = {
-      contexts: vi.fn(() => []),
-      newContext: vi.fn(async () => fakeContext),
-      close: vi.fn(async () => {}),
-      process: vi.fn(() => ({ pid: 12345 })),
+    fakeBrowser.contexts = vi.fn(() => [fakeContext]);
+    const launchPersistentContext = vi.fn(
+      async (_userDataDir: string, _options: Record<string, unknown>) =>
+        fakeContext
+    );
+    const playwright = {
+      chromium: {
+        launchPersistentContext,
+        executablePath: () =>
+          options.executablePath ??
+          path.join(os.tmpdir(), 'browser-use-missing-chromium'),
+      },
     };
-    launch.mockResolvedValueOnce(fakeBrowser);
+    return { fakeContext, fakeBrowser, launchPersistentContext, playwright };
+  };
+
+  it('retries chromium launch without sandbox when sandbox is unavailable', async () => {
+    const { launchPersistentContext, playwright } =
+      createPersistentLaunchFixture();
+    launchPersistentContext.mockRejectedValueOnce(
+      new Error('Chromium sandboxing failed! No usable sandbox.')
+    );
 
     const session = new BrowserSession({
       browser_profile: new BrowserProfile({
         headless: true,
         chromium_sandbox: true,
       }),
-      playwright: {
-        chromium: {
-          launch,
-        },
-      } as any,
+      playwright: playwright as any,
     });
 
     await session.start();
 
-    expect(launch).toHaveBeenCalledTimes(2);
-    const secondLaunchOptions = launch.mock.calls[1]?.[0] as
-      | Record<string, unknown>
-      | undefined;
-    expect(secondLaunchOptions?.chromiumSandbox).toBe(false);
-    expect(Array.isArray(secondLaunchOptions?.args)).toBe(true);
-    expect(secondLaunchOptions?.args as string[]).toContain('--no-sandbox');
-    const firstLaunchArgs = launch.mock.calls[0]?.[0]?.args as string[];
-    const firstLaunchToken = firstLaunchArgs.find((arg) =>
+    expect(launchPersistentContext).toHaveBeenCalledTimes(2);
+    const [firstUserDataDir, firstLaunchOptions] =
+      launchPersistentContext.mock.calls[0]!;
+    const [secondUserDataDir, secondLaunchOptions] =
+      launchPersistentContext.mock.calls[1]!;
+    expect(secondUserDataDir).toBe(firstUserDataDir);
+    expect(secondLaunchOptions.chromiumSandbox).toBe(false);
+    expect(Array.isArray(secondLaunchOptions.args)).toBe(true);
+    expect(secondLaunchOptions.args as string[]).toContain('--no-sandbox');
+    const firstLaunchToken = (firstLaunchOptions.args as string[]).find((arg) =>
       arg.startsWith('--browser-use-session-token=')
     );
     expect(firstLaunchToken).toBeTruthy();
-    expect(secondLaunchOptions?.args as string[]).toContain(firstLaunchToken);
+    expect(secondLaunchOptions.args as string[]).toContain(firstLaunchToken);
 
     await session.stop();
   });
+
+  it('launches on a fresh temporary profile and deletes it on stop', async () => {
+    const { fakeContext, fakeBrowser, launchPersistentContext, playwright } =
+      createPersistentLaunchFixture();
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({ headless: false }),
+      playwright: playwright as any,
+    });
+
+    await session.start();
+
+    const [userDataDir, launchOptions] = launchPersistentContext.mock.calls[0]!;
+    expect(path.basename(userDataDir)).toMatch(/^browser-use-user-data-dir-/);
+    expect(fs.existsSync(userDataDir)).toBe(true);
+    expect(launchOptions).not.toHaveProperty('userDataDir');
+    expect(launchOptions).not.toHaveProperty('storageState');
+    expect(session.browser_context).toBe(fakeContext);
+    expect(session.browser).toBe(fakeBrowser);
+
+    await session.stop();
+
+    expect(fakeContext.close).toHaveBeenCalled();
+    expect(fs.existsSync(userDataDir)).toBe(false);
+  });
+
+  it('launches on the configured profile and keeps it after stop', async () => {
+    const userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-configured-profile-')
+    );
+    const { launchPersistentContext, playwright } =
+      createPersistentLaunchFixture();
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        headless: false,
+        user_data_dir: userDataDir,
+      }),
+      playwright: playwright as any,
+    });
+
+    try {
+      await session.start();
+      expect(launchPersistentContext.mock.calls[0]![0]).toBe(userDataDir);
+      await session.stop();
+      expect(fs.existsSync(userDataDir)).toBe(true);
+    } finally {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs headless sessions that load extensions on the full Chromium build', async () => {
+    const executableDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-full-chromium-')
+    );
+    const executablePath = path.join(executableDir, 'chrome');
+    fs.writeFileSync(executablePath, '');
+    const launchWith = async (profileOptions: Record<string, unknown>) => {
+      const { launchPersistentContext, playwright } =
+        createPersistentLaunchFixture({ executablePath });
+      const session = new BrowserSession({
+        browser_profile: new BrowserProfile(profileOptions as any),
+        playwright: playwright as any,
+      });
+      await session.start();
+      await session.stop();
+      return launchPersistentContext.mock.calls[0]![1];
+    };
+
+    const withExtension = { args: ['--load-extension=/opt/extensions/test'] };
+
+    try {
+      // The headless shell build cannot run extensions, but starts faster.
+      expect(
+        (await launchWith({ headless: true, ...withExtension })).channel
+      ).toBe('chromium');
+      expect((await launchWith({ headless: true })).channel).toBeUndefined();
+      expect(
+        (await launchWith({ headless: false, ...withExtension })).channel
+      ).toBeUndefined();
+      expect(
+        (
+          await launchWith({
+            headless: true,
+            channel: 'chrome',
+            ...withExtension,
+          })
+        ).channel
+      ).toBe('chrome');
+      const custom = await launchWith({
+        headless: true,
+        executable_path: '/opt/custom/chrome',
+        ...withExtension,
+      });
+      expect(custom.channel).toBeUndefined();
+      fs.rmSync(executablePath);
+      expect(
+        (await launchWith({ headless: true, ...withExtension })).channel
+      ).toBeUndefined();
+    } finally {
+      fs.rmSync(executableDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies an in-memory storage_state after a persistent launch', async () => {
+    const { fakeContext, launchPersistentContext, playwright } =
+      createPersistentLaunchFixture();
+    const cookie = {
+      name: 'session',
+      value: 'abc',
+      domain: 'example.com',
+      path: '/',
+      expires: -1,
+      httpOnly: false,
+      secure: true,
+      sameSite: 'Lax',
+    };
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        headless: false,
+        storage_state: { cookies: [cookie], origins: [] },
+      }),
+      playwright: playwright as any,
+    });
+
+    await session.start();
+
+    expect(launchPersistentContext.mock.calls[0]![1]).not.toHaveProperty(
+      'storageState'
+    );
+    expect(fakeContext.addCookies).toHaveBeenCalledWith([
+      expect.objectContaining({ name: 'session', domain: 'example.com' }),
+    ]);
+
+    await session.stop();
+  });
+
+  it('falls back to a temporary profile when the configured one is in use', async () => {
+    const userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'browser-use-busy-profile-')
+    );
+    const { launchPersistentContext, playwright } =
+      createPersistentLaunchFixture();
+    launchPersistentContext.mockRejectedValueOnce(
+      new Error(
+        'browserType.launchPersistentContext: Target page, context or browser has been closed\nBrowser logs:\nOpening in existing browser session.'
+      )
+    );
+    const session = new BrowserSession({
+      browser_profile: new BrowserProfile({
+        headless: false,
+        user_data_dir: userDataDir,
+      }),
+      playwright: playwright as any,
+    });
+
+    try {
+      await session.start();
+
+      expect(launchPersistentContext).toHaveBeenCalledTimes(2);
+      expect(launchPersistentContext.mock.calls[0]![0]).toBe(userDataDir);
+      const fallbackDir = launchPersistentContext.mock.calls[1]![0];
+      expect(path.basename(fallbackDir)).toMatch(/^browser-use-user-data-dir-/);
+
+      await session.stop();
+      expect(fs.existsSync(fallbackDir)).toBe(false);
+      expect(fs.existsSync(userDataDir)).toBe(true);
+    } finally {
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform !== 'win32')(
+    'treats a profile as in use only while its lock owner is running',
+    async () => {
+      const userDataDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'browser-use-locked-profile-')
+      );
+      const lockPath = path.join(userDataDir, 'SingletonLock');
+      const session = new BrowserSession();
+      const isLocked = () =>
+        (session as any)._checkForSingletonLockConflict(userDataDir);
+
+      try {
+        expect(await isLocked()).toBe(false);
+
+        // Chrome's lock is a symlink to "<hostname>-<pid>".
+        fs.symlinkSync(`${os.hostname()}-${process.pid}`, lockPath);
+        expect(await isLocked()).toBe(true);
+
+        fs.unlinkSync(lockPath);
+        fs.symlinkSync(`other-host-${process.pid}`, lockPath);
+        expect(await isLocked()).toBe(true);
+
+        fs.unlinkSync(lockPath);
+        fs.symlinkSync(`${os.hostname()}-999999999`, lockPath);
+        expect(await isLocked()).toBe(false);
+        expect(() => fs.lstatSync(lockPath)).toThrow();
+      } finally {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   it('perform_click blocks disallowed download URLs before saving', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'perform-click-'));

@@ -45,6 +45,7 @@ import {
 import {
   getProcessArguments,
   getProcessCommandLine,
+  isProcessRunning,
 } from '../process-identity.js';
 import {
   readBoundedStorageStateFile,
@@ -579,6 +580,8 @@ export class BrowserSession {
   private _subprocess: ChildProcess | null = null;
   private _childProcesses: Set<number> = new Set();
   private _browserLaunchToken: string | null = null;
+  // Temporary profile directory this session created and deletes on shutdown.
+  private _ownedUserDataDir: string | null = null;
   private attachedAgentId: string | null = null;
   private attachedSharedAgentIds: Set<string> = new Set();
   private _stoppingPromise: Promise<void> | null = null;
@@ -2838,12 +2841,12 @@ export class BrowserSession {
     };
   }
 
-  private async _launchChromiumWithSandboxFallback(
-    playwright: any,
+  private async _launchWithSandboxFallback<T>(
+    launch: (options: Record<string, unknown>) => Promise<T>,
     launchOptions: Record<string, unknown>
-  ): Promise<Browser> {
+  ): Promise<T> {
     try {
-      return await playwright.chromium.launch(launchOptions);
+      return await launch(launchOptions);
     } catch (error) {
       const sandboxEnabled = this.browser_profile.config.chromium_sandbox;
       if (!sandboxEnabled || !this._isSandboxLaunchError(error)) {
@@ -2853,8 +2856,186 @@ export class BrowserSession {
       this.logger.warning(
         'Chromium sandbox is unavailable in this environment. Retrying launch with chromium_sandbox=false (--no-sandbox).'
       );
-      const fallbackOptions = this._createNoSandboxLaunchOptions(launchOptions);
-      return await playwright.chromium.launch(fallbackOptions);
+      return await launch(this._createNoSandboxLaunchOptions(launchOptions));
+    }
+  }
+
+  /**
+   * Launch a local browser on its profile directory, as upstream launches
+   * Chrome with --user-data-dir: the directory keeps cookies and logins
+   * between sessions, and extensions run on the agent's pages (Playwright
+   * only runs extensions in persistent contexts).
+   */
+  private async _launchLocalBrowser(playwright: any) {
+    const launchOptions =
+      (this._toPlaywrightOptions(
+        await this.browser_profile.kwargs_for_launch_persistent_context()
+      ) as Record<string, unknown> | undefined) ?? {};
+    delete launchOptions.userDataDir;
+    const rawLaunchArgs = Array.isArray(launchOptions.args)
+      ? launchOptions.args.filter(
+          (arg): arg is string => typeof arg === 'string'
+        )
+      : [];
+    const browserLaunchToken = randomUUID();
+    const options = {
+      ...launchOptions,
+      ...this._fullChromiumHeadlessOptions(playwright, launchOptions),
+      args: [
+        ...rawLaunchArgs,
+        `--browser-use-session-token=${browserLaunchToken}`,
+      ],
+    };
+    const launchOn = (userDataDir: string) =>
+      this._launchWithSandboxFallback(
+        (attemptOptions) =>
+          playwright.chromium.launchPersistentContext(
+            userDataDir,
+            attemptOptions
+          ) as Promise<BrowserContext>,
+        options
+      );
+
+    this._browserLaunchToken = browserLaunchToken;
+    let context: BrowserContext;
+    try {
+      const userDataDir = await this._resolveLaunchUserDataDir();
+      try {
+        context = await launchOn(userDataDir);
+      } catch (error) {
+        // Another browser can take the profile after the lock check.
+        if (this._ownedUserDataDir || !this._isProfileInUseError(error)) {
+          throw error;
+        }
+        this.logger.warning(
+          `Browser profile ${userDataDir} is in use by another browser, falling back to a temporary profile`
+        );
+        this._ownedUserDataDir = await this._fallbackToTempProfile();
+        context = await launchOn(this._ownedUserDataDir);
+      }
+    } catch (error) {
+      this._browserLaunchToken = null;
+      this._removeOwnedUserDataDir();
+      throw error;
+    }
+
+    this.browser_context = context;
+    this.browser =
+      (typeof context.browser === 'function' ? context.browser() : null) ??
+      null;
+    this.ownsBrowserResources = true;
+
+    const processGetter = (this.browser as any)?.process;
+    if (typeof processGetter === 'function') {
+      const processRef = processGetter.call(this.browser) as
+        | { pid?: number }
+        | undefined;
+      if (typeof processRef?.pid === 'number') {
+        this.browser_pid = processRef.pid;
+      }
+    }
+
+    await this._applyStorageStateObject();
+  }
+
+  /**
+   * Playwright runs headless Chromium on its headless shell build, which
+   * cannot run extensions. When extensions are loaded, use the full build in
+   * new headless mode, as upstream does, if it is installed; otherwise keep
+   * the faster shell.
+   */
+  private _fullChromiumHeadlessOptions(
+    playwright: any,
+    launchOptions: Record<string, unknown>
+  ): Record<string, unknown> {
+    const loadsExtensions =
+      Array.isArray(launchOptions.args) &&
+      launchOptions.args.some(
+        (arg) => typeof arg === 'string' && arg.startsWith('--load-extension=')
+      );
+    if (
+      !loadsExtensions ||
+      launchOptions.headless === false ||
+      launchOptions.channel ||
+      launchOptions.executablePath
+    ) {
+      return {};
+    }
+    try {
+      const executable = playwright.chromium?.executablePath?.();
+      return typeof executable === 'string' && fs.existsSync(executable)
+        ? { channel: 'chromium' }
+        : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** The profile directory to launch on; a temporary one when none is set. */
+  private async _resolveLaunchUserDataDir(): Promise<string> {
+    const configured = this.browser_profile.user_data_dir;
+    if (!configured) {
+      this._ownedUserDataDir = await this._createTempUserDataDir();
+      return this._ownedUserDataDir;
+    }
+    const prepared = await this.prepareUserDataDir(configured);
+    if (prepared !== configured) {
+      this._ownedUserDataDir = prepared;
+    }
+    return prepared;
+  }
+
+  private _isProfileInUseError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return /ProcessSingleton|SingletonLock|profile appears to be in use|existing browser session/i.test(
+      message
+    );
+  }
+
+  /** Delete the temporary profile this session created, if any. */
+  private _removeOwnedUserDataDir() {
+    const userDataDir = this._ownedUserDataDir;
+    this._ownedUserDataDir = null;
+    if (!userDataDir) {
+      return;
+    }
+    try {
+      fs.rmSync(userDataDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
+    } catch (error) {
+      this.logger.debug(
+        `Failed to remove temporary profile ${userDataDir}: ${(error as Error).message}`
+      );
+    }
+  }
+
+  /**
+   * Persistent contexts cannot take storageState at launch. The
+   * StorageStateWatchdog loads a storage_state file once the browser
+   * connects; an in-memory storage_state object is applied here.
+   */
+  private async _applyStorageStateObject() {
+    const configured = this.browser_profile.config.storage_state;
+    if (!configured || typeof configured === 'string') {
+      return;
+    }
+    const storageState = this._prepareStorageStateForContext(configured) as {
+      cookies?: unknown[];
+      origins?: unknown[];
+    };
+    if (
+      Array.isArray(storageState.cookies) &&
+      storageState.cookies.length > 0 &&
+      typeof this.browser_context?.addCookies === 'function'
+    ) {
+      await this.browser_context.addCookies(storageState.cookies as any[]);
+    }
+    if (Array.isArray(storageState.origins) && storageState.origins.length) {
+      await this._apply_storage_state_origins(storageState.origins);
     }
   }
 
@@ -2941,55 +3122,22 @@ export class BrowserSession {
           this.browser = await this._connectToConfiguredBrowser(playwright);
           this.ownsBrowserResources = false;
         } else {
-          const launchOptions = this._toPlaywrightOptions(
-            await this.browser_profile.kwargs_for_launch()
-          ) as Record<string, unknown> | undefined;
-          const browserLaunchToken = randomUUID();
-          const rawLaunchArgs = Array.isArray(launchOptions?.args)
-            ? launchOptions.args.filter(
-                (arg): arg is string => typeof arg === 'string'
-              )
-            : [];
-          this._browserLaunchToken = browserLaunchToken;
-          try {
-            this.browser = await this._launchChromiumWithSandboxFallback(
-              playwright,
-              {
-                ...(launchOptions ?? {}),
-                args: [
-                  ...rawLaunchArgs,
-                  `--browser-use-session-token=${browserLaunchToken}`,
-                ],
-              }
-            );
-          } catch (error) {
-            this._browserLaunchToken = null;
-            throw error;
-          }
-          this.ownsBrowserResources = true;
-
-          const processGetter = (this.browser as any)?.process;
-          if (typeof processGetter === 'function') {
-            const processRef = processGetter.call(this.browser) as
-              | { pid?: number }
-              | undefined;
-            if (typeof processRef?.pid === 'number') {
-              this.browser_pid = processRef.pid;
-            }
-          }
+          await this._launchLocalBrowser(playwright);
         }
       }
 
-      const existingContexts =
-        (typeof this.browser?.contexts === 'function'
-          ? this.browser.contexts()
-          : []) ?? [];
-      if (existingContexts.length > 0) {
-        this.browser_context = existingContexts[0] ?? null;
-      } else {
-        this.browser_context = await this._ensureBrowserContextFromBrowser(
-          this.browser
-        );
+      if (!this.browser_context) {
+        const existingContexts =
+          (typeof this.browser?.contexts === 'function'
+            ? this.browser.contexts()
+            : []) ?? [];
+        if (existingContexts.length > 0) {
+          this.browser_context = existingContexts[0] ?? null;
+        } else {
+          this.browser_context = await this._ensureBrowserContextFromBrowser(
+            this.browser
+          );
+        }
       }
     }
 
@@ -3292,6 +3440,7 @@ export class BrowserSession {
     if (this.ownsBrowserResources && this.browser_pid) {
       await this._terminateBrowserProcess();
     }
+    this._removeOwnedUserDataDir();
 
     this.browser = null;
     this.browser_context = null;
@@ -9059,55 +9208,43 @@ export class BrowserSession {
   }
 
   /**
-   * Check if user data directory has a singleton lock
-   * This happens when another Chrome instance is using the profile
+   * Check whether another browser holds the profile. Chrome marks a profile
+   * in use with SingletonLock, a symlink to "<hostname>-<pid>" on macOS and
+   * Linux, and with a "lockfile" that exists only while it runs on Windows.
    */
   private async _checkForSingletonLockConflict(
     userDataDir: string
   ): Promise<boolean> {
-    try {
-      const singletonLockFile = path.join(userDataDir, 'SingletonLock');
-      const singletonSocketFile = path.join(userDataDir, 'SingletonSocket');
-      const singletonCookieFile = path.join(userDataDir, 'SingletonCookie');
+    if (process.platform === 'win32') {
+      return fs.existsSync(path.join(userDataDir, 'lockfile'));
+    }
 
-      // Check if any singleton lock files exist
-      if (
-        fs.existsSync(singletonLockFile) ||
-        fs.existsSync(singletonSocketFile) ||
-        fs.existsSync(singletonCookieFile)
-      ) {
-        // Try to detect if process is still alive (Unix-like systems)
-        if (process.platform !== 'win32' && fs.existsSync(singletonLockFile)) {
-          try {
-            // Try to read the lock file to get PID
-            const lockContent = fs.readFileSync(singletonLockFile, 'utf-8');
-            const pidMatch = lockContent.match(/(\d+)/);
-            if (pidMatch) {
-              const pid = parseInt(pidMatch[1], 10);
-              try {
-                // Check if process exists (signal 0 doesn't kill, just checks)
-                process.kill(pid, 0);
-                return true; // Process exists, lock is valid
-              } catch {
-                // Process doesn't exist, stale lock
-                this.logger.debug(`Stale singleton lock detected, removing`);
-                fs.unlinkSync(singletonLockFile);
-                return false;
-              }
-            }
-          } catch {
-            // Couldn't read lock file
-          }
-        }
-        return true;
-      }
-      return false;
-    } catch (error) {
-      this.logger.debug(
-        `Error checking singleton lock: ${(error as Error).message}`
-      );
+    const lockPath = path.join(userDataDir, 'SingletonLock');
+    let lockTarget: string;
+    try {
+      lockTarget = fs.readlinkSync(lockPath);
+    } catch {
+      // No lock symlink; a launch that still finds the profile in use falls
+      // back to a temporary profile.
       return false;
     }
+
+    const match = /^(.*)-(\d+)$/.exec(lockTarget);
+    if (!match || match[1] !== os.hostname()) {
+      // Unknown format, or held by a browser on another machine.
+      return true;
+    }
+    if (isProcessRunning(Number(match[2]))) {
+      return true;
+    }
+
+    this.logger.debug('Stale singleton lock detected, removing');
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // Chrome clears stale locks itself on launch.
+    }
+    return false;
   }
 
   /**
